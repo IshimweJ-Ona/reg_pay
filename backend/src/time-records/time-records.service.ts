@@ -1,0 +1,232 @@
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import {
+  ACTIVITY_TYPE,
+  ATTENDANCE_STATUS,
+  AUDIT_ACTION,
+} from '@prisma/client';
+import type { CurrentUserType } from '../auth/types/current-user.type';
+import { generateUUID } from '../common/utils/uuid.util';
+import { PrismaService } from '../prisma/prisma.service';
+import { ApproveTimeRecordDto } from './dto/approve-time-record.dto';
+import { CreateTimeRecordDto } from './dto/create-time-record.dto';
+import { UpdateTimeRecordDto } from './dto/update-time-record.dto';
+
+@Injectable()
+export class TimeRecordsService {
+  private readonly overtimeThresholdHours = Number(
+    process.env.OVERTIME_THRESHOLD_HOURS ?? 8,
+  );
+
+  constructor(private readonly prisma: PrismaService) {}
+
+  async create(dto: CreateTimeRecordDto, actor: CurrentUserType) {
+    const employeeId = this.toBigInt(dto.employee_id, 'employee_id');
+    await this.ensureEmployee(employeeId);
+
+    const attendanceDate = new Date(dto.attendance_date);
+    const existing = await this.prisma.time_records.findFirst({
+      where: { employee_id: employeeId, attendance_date: attendanceDate },
+      select: { id: true },
+    });
+
+    if (existing) {
+      throw new ConflictException('Time record already exists for this employee and date.');
+    }
+
+    const record = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.time_records.create({
+        data: {
+          uuid: generateUUID(),
+          employee_id: employeeId,
+          attendance_date: attendanceDate,
+          clock_in: dto.clock_in ? new Date(dto.clock_in) : new Date(),
+          attendance_status: dto.attendance_status ?? ATTENDANCE_STATUS.PRESENT,
+        },
+        include: this.includes(),
+      });
+
+      await tx.audit_logs.create({
+        data: {
+          user_id: BigInt(actor.userId),
+          employee_id: employeeId,
+          entity_table: 'time_records',
+          entity_id: created.id,
+          module_name: 'ATTENDANCE',
+          activity_type: ACTIVITY_TYPE.CREATE,
+          activity_description: 'Created attendance record.',
+          action: AUDIT_ACTION.CREATED,
+          new_values: {
+            employee_id: employeeId.toString(),
+            attendance_date: attendanceDate.toISOString(),
+          },
+        },
+      });
+
+      return created;
+    });
+
+    return this.serialize(record);
+  }
+
+  async clockOut(uuid: string, dto: UpdateTimeRecordDto, actor: CurrentUserType) {
+    const record = await this.findByUuidOrThrow(uuid);
+    const clockOut = dto.clock_out ? new Date(dto.clock_out) : new Date();
+
+    if (!record.clock_in) {
+      throw new BadRequestException('Cannot clock out without a clock in time.');
+    }
+
+    const hoursWorked = Math.max(
+      0,
+      (clockOut.getTime() - record.clock_in.getTime()) / (1000 * 60 * 60),
+    );
+    const overtimeHours = Math.max(0, hoursWorked - this.overtimeThresholdHours);
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const saved = await tx.time_records.update({
+        where: { id: record.id },
+        data: {
+          clock_out: clockOut,
+          hours_worked: hoursWorked,
+          overtime_hours: overtimeHours,
+          attendance_status: dto.attendance_status ?? ATTENDANCE_STATUS.PRESENT,
+        },
+        include: this.includes(),
+      });
+
+      await tx.audit_logs.create({
+        data: {
+          user_id: BigInt(actor.userId),
+          employee_id: record.employee_id,
+          entity_table: 'time_records',
+          entity_id: record.id,
+          module_name: 'ATTENDANCE',
+          activity_type: ACTIVITY_TYPE.UPDATE,
+          activity_description: 'Clocked out attendance record.',
+          action: AUDIT_ACTION.UPDATED,
+          new_values: {
+            clock_out: clockOut.toISOString(),
+            hours_worked: hoursWorked,
+            overtime_hours: overtimeHours,
+          },
+          changed_fields: ['clock_out', 'hours_worked', 'overtime_hours'],
+        },
+      });
+
+      return saved;
+    });
+
+    return this.serialize(updated);
+  }
+
+  async approve(uuid: string, dto: ApproveTimeRecordDto, actor: CurrentUserType) {
+    const record = await this.findByUuidOrThrow(uuid);
+
+    const approved = await this.prisma.$transaction(async (tx) => {
+      const saved = await tx.time_records.update({
+        where: { id: record.id },
+        data: { approved_by: BigInt(actor.userId) },
+        include: this.includes(),
+      });
+
+      await tx.audit_logs.create({
+        data: {
+          user_id: BigInt(actor.userId),
+          employee_id: record.employee_id,
+          entity_table: 'time_records',
+          entity_id: record.id,
+          module_name: 'ATTENDANCE',
+          activity_type: ACTIVITY_TYPE.UPDATE,
+          activity_description: dto.comment
+            ? `Approved attendance record: ${dto.comment}`
+            : 'Approved attendance record.',
+          action: AUDIT_ACTION.APPROVED,
+          new_values: { approved_by: actor.userId },
+          changed_fields: ['approved_by'],
+        },
+      });
+
+      return saved;
+    });
+
+    return this.serialize(approved);
+  }
+
+  async findByEmployee(employeeIdInput: string) {
+    const employeeId = this.toBigInt(employeeIdInput, 'employee_id');
+    const records = await this.prisma.time_records.findMany({
+      where: { employee_id: employeeId },
+      include: this.includes(),
+      orderBy: { attendance_date: 'desc' },
+    });
+
+    return records.map((record) => this.serialize(record));
+  }
+
+  private async findByUuidOrThrow(uuid: string) {
+    const record = await this.prisma.time_records.findUnique({ where: { uuid } });
+
+    if (!record) throw new NotFoundException('Time record not found.');
+
+    return record;
+  }
+
+  private async ensureEmployee(employeeId: bigint) {
+    const employee = await this.prisma.employees.findFirst({
+      where: { id: employeeId, deleted_at: null },
+      select: { id: true },
+    });
+
+    if (!employee) throw new BadRequestException('Employee does not exist.');
+  }
+
+  private includes() {
+    return {
+      employee: true,
+      approvedBy: true,
+    };
+  }
+
+  private serialize(record: Record<string, any>) {
+    return {
+      ...record,
+      id: record.id.toString(),
+      employee_id: record.employee_id.toString(),
+      approved_by: record.approved_by?.toString() ?? null,
+      hours_worked: record.hours_worked?.toString(),
+      overtime_hours: record.overtime_hours?.toString(),
+      employee: record.employee
+        ? {
+            ...record.employee,
+            id: record.employee.id.toString(),
+            user_id: record.employee.user_id?.toString() ?? null,
+            department_id: record.employee.department_id?.toString() ?? null,
+            working_location_id: record.employee.working_location_id?.toString() ?? null,
+            employment_category_id:
+              record.employee.employment_category_id?.toString() ?? null,
+          }
+        : undefined,
+      approvedBy: record.approvedBy
+        ? {
+            ...record.approvedBy,
+            id: record.approvedBy.id.toString(),
+            department_id: record.approvedBy.department_id?.toString() ?? null,
+            working_location_id: record.approvedBy.working_location_id?.toString() ?? null,
+          }
+        : null,
+    };
+  }
+
+  private toBigInt(value: string, fieldName: string): bigint {
+    if (!/^\d+$/.test(value)) {
+      throw new BadRequestException(`${fieldName} must be a numeric id.`);
+    }
+
+    return BigInt(value);
+  }
+}

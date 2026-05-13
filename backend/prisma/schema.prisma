@@ -1,0 +1,1032 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      =  env("DATABASE_URL")
+}
+
+
+
+/* =========================================================
+   ENUMS
+========================================================= */
+
+enum WORKING_LOCATION_TYPE {
+  HQ
+  BRANCH
+}
+
+enum STATUS_ACTIVE_INACTIVE {
+  ACTIVE
+  INACTIVE
+}
+
+enum STATUS_USER {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum GENDER {
+  MALE
+  FEMALE
+}
+
+enum EMPLOYMENT_TYPE {
+  DAILY
+  MONTHLY
+}
+
+enum TAX_BEHAVIOUR {
+  STANDARD
+  PERIODIC
+  EXEMPT
+}
+
+enum ATTENDANCE_STATUS {
+  PRESENT
+  ABSENT
+}
+
+enum PAYMENT_METHOD {
+  BANK
+  CASH
+  MOMO
+}
+
+enum TRANSACTION_STATUS {
+  PENDING
+  PAID
+  REJECTED
+  FAILED
+}
+
+enum PAYMENT_BATCH_STATUS {
+  PENDING
+  IN_REVIEW
+  APPROVED
+  REJECTED
+}
+
+enum APPROVAL_STATUS {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum APPROVAL_ACTION {
+  APPROVED
+  REJECTED
+  RETURNED
+}
+
+enum ACTION_TYPE {
+  UPDATE
+  TRANSFER
+  SUSPENDED
+  CATEGORY_CHANGE
+}
+
+enum AUDIT_ACTION {
+  CREATED
+  UPDATED
+  DELETED
+  LOGIN
+  LOGOUT
+  APPROVED
+  DENIED
+}
+
+enum ACTIVITY_TYPE {
+  CREATE
+  UPDATE
+  DELETE
+  LOGIN
+  FAILED_LOGIN
+}
+
+enum WORKFLOW_MODULE {
+  PAYROLL
+  EMPLOYEE_TRANSFER
+  USER_TRANSFER
+}
+
+enum DEDUCTION_MODE {
+  FIXED
+  PERCENTAGE
+}
+
+enum TRANSFER_SUBJECT {
+  USER
+  EMPLOYEE
+}
+
+/* =========================================================
+   WORKING LOCATIONS
+========================================================= */
+
+model Working_locations {
+  id        BigInt @id @default(autoincrement())
+  uuid      String @unique @db.Char(36)
+
+  name      String @unique @db.VarChar(150)
+  type      WORKING_LOCATION_TYPE
+  address   String @db.VarChar(255)
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  created_by BigInt?
+  updated_by BigInt?
+  deleted_by BigInt?
+  deleted_at DateTime?
+
+  createdBy Users? @relation("WorkingLocationCreatedBy", fields: [created_by], references: [id])
+  updatedBy Users? @relation("WorkingLocationUpdatedBy", fields: [updated_by], references: [id])
+  deletedBy Users? @relation("WorkingLocationDeletedBy", fields: [deleted_by], references: [id])
+
+  departments Departments[]
+  users Users[]
+  employees Employees[]
+
+  branch_managers Branch_managers[]
+  payment_batches Payment_batches[]
+
+  oldLocationHistories Employee_history[] @relation("OldLocation")
+  newLocationHistories Employee_history[] @relation("NewLocation")
+
+  @@index([type], name: "idx_working_location_type")
+}
+
+/* =========================================================
+   BRANCH MANAGERS
+========================================================= */
+
+model Branch_managers {
+  id BigInt @id @default(autoincrement())
+  uuid String @unique @db.Char(36)
+
+  working_location_id BigInt
+  user_id BigInt
+
+  is_active Boolean @default(true)
+
+  assigned_at DateTime @default(now())
+  unassigned_at DateTime?
+
+  assigned_by BigInt
+
+  branch Working_locations @relation(fields: [working_location_id], references: [id])
+  user Users @relation("BranchManagerUser", fields: [user_id], references: [id])
+  assignedBy Users @relation("BranchManagerAssignedBy", fields: [assigned_by], references: [id])
+
+  @@index([working_location_id], name: "idx_branch_manager_location")
+  @@index([user_id], name: "idx_branch_manager_user")
+  @@index([is_active], name: "idx_branch_manager_active")
+}
+
+/* =========================================================
+   DEPARTMENTS
+========================================================= */
+
+model Departments {
+  id BigInt @id @default(autoincrement())
+  uuid String @unique @db.Char(36)
+
+  working_location_id BigInt
+
+  code String @unique @db.VarChar(20)
+  name String @unique @db.VarChar(100)
+
+  description String? @db.Text
+
+  status STATUS_ACTIVE_INACTIVE @default(ACTIVE)
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  working_location Working_locations @relation(fields: [working_location_id], references: [id])
+
+  users Users[]
+  employees Employees[]
+
+  user_departments User_departments[]
+  department_managers Department_managers[]
+  workflow_steps Approval_workflow_steps[]
+
+  oldEmployeeHistories Employee_history[] @relation("OldDepartment")
+  newEmployeeHistories Employee_history[] @relation("NewDepartment")
+
+  @@index([working_location_id], name: "idx_department_location")
+}
+
+model Department_managers {
+  id BigInt @id @default(autoincrement())
+  uuid String @unique @db.Char(36)
+
+  department_id BigInt
+  user_id BigInt
+
+  is_active Boolean @default(true)
+
+  assigned_at DateTime @default(now())
+  unassigned_at DateTime?
+
+  assigned_by BigInt
+
+  department Departments @relation(fields: [department_id], references: [id])
+  user Users @relation("DepartmentManagerUser", fields: [user_id], references: [id])
+  assignedBy Users @relation("DepartmentManagerAssignedBy", fields: [assigned_by], references: [id])
+
+  @@index([department_id], name: "idx_department_manager_department")
+  @@index([user_id], name: "idx_department_manager_user")
+  @@index([is_active], name: "idx_department_manager_active")
+}
+
+/* =========================================================
+   USERS
+========================================================= */
+
+model Users {
+  id BigInt @id @default(autoincrement())
+  uuid String @unique @db.Char(36)
+
+  working_location_id BigInt?
+  department_id BigInt?
+
+  first_name String @db.VarChar(100)
+  last_name String @db.VarChar(100)
+
+  email String @unique @db.VarChar(150)
+  phone_number String @unique @db.VarChar(20)
+
+  password_hash String @db.Text
+
+  gender GENDER
+  status STATUS_USER @default(ACTIVE)
+
+  last_login_at DateTime?
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  deleted_at DateTime?
+
+  working_location Working_locations? @relation(fields: [working_location_id], references: [id])
+  department Departments? @relation(fields: [department_id], references: [id])
+
+  roles User_roles[]
+  user_departments User_departments[]
+
+  employees Employees[]
+
+  approval_requests Approval_requests[]
+  approval_actions Approval_request_actions[]
+
+  audit_logs  Audit_logs[]
+  sessions    User_sessions[]
+
+  branch_manager_records Branch_managers[] @relation("BranchManagerUser")
+  branch_manager_assignments Branch_managers[] @relation("BranchManagerAssignedBy")
+  department_manager_records Department_managers[] @relation("DepartmentManagerUser")
+  department_manager_assignments Department_managers[] @relation("DepartmentManagerAssignedBy")
+
+  working_locations_created Working_locations[] @relation("WorkingLocationCreatedBy")
+  working_locations_updated Working_locations[] @relation("WorkingLocationUpdatedBy")
+  working_locations_deleted Working_locations[] @relation("WorkingLocationDeletedBy")
+
+  employee_history_changed Employee_history[] @relation("HistoryChangedBy")
+  employee_history_approved Employee_history[] @relation("HistoryApprovedBy")
+
+  payment_batches_submitted Payment_batches[] @relation("PaymentBatchSubmittedBy")
+  payment_batches_approved Payment_batches[] @relation("PaymentBatchApprovedBy")
+  payroll_batch_actions Payroll_batch_approval_actions[]
+
+  payment_batch_items_approved Payment_batch_items[] @relation("PaymentBatchItemApprovedBy")
+
+  transactions_approved Transactions[] @relation("TransactionApprovedBy")
+
+  time_records_approved Time_records[] @relation("TimeRecordApprovedBy")
+
+  employee_documents_uploaded Employee_documents[]
+  user_transfers_requested Transfer_requests[] @relation("TransferRequestedBy")
+  user_transfers_approved Transfer_requests[] @relation("TransferApprovedBy")
+  user_transfer_subjects Transfer_requests[] @relation("TransferUserSubject")
+
+  @@index([working_location_id], name: "idx_user_location")
+  @@index([department_id], name: "idx_user_department")
+  @@index([status], name: "idx_user_status")
+}
+
+/* =========================================================
+   USER DEPARTMENTS
+========================================================= */
+
+model User_departments {
+  id BigInt @id @default(autoincrement())
+
+  user_id BigInt
+  department_id BigInt
+
+  created_at DateTime @default(now())
+
+  user Users @relation(fields: [user_id], references: [id])
+  department Departments @relation(fields: [department_id], references: [id])
+
+  @@unique([user_id, department_id])
+  @@index([user_id], name: "idx_user_departments_user")
+  @@index([department_id], name: "idx_user_departments_department")
+}
+
+/* =========================================================
+   ROLES
+========================================================= */
+
+model Roles {
+  id BigInt @id @default(autoincrement())
+  uuid String @unique @db.Char(36)
+
+  name String @unique @db.VarChar(100)
+  description String? @db.Text
+
+  level_order Int?
+
+  created_at DateTime @default(now())
+
+  user_roles User_roles[]
+  role_permissions Role_permissions[]
+
+  workflow_steps Approval_workflow_steps[]
+
+  @@index([level_order], name: "idx_role_level")
+}
+
+/* =========================================================
+   USER ROLES
+========================================================= */
+
+model User_roles {
+  id BigInt @id @default(autoincrement())
+
+  user_id BigInt
+  role_id BigInt
+
+  created_at DateTime @default(now())
+
+  user Users @relation(fields: [user_id], references: [id])
+  role Roles @relation(fields: [role_id], references: [id])
+
+  @@unique([user_id, role_id])
+}
+
+/* =========================================================
+   PERMISSIONS
+========================================================= */
+
+model Permissions {
+  id BigInt @id @default(autoincrement())
+  uuid String @unique @db.Char(36)
+
+  name String @unique @db.VarChar(150)
+  module_name String @db.VarChar(100)
+
+  permission_key String @unique @db.VarChar(150)
+
+  created_at DateTime @default(now())
+
+  role_permissions Role_permissions[]
+
+  @@index([module_name], name: "idx_permission_module")
+}
+
+/* =========================================================
+   ROLE PERMISSIONS
+========================================================= */
+
+model Role_permissions {
+  id BigInt @id @default(autoincrement())
+
+  role_id BigInt
+  permission_id BigInt
+
+  role Roles @relation(fields: [role_id], references: [id])
+  permission Permissions @relation(fields: [permission_id], references: [id])
+
+  @@unique([role_id, permission_id])
+}
+
+/* =========================================================
+   EMPLOYMENT CATEGORIES
+========================================================= */
+
+model Employment_categories {
+  id BigInt @id @default(autoincrement())
+  uuid String @unique @db.Char(36)
+
+  name String @unique @db.VarChar(100)
+
+  payroll_frequency EMPLOYMENT_TYPE
+  tax_behavior TAX_BEHAVIOUR
+
+  description String? @db.Text
+
+  status STATUS_ACTIVE_INACTIVE @default(ACTIVE)
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  employees Employees[]
+
+  old_history Employee_history[] @relation("OldEmploymentCategory")
+  new_history Employee_history[] @relation("NewEmploymentCategory")
+}
+
+/* =========================================================
+   EMPLOYEES
+========================================================= */
+
+model Employees {
+  id BigInt @id @default(autoincrement())
+  uuid String @unique @db.Char(36)
+
+  user_id BigInt?
+
+  first_name String @db.VarChar(100)
+  last_name String @db.VarChar(100)
+
+  email String? @unique @db.VarChar(150)
+  phone_number String? @unique @db.VarChar(20)
+
+  national_id String? @unique @db.VarChar(50)
+
+  gender GENDER
+
+  hire_date DateTime? @db.Date
+
+  department_id BigInt?
+  working_location_id BigInt?
+  employment_category_id BigInt?
+
+  status STATUS_USER @default(INACTIVE)
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  deleted_at DateTime?
+
+  user Users? @relation(fields: [user_id], references: [id])
+
+  department Departments? @relation(fields: [department_id], references: [id])
+  working_location Working_locations? @relation(fields: [working_location_id], references: [id])
+
+  employment_category Employment_categories? @relation(fields: [employment_category_id], references: [id])
+
+  payment_structures Payment_structures[]
+  employee_deductions Employee_deductions[]
+  transactions Transactions[]
+  batch_items Payment_batch_items[]
+  time_records Time_records[]
+  employee_history Employee_history[]
+  audit_logs Audit_logs[]
+  documents Employee_documents[]
+  employee_transfer_subjects Transfer_requests[] @relation("TransferEmployeeSubject")
+
+  @@index([department_id], name: "idx_employee_department")
+  @@index([working_location_id], name: "idx_employee_location")
+  @@index([employment_category_id], name: "idx_employee_category")
+  @@index([status], name: "idx_employee_status")
+}
+
+/* =========================================================
+   EMPLOYEE DOCUMENTS
+========================================================= */
+
+model Employee_documents {
+  id BigInt @id @default(autoincrement())
+  uuid String @unique @db.Char(36)
+
+  employee_id BigInt
+
+  file_name String @db.VarChar(255)
+  file_path String @db.Text
+
+  uploaded_by BigInt
+
+  created_at DateTime @default(now())
+
+  employee Employees @relation(fields: [employee_id], references: [id])
+  uploadedBy Users @relation(fields: [uploaded_by], references: [id])
+
+  @@index([employee_id], name: "idx_employee_document_employee")
+}
+
+/* =========================================================
+   EMPLOYEE HISTORY
+========================================================= */
+
+model Employee_history {
+  id BigInt @id @default(autoincrement())
+  uuid String @unique @db.Char(36)
+
+  employee_id BigInt
+
+  action_type ACTION_TYPE
+
+  old_department_id BigInt?
+  new_department_id BigInt?
+
+  old_location_id BigInt?
+  new_location_id BigInt?
+
+  old_employment_category_id BigInt?
+  new_employment_category_id BigInt?
+
+  status STATUS_ACTIVE_INACTIVE
+
+  reason String? @db.Text
+
+  changed_by BigInt
+  approved_by BigInt
+
+  created_at DateTime @default(now())
+
+  employee Employees @relation(fields: [employee_id], references: [id])
+
+  oldDepartment Departments? @relation("OldDepartment", fields: [old_department_id], references: [id])
+  newDepartment Departments? @relation("NewDepartment", fields: [new_department_id], references: [id])
+
+  oldLocation Working_locations? @relation("OldLocation", fields: [old_location_id], references: [id])
+  newLocation Working_locations? @relation("NewLocation", fields: [new_location_id], references: [id])
+
+  oldEmploymentCategory Employment_categories? @relation("OldEmploymentCategory", fields: [old_employment_category_id], references: [id])
+
+  newEmploymentCategory Employment_categories? @relation("NewEmploymentCategory", fields: [new_employment_category_id], references: [id])
+
+  changedBy Users @relation("HistoryChangedBy", fields: [changed_by], references: [id])
+
+  approvedBy Users @relation("HistoryApprovedBy", fields: [approved_by], references: [id])
+
+  @@index([employee_id], name: "idx_employee_history_employee")
+}
+
+/* =========================================================
+   PAYMENT STRUCTURES
+========================================================= */
+
+model Payment_structures {
+  id BigInt @id @default(autoincrement())
+  uuid String @unique @db.Char(36)
+
+  employee_id BigInt
+
+  payroll_frequency EMPLOYMENT_TYPE
+
+  basic_salary Decimal @default(0.00) @db.Decimal(18, 2)
+  daily_rate Decimal @default(0.00) @db.Decimal(18, 2)
+  overtime_rate Decimal @default(0.00) @db.Decimal(18, 2)
+
+  tax_percentage Decimal @default(0.00) @db.Decimal(5, 2)
+
+  effective_from DateTime @db.Date
+  effective_to DateTime?
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  employee Employees @relation(fields: [employee_id], references: [id])
+
+  transactions Transactions[]
+
+  @@index([employee_id], name: "idx_payment_structure_employee")
+}
+
+/* =========================================================
+   DEDUCTION TYPES
+========================================================= */
+
+model Deduction_types {
+  id BigInt @id @default(autoincrement())
+  uuid String @unique @db.Char(36)
+
+  name String @unique @db.VarChar(100)
+
+  deduction_mode DEDUCTION_MODE
+
+  amount Decimal @default(0.00) @db.Decimal(18, 2)
+  percentage_value Decimal @default(0.00) @db.Decimal(5, 2)
+
+  is_mandatory Boolean @default(false)
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  employee_deductions Employee_deductions[]
+}
+
+/* =========================================================
+   EMPLOYEE DEDUCTIONS
+========================================================= */
+
+model Employee_deductions {
+  id BigInt @id @default(autoincrement())
+  uuid String @unique @db.Char(36)
+
+  employee_id BigInt
+  deduction_type_id BigInt
+
+  start_date DateTime @db.Date
+  end_date DateTime?
+
+  is_active Boolean @default(true)
+
+  created_at DateTime @default(now())
+
+  employee Employees @relation(fields: [employee_id], references: [id])
+
+  deduction_type Deduction_types @relation(fields: [deduction_type_id], references: [id])
+
+  @@index([employee_id], name: "idx_employee_deduction_employee")
+  @@index([deduction_type_id], name: "idx_employee_deduction_type")
+}
+
+/* =========================================================
+   TIME RECORDS
+========================================================= */
+
+model Time_records {
+  id BigInt @id @default(autoincrement())
+  uuid String @unique @db.Char(36)
+
+  employee_id BigInt
+
+  attendance_date DateTime @db.Date
+
+  clock_in DateTime?
+  clock_out DateTime?
+
+  hours_worked Decimal @default(0.00) @db.Decimal(5, 2)
+  overtime_hours Decimal @default(0.00) @db.Decimal(5, 2)
+
+  attendance_status ATTENDANCE_STATUS
+
+  approved_by BigInt?
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  employee Employees @relation(fields: [employee_id], references: [id])
+
+  approvedBy Users? @relation("TimeRecordApprovedBy", fields: [approved_by], references: [id])
+
+  @@index([employee_id, attendance_date], name: "idx_time_employee_date")
+}
+
+/* =========================================================
+   TRANSACTIONS
+========================================================= */
+
+model Transactions {
+  id BigInt @id @default(autoincrement())
+  uuid String @unique @db.Char(36)
+
+  employee_id BigInt
+  payment_structure_id BigInt
+
+  payroll_month Int
+  payroll_year Int
+
+  gross_amount Decimal @default(0.00) @db.Decimal(18, 2)
+  total_deductions Decimal @default(0.00) @db.Decimal(18, 2)
+  net_amount Decimal @default(0.00) @db.Decimal(18, 2)
+
+  payment_date DateTime @db.Date
+
+  payment_method PAYMENT_METHOD
+  transaction_status TRANSACTION_STATUS
+
+  approved_by BigInt?
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  employee Employees @relation(fields: [employee_id], references: [id])
+
+  payment_structure Payment_structures @relation(fields: [payment_structure_id], references: [id])
+
+  approvedBy Users? @relation("TransactionApprovedBy", fields: [approved_by], references: [id])
+
+  batch_items Payment_batch_items[]
+
+  @@index([employee_id], name: "idx_transaction_employee")
+  @@index([transaction_status], name: "idx_transaction_status")
+  @@index([payment_date], name: "idx_transaction_date")
+}
+
+/* =========================================================
+   PAYMENT BATCHES
+========================================================= */
+
+model Payment_batches {
+  id BigInt @id @default(autoincrement())
+  uuid String @unique @db.Char(36)
+
+  batch_code String @unique @db.VarChar(100)
+
+  working_location_id BigInt
+
+  payroll_month Int
+  payroll_year Int
+
+  total_employees Int @default(0)
+
+  total_amount Decimal @default(0.00) @db.Decimal(18, 2)
+
+  status PAYMENT_BATCH_STATUS
+
+  current_approval_step Int @default(1)
+  rejected_reason String? @db.Text
+
+  submitted_by BigInt
+  approved_by BigInt?
+
+  submitted_at DateTime?
+  approved_at DateTime?
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  working_location Working_locations @relation(fields: [working_location_id], references: [id])
+
+  submittedBy Users @relation("PaymentBatchSubmittedBy", fields: [submitted_by], references: [id])
+
+  approvedBy Users? @relation("PaymentBatchApprovedBy", fields: [approved_by], references: [id])
+
+  items Payment_batch_items[]
+  approval_actions Payroll_batch_approval_actions[]
+
+  @@index([working_location_id], name: "idx_payment_batch_location")
+  @@index([status], name: "idx_payment_batch_status")
+  @@index([payroll_month, payroll_year], name: "idx_payment_batch_period")
+}
+
+model Payroll_batch_approval_actions {
+  id BigInt @id @default(autoincrement())
+
+  payment_batch_id BigInt
+  step_order Int
+  action_by BigInt
+  action APPROVAL_ACTION
+  comment String? @db.Text
+  action_at DateTime @default(now())
+
+  batch Payment_batches @relation(fields: [payment_batch_id], references: [id])
+  actionBy Users @relation(fields: [action_by], references: [id])
+
+  @@index([payment_batch_id], name: "idx_payroll_batch_action_batch")
+  @@index([step_order], name: "idx_payroll_batch_action_step")
+}
+
+/* =========================================================
+   PAYMENT BATCH ITEMS
+========================================================= */
+
+model Payment_batch_items {
+  id BigInt @id @default(autoincrement())
+  uuid String @unique @db.Char(36)
+
+  payment_batch_id BigInt
+  employee_id BigInt
+  transaction_id BigInt
+
+  status PAYMENT_BATCH_STATUS
+
+  rejection_reason String? @db.Text
+
+  approved_by BigInt?
+  approved_at DateTime?
+
+  created_at DateTime @default(now())
+
+  batch Payment_batches @relation(fields: [payment_batch_id], references: [id])
+
+  employee Employees @relation(fields: [employee_id], references: [id])
+
+  transaction Transactions @relation(fields: [transaction_id], references: [id])
+
+  approvedBy Users? @relation("PaymentBatchItemApprovedBy", fields: [approved_by], references: [id])
+
+  @@index([payment_batch_id], name: "idx_payment_batch_item_batch")
+  @@index([employee_id], name: "idx_payment_batch_item_employee")
+}
+
+/* =========================================================
+   APPROVAL WORKFLOWS
+========================================================= */
+
+model Approval_workflows {
+  id BigInt @id @default(autoincrement())
+  uuid String @unique @db.Char(36)
+
+  workflow_name String @db.VarChar(150)
+
+  module_name WORKFLOW_MODULE
+
+  is_active Boolean @default(true)
+
+  created_at DateTime @default(now())
+
+  steps Approval_workflow_steps[]
+  requests Approval_requests[]
+
+  @@index([is_active], name: "idx_workflow_active")
+}
+
+/* =========================================================
+   APPROVAL WORKFLOW STEPS
+========================================================= */
+
+model Approval_workflow_steps {
+  id BigInt @id @default(autoincrement())
+
+  workflow_id BigInt
+
+  step_order Int
+
+  department_id BigInt
+  role_id BigInt
+
+  can_approve Boolean @default(true)
+  can_reject Boolean @default(true)
+
+  created_at DateTime @default(now())
+
+  workflow Approval_workflows @relation(fields: [workflow_id], references: [id])
+
+  department Departments @relation(fields: [department_id], references: [id])
+
+  role Roles @relation(fields: [role_id], references: [id])
+
+  @@index([workflow_id], name: "idx_workflow_step_workflow")
+}
+
+/* =========================================================
+   APPROVAL REQUESTS
+========================================================= */
+
+model Approval_requests {
+  id BigInt @id @default(autoincrement())
+  uuid String @unique @db.Char(36)
+
+  workflow_id BigInt
+
+  reference_table String @db.VarChar(100)
+  reference_id BigInt
+
+  current_step Int
+
+  status APPROVAL_STATUS
+
+  initiated_by BigInt
+
+  created_at DateTime @default(now())
+
+  workflow Approval_workflows @relation(fields: [workflow_id], references: [id])
+
+  initiatedBy Users @relation(fields: [initiated_by], references: [id])
+
+  actions Approval_request_actions[]
+
+  @@index([workflow_id], name: "idx_approval_request_workflow")
+  @@index([status], name: "idx_approval_request_status")
+}
+
+/* =========================================================
+   APPROVAL REQUEST ACTIONS
+========================================================= */
+
+model Approval_request_actions {
+  id BigInt @id @default(autoincrement())
+
+  approval_request_id BigInt
+
+  step_order Int
+
+  action_by BigInt
+
+  action APPROVAL_ACTION
+
+  comment String? @db.Text
+
+  action_at DateTime @default(now())
+
+  request Approval_requests @relation(fields: [approval_request_id], references: [id])
+
+  actionBy Users @relation(fields: [action_by], references: [id])
+
+  @@index([approval_request_id], name: "idx_approval_action_request")
+}
+
+/* =========================================================
+   AUDIT LOGS
+========================================================= */
+
+model Audit_logs {
+  id BigInt @id @default(autoincrement())
+
+  user_id BigInt
+  employee_id BigInt?
+
+  entity_table String @db.VarChar(150)
+  entity_id BigInt
+
+  module_name String @db.VarChar(100)
+
+  activity_type ACTIVITY_TYPE
+
+  activity_description String @db.Text
+
+  action AUDIT_ACTION
+
+  old_values Json?
+  new_values Json?
+  changed_fields Json?
+
+  ip_address String? @db.VarChar(100)
+
+  created_at DateTime @default(now())
+
+  user Users @relation(fields: [user_id], references: [id])
+
+  employee Employees? @relation(fields: [employee_id], references: [id])
+
+  @@index([user_id], name: "idx_audit_user")
+  @@index([entity_table], name: "idx_audit_entity_table")
+  @@index([entity_id], name: "idx_audit_entity_id")
+  @@index([action], name: "idx_audit_action")
+  @@index([created_at], name: "idx_audit_created")
+}
+
+model User_sessions {
+  id BigInt @id @default(autoincrement())
+
+  uuid String @unique @db.Char(36)
+
+  user_id BigInt
+
+  refresh_token_hash String @db.Text
+
+  device_info String? @db.Text
+  ip_address String? @db.VarChar(100)
+
+  is_revoked Boolean @default(false)
+
+  expires_at DateTime
+
+  created_at DateTime @default(now())
+
+  user Users @relation(fields: [user_id], references: [id])
+
+  @@index([user_id], name: "idx_user_session_user")
+  @@index([is_revoked], name: "idx_user_session_revoked")
+}
+
+model Transfer_requests {
+  id BigInt @id @default(autoincrement())
+  uuid String @unique @db.Char(36)
+
+  subject_type TRANSFER_SUBJECT
+  user_id BigInt?
+  employee_id BigInt?
+
+  old_working_location_id BigInt?
+  new_working_location_id BigInt
+
+  old_department_id BigInt?
+  new_department_id BigInt?
+
+  status APPROVAL_STATUS @default(PENDING)
+  reason String? @db.Text
+  rejection_reason String? @db.Text
+
+  requested_by BigInt
+  approved_by BigInt?
+
+  requested_at DateTime @default(now())
+  approved_at DateTime?
+
+  user Users? @relation("TransferUserSubject", fields: [user_id], references: [id])
+  employee Employees? @relation("TransferEmployeeSubject", fields: [employee_id], references: [id])
+
+  requestedBy Users @relation("TransferRequestedBy", fields: [requested_by], references: [id])
+  approvedBy Users? @relation("TransferApprovedBy", fields: [approved_by], references: [id])
+
+  @@index([subject_type], name: "idx_transfer_subject_type")
+  @@index([status], name: "idx_transfer_status")
+}

@@ -1,0 +1,9 @@
+export type CurrentUserType = {
+  userId: string;
+  email: string;
+  phone_number: string;
+  roles: string[];
+  permissions: string[];
+  working_location_id: string | null;
+  department_id: string | null;
+};
