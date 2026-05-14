@@ -150,28 +150,28 @@ export class OrganizationService {
   }
 
   async assignBranchManager(
-    workingLocationIdInput: string,
+    workingLocationUuid: string,
     dto: AssignManagerDto,
     actor: CurrentUserType,
   ) {
-    const workingLocationId = this.toBigInt(workingLocationIdInput, 'working_location_id');
     const userId = this.toBigInt(dto.user_id, 'user_id');
 
-    const [branch, user] = await Promise.all([
-      this.prisma.working_locations.findFirst({
-        where: { id: workingLocationId, deleted_at: null },
-      }),
-      this.prisma.users.findFirst({
-        where: {
-          id: userId,
-          status: 'ACTIVE',
-          working_location_id: workingLocationId,
-          deleted_at: null,
-        },
-      }),
-    ]);
+    const branch = await this.prisma.working_locations.findFirst({
+      where: { uuid: workingLocationUuid, deleted_at: null },
+    });
 
     if (!branch) throw new NotFoundException('Working location not found.');
+
+    const workingLocationId = branch.id;
+    const user = await this.prisma.users.findFirst({
+      where: {
+        id: userId,
+        status: 'ACTIVE',
+        working_location_id: workingLocationId,
+        deleted_at: null,
+      },
+    });
+
     if (!user) {
       throw new BadRequestException(
         'Branch manager must be an active user in that branch or HQ.',
@@ -217,18 +217,18 @@ export class OrganizationService {
   }
 
   async assignDepartmentManager(
-    departmentIdInput: string,
+    departmentUuid: string,
     dto: AssignManagerDto,
     actor: CurrentUserType,
   ) {
-    const departmentId = this.toBigInt(departmentIdInput, 'department_id');
     const userId = this.toBigInt(dto.user_id, 'user_id');
 
     const department = await this.prisma.departments.findUnique({
-      where: { id: departmentId },
+      where: { uuid: departmentUuid },
     });
 
     if (!department) throw new NotFoundException('Department not found.');
+    const departmentId = department.id;
 
     const user = await this.prisma.users.findFirst({
       where: {

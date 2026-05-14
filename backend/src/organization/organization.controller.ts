@@ -18,12 +18,12 @@ import { CreateDepartmentDto } from './dto/create-department.dto';
 import { CreateWorkingLocationDto } from './dto/create-working-location.dto';
 import { OrganizationService } from './organization.service';
 
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Roles('SUPER_ADMIN', 'ADMIN')
 @Controller('organization')
 export class OrganizationController {
   constructor(private readonly organizationService: OrganizationService) {}
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SUPER_ADMIN', 'ADMIN')
   @Post('working-locations')
   createWorkingLocation(
     @Body() dto: CreateWorkingLocationDto,
@@ -37,6 +37,8 @@ export class OrganizationController {
     return this.organizationService.findWorkingLocations();
   }
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SUPER_ADMIN', 'ADMIN')
   @Post('departments')
   createDepartment(
     @Body() dto: CreateDepartmentDto,
@@ -50,21 +52,25 @@ export class OrganizationController {
     return this.organizationService.findDepartments(workingLocationId);
   }
 
-  @Patch('working-locations/:id/manager')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SUPER_ADMIN', 'ADMIN')
+  @Patch('working-locations/:uuid/manager')
   assignBranchManager(
-    @Param('id') id: string,
+    @Param('uuid') uuid: string,
     @Body() dto: AssignManagerDto,
     @CurrentUser() actor: CurrentUserType,
   ) {
-    return this.organizationService.assignBranchManager(id, dto, actor);
+    return this.organizationService.assignBranchManager(uuid, dto, actor);
   }
 
-  @Patch('departments/:id/manager')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SUPER_ADMIN', 'ADMIN')
+  @Patch('departments/:uuid/manager')
   assignDepartmentManager(
-    @Param('id') id: string,
+    @Param('uuid') uuid: string,
     @Body() dto: AssignManagerDto,
     @CurrentUser() actor: CurrentUserType,
   ) {
-    return this.organizationService.assignDepartmentManager(id, dto, actor);
+    return this.organizationService.assignDepartmentManager(uuid, dto, actor);
   }
 }
