@@ -2,25 +2,23 @@
 
 import { useEffect, useState } from "react";
 
-const loaderText = "Loading REG payment system";
-
 export function PageLoader() {
     const [visible, setVisible] = useState(true);
 
     useEffect(() => {
-        const timer = window.setTimeout(() => setVisible(false), 1100);
+        const timer = window.setTimeout(() => setVisible(false), 90000);
         return () => window.clearTimeout(timer);
     }, []);
 
     if (!visible) return null;
 
     return (
-        <div className="reg-loader">
-            <div className="reg-loader-logo">REG</div>
-            <div className="reg-loader-track">
-                <div className="reg-loader-bar" />
+        <div id="loader">
+            <div className="ld-logo">REG</div>
+            <div className="ld-track">
+                <div className="ld-bar" />
             </div>
-            <div className="reg-loader-text">{loaderText}</div>
+            <div className="ld-txt">Loading payment system</div>
         </div>
     );
 }

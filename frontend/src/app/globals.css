@@ -3,10 +3,43 @@
 :root {
   --background: #071426;
   --foreground: #f8fafc;
+  --header-bg: #071426;
+  --body-bg: #071426;
+  --card-bg: #ffffff;
+  --border: rgba(255, 255, 255, 0.1);
+  --accent: #e8294a;
+  --accent2: #ff6b35;
+  --green: #00a882;
+  --purple: #6c5ce7;
+  --gold: #f4a61d;
+  --txt-dark: #0f172a;
+  --txt-body: #2e2e3e;
+  --txt-sub: #64748b;
+  --txt-muted: #94a3b8;
+  --r: 16px;
+  --r2: 22px;
+  --rp: 999px;
   --reg-navy: #071426;
   --reg-navy-2: #0b2341;
   --reg-navy-3: #10365f;
   --reg-red: #e8294a;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+img {
+  display: block;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
 }
 
 @theme inline {
@@ -17,12 +50,57 @@
 }
 
 body {
-  background: var(--background);
+  min-height: 100vh;
+  overflow-x: hidden;
+  background:
+    radial-gradient(circle at 16% 14%, rgba(232, 41, 74, 0.16), transparent 24rem),
+    radial-gradient(circle at 80% 18%, rgba(108, 92, 231, 0.18), transparent 28rem),
+    radial-gradient(circle at 50% 92%, rgba(0, 168, 130, 0.12), transparent 26rem),
+    var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  line-height: 1.65;
 }
 
-.reg-loader {
+.skel {
+  border-radius: var(--r);
+  background: linear-gradient(90deg, #e2e2e2 25%, #ebebeb 50%, #e2e2e2 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+#toast {
+  position: fixed;
+  bottom: 32px;
+  left: 50%;
+  z-index: 10000;
+  border-radius: var(--rp);
+  padding: 14px 28px;
+  transform: translateX(-50%) translateY(90px);
+  background: #111;
+  color: #fff;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
+  font-size: 1rem;
+  font-weight: 500;
+  pointer-events: none;
+  transition: transform 0.38s cubic-bezier(0.16, 1, 0.3, 1);
+  white-space: nowrap;
+}
+
+#toast.show {
+  transform: translateX(-50%) translateY(0);
+}
+
+#toast.ok {
+  background: var(--green);
+}
+
+#toast.err {
+  background: var(--accent);
+}
+
+#loader {
   position: fixed;
   inset: 0;
   z-index: 9990;
@@ -30,21 +108,56 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  overflow: hidden;
   background:
-    radial-gradient(circle at 50% 20%, rgba(16, 54, 95, 0.9), transparent 34rem),
-    linear-gradient(135deg, #050b17, var(--reg-navy), #0b2341);
-  animation: loaderFade 0.35s ease 0.9s forwards;
+    radial-gradient(circle at 18% 18%, rgba(232, 41, 74, 0.24), transparent 26rem),
+    radial-gradient(circle at 78% 22%, rgba(108, 92, 231, 0.28), transparent 30rem),
+    radial-gradient(circle at 48% 82%, rgba(0, 168, 130, 0.18), transparent 24rem),
+    linear-gradient(135deg, #040a15, #071426 42%, #10365f);
+  animation: loaderFade 0.45s ease 0.82s forwards;
 }
 
-.reg-loader-logo {
+#loader::before,
+#loader::after {
+  content: "";
+  position: absolute;
+  left: -20%;
+  width: 140%;
+  height: 42%;
+  opacity: 0.45;
+  background-repeat: repeat-x;
+  background-size: 44rem 100%;
+  animation: waveMove 13s linear infinite;
+}
+
+#loader::before {
+  bottom: 12%;
+  background-image: radial-gradient(70% 90% at 50% 100%, transparent 58%, rgba(93, 214, 255, 0.35) 59%, transparent 62%);
+}
+
+#loader::after {
+  bottom: -6%;
+  opacity: 0.55;
+  animation-duration: 18s;
+  animation-direction: reverse;
+  background-image: radial-gradient(70% 90% at 50% 0%, rgba(255, 107, 53, 0.2) 0%, transparent 64%);
+}
+
+.ld-logo {
+  position: relative;
+  z-index: 1;
   margin-bottom: 36px;
-  color: var(--reg-red);
-  font-size: clamp(4.5rem, 14vw, 8.2rem);
+  color: var(--accent);
+  font-size: clamp(4.7rem, 15vw, 8.2rem);
   font-weight: 950;
-  letter-spacing: 0.18em;
+  letter-spacing: 0.2em;
+  line-height: 1;
+  text-indent: 0.2em;
 }
 
-.reg-loader-track {
+.ld-track {
+  position: relative;
+  z-index: 1;
   width: min(250px, 68vw);
   height: 3px;
   overflow: hidden;
@@ -52,16 +165,17 @@ body {
   background: rgba(255, 255, 255, 0.12);
 }
 
-.reg-loader-bar {
+.ld-bar {
   height: 100%;
-  width: 100%;
+  width: 0;
   border-radius: inherit;
-  background: linear-gradient(90deg, #5dd6ff, var(--reg-red));
-  animation: loaderBar 1s ease forwards;
-  transform-origin: left;
+  background: linear-gradient(90deg, var(--purple), var(--accent));
+  animation: loaderBar 0.82s ease forwards;
 }
 
-.reg-loader-text {
+.ld-txt {
+  position: relative;
+  z-index: 1;
   margin-top: 18px;
   color: rgba(255, 255, 255, 0.46);
   font-size: 0.72rem;
@@ -75,8 +189,9 @@ body {
   inset: 0;
   overflow: hidden;
   background:
-    radial-gradient(circle at 18% 12%, rgba(232, 41, 74, 0.28), transparent 24rem),
-    radial-gradient(circle at 82% 18%, rgba(93, 214, 255, 0.25), transparent 28rem),
+    radial-gradient(circle at 18% 18%, rgba(232, 41, 74, 0.28), transparent 26rem),
+    radial-gradient(circle at 82% 20%, rgba(108, 92, 231, 0.24), transparent 30rem),
+    radial-gradient(circle at 48% 82%, rgba(0, 168, 130, 0.16), transparent 28rem),
     linear-gradient(135deg, #040a15 0%, #071426 42%, #10365f 100%);
 }
 
@@ -84,34 +199,43 @@ body {
 .login-wave-bg::after {
   content: "";
   position: absolute;
-  left: -18%;
-  width: 136%;
-  height: 42%;
-  opacity: 0.42;
-  background-repeat: repeat-x;
-  background-size: 45rem 100%;
-  animation: waveMove 14s linear infinite;
+  pointer-events: none;
 }
 
 .login-wave-bg::before {
-  bottom: 8%;
-  background-image: radial-gradient(70% 90% at 50% 100%, transparent 58%, rgba(93, 214, 255, 0.3) 59%, transparent 61%);
+  left: -18%;
+  top: 28%;
+  width: 42rem;
+  height: 10rem;
+  background:
+    radial-gradient(ellipse at 18% 50%, rgba(255, 107, 53, 0), transparent 16%),
+    radial-gradient(ellipse at 32% 46%, rgba(255, 107, 53, 0.5), transparent 18%),
+    radial-gradient(ellipse at 50% 54%, rgba(255, 107, 53, 0.36), transparent 20%),
+    radial-gradient(ellipse at 68% 44%, rgba(255, 107, 53, 0.48), transparent 18%),
+    radial-gradient(ellipse at 86% 52%, rgba(255, 107, 53, 0.22), transparent 16%);
+  border-radius: 60% 38% 58% 42% / 48% 62% 38% 52%;
+  filter: blur(18px);
+  mix-blend-mode: screen;
+  opacity: 0.9;
+  transform-origin: center;
+  animation: neonSnakeSwim 12s cubic-bezier(0.45, 0, 0.2, 1) infinite;
 }
 
 .login-wave-bg::after {
-  bottom: -5%;
-  opacity: 0.5;
-  animation-duration: 19s;
-  animation-direction: reverse;
-  background-image: radial-gradient(70% 90% at 50% 0%, rgba(232, 41, 74, 0.18) 0%, transparent 62%);
+  inset: 0;
+  opacity: 0.34;
+  background:
+    linear-gradient(115deg, transparent 0 42%, rgba(93, 214, 255, 0.12) 48%, transparent 56%),
+    linear-gradient(65deg, transparent 0 48%, rgba(232, 41, 74, 0.1) 54%, transparent 62%);
+  mask-image: radial-gradient(circle at center, black, transparent 72%);
 }
 
 @keyframes loaderBar {
   from {
-    transform: scaleX(0);
+    width: 0;
   }
   to {
-    transform: scaleX(1);
+    width: 100%;
   }
 }
 
@@ -128,5 +252,49 @@ body {
   }
   to {
     transform: translateX(-45rem);
+  }
+}
+
+@keyframes neonSnakeSwim {
+  0% {
+    border-radius: 60% 38% 58% 42% / 48% 62% 38% 52%;
+    transform: translate3d(-10vw, 34vh, 0) rotate(-16deg) skewX(-10deg) scaleX(0.9);
+  }
+  12% {
+    transform: translate3d(10vw, 8vh, 0) rotate(12deg) skewX(16deg) scaleX(1.08);
+  }
+  25% {
+    border-radius: 42% 58% 35% 65% / 62% 34% 66% 38%;
+    transform: translate3d(42vw, -4vh, 0) rotate(-8deg) skewX(-18deg) scaleX(1.18);
+  }
+  38% {
+    transform: translate3d(70vw, 20vh, 0) rotate(18deg) skewX(14deg) scaleX(0.96);
+  }
+  50% {
+    border-radius: 66% 34% 56% 44% / 42% 58% 36% 64%;
+    transform: translate3d(96vw, 4vh, 0) rotate(-18deg) skewX(-12deg) scaleX(1.12);
+  }
+  63% {
+    transform: translate3d(72vw, 44vh, 0) rotate(15deg) skewX(18deg) scaleX(0.9);
+  }
+  76% {
+    border-radius: 36% 64% 48% 52% / 58% 40% 60% 42%;
+    transform: translate3d(38vw, 58vh, 0) rotate(-10deg) skewX(-16deg) scaleX(1.15);
+  }
+  88% {
+    transform: translate3d(8vw, 40vh, 0) rotate(20deg) skewX(12deg) scaleX(1);
+  }
+  100% {
+    border-radius: 60% 38% 58% 42% / 48% 62% 38% 52%;
+    transform: translate3d(-10vw, 34vh, 0) rotate(-16deg) skewX(-10deg) scaleX(0.9);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
   }
 }

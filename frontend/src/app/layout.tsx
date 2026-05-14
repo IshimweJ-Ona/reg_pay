@@ -31,6 +31,7 @@ export default function RootLayout({
       <body className="min-h-full flex flex-col">
         <PageLoader />
         {children}
+        <div id="toast" />
       </body>
     </html>
   );
