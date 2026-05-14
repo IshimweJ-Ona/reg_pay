@@ -32,6 +32,11 @@ export class CreateEmployeeDto {
 
   @IsOptional()
   @IsString()
+  @IsNotEmpty()
+  password?: string;
+
+  @IsOptional()
+  @IsString()
   national_id?: string;
 
   @IsEnum(GENDER)

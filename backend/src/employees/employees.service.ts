@@ -14,6 +14,7 @@ import {
   TRANSFER_SUBJECT,
 } from '@prisma/client';
 import type { CurrentUserType } from '../auth/types/current-user.type';
+import { hashPassword } from '../auth/utils/password.util';
 import { RejectTransferDto } from '../common/dto/reject-transfer.dto';
 import { generateUUID } from '../common/utils/uuid.util';
 import { PrismaService } from '../prisma/prisma.service';
@@ -44,12 +45,50 @@ export class EmployeesService {
     }
     if (categoryId) await this.ensureEmploymentCategory(categoryId);
     if (userId) await this.ensureUserCanBeLinked(userId);
+    if (dto.password && userId) {
+      throw new BadRequestException('Use either user_id or password, not both.');
+    }
+    if (dto.password && (!dto.email || !dto.phone_number)) {
+      throw new BadRequestException(
+        'Email and phone number are required when creating an employee login.',
+      );
+    }
+    if (dto.password) {
+      const existingUser = await this.prisma.users.findFirst({
+        where: {
+          OR: [{ email: dto.email }, { phone_number: dto.phone_number }],
+          deleted_at: null,
+        },
+        select: { id: true },
+      });
+
+      if (existingUser) {
+        throw new ConflictException('A user with this email or phone already exists.');
+      }
+    }
 
     const employee = await this.prisma.$transaction(async (tx) => {
+      const linkedUser = dto.password
+        ? await tx.users.create({
+            data: {
+              uuid: generateUUID(),
+              first_name: dto.first_name,
+              last_name: dto.last_name,
+              email: dto.email!,
+              phone_number: dto.phone_number!,
+              gender: dto.gender,
+              password_hash: await hashPassword(dto.password),
+              department_id: departmentId,
+              working_location_id: workingLocationId,
+              status: STATUS_USER.INACTIVE,
+            },
+          })
+        : null;
+
       const created = await tx.employees.create({
         data: {
           uuid: generateUUID(),
-          user_id: userId,
+          user_id: linkedUser?.id ?? userId,
           first_name: dto.first_name,
           last_name: dto.last_name,
           email: dto.email,
