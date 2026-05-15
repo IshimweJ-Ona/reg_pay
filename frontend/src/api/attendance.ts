@@ -30,6 +30,29 @@ export const approveTimeRecord = async (uuid: string, comment?: string) => {
     return response.data;
 };
 
+export const getTimeRecords = async () => {
+    const response = await api.get("/time-records");
+    return response.data;
+};
+
+export const getAttendance = getTimeRecords;
+
+export const createAttendance = async (payload: any) => {
+    return createTimeRecord({
+        employee_id: payload.employee_id ?? payload.employee_uuid,
+        attendance_date: payload.attendance_date ?? payload.date,
+        attendance_status: payload.attendance_status ?? payload.status,
+        clock_in: payload.clock_in,
+    });
+};
+
+export const updateAttendance = async (uuid: string, payload: any) => {
+    return clockOutTimeRecord(uuid, {
+        clock_out: payload.clock_out,
+        attendance_status: payload.attendance_status ?? payload.status,
+    });
+};
+
 export const getTimeRecordsByEmployee = async (employeeId: string) => {
     const response = await api.get(`/time-records/employee/${employeeId}`);
     return response.data;

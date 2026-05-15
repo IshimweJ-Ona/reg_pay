@@ -16,6 +16,8 @@ export interface RegisterUserPayload {
     gender: Gender;
     department_id?: string;
     working_location_id?: string;
+    role_ids?: string[];
+    permission_ids?: string[];
 }
 
 export interface TokenPair {
@@ -28,6 +30,9 @@ export interface JwtUser {
     sub: string;
     email: string;
     phone_number: string;
+    first_name: string;
+    last_name: string;
+    status: string;
     roles: string[];
     permissions: string[];
     working_location_id: string | null;
@@ -43,6 +48,11 @@ export const login = async (payload: LoginPayload): Promise<TokenPair> => {
 
 export const registerUser = async (payload: RegisterUserPayload) => {
     const response = await api.post("/auth/register", payload);
+    return response.data;
+};
+
+export const getMyProfile = async () => {
+    const response = await api.get("/auth/me");
     return response.data;
 };
 

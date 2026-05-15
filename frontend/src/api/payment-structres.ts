@@ -33,7 +33,7 @@ export interface CreateEmployeeDeductionPayload {
 }
 
 export const createPaymentStructure = async (
-    payload: CreatePaymentStructurePayload,
+    payload: Partial<CreatePaymentStructurePayload> | any,
 ) => {
     const response = await api.post("/payment-structures", payload);
     return response.data;
@@ -41,7 +41,7 @@ export const createPaymentStructure = async (
 
 export const updatePaymentStructure = async (
     uuid: string,
-    payload: UpdatePaymentStructurePayload,
+    payload: UpdatePaymentStructurePayload | any,
 ) => {
     const response = await api.patch(`/payment-structures/${uuid}`, payload);
     return response.data;
@@ -59,6 +59,16 @@ export const getActivePaymentStructureByEmployee = async (employeeId: string) =>
     return response.data;
 };
 
+export const getPaymentStructures = async (): Promise<any> => {
+    return [];
+};
+
+export const deletePaymentStructure = async (
+    uuid: string,
+) => {
+    return updatePaymentStructure(uuid, { effective_to: new Date().toISOString() });
+};
+
 export const createDeductionType = async (
     payload: CreateDeductionTypePayload,
 ) => {
@@ -67,7 +77,7 @@ export const createDeductionType = async (
 };
 
 export const getDeductionTypes = async () => {
-    const response = await api.get("/payment-structures/decution-types");
+    const response = await api.get("/payment-structures/deduction-types");
     return response.data;
 };
 
@@ -85,13 +95,13 @@ export const updateDeductionType = async (
 export const createEmployeeDeduction = async (
     payload: CreateEmployeeDeductionPayload,
 ) => {
-    const response = await api.post("/payment-structures/employee-dedductions", payload);
+    const response = await api.post("/payment-structures/employee-deductions", payload);
     return response.data;
 };
 
 export const getEmployeeDeductions = async (employeeId: string) => {
     const response = await api.get(
-        `/payment-structures/employee-dedductions/empoyee/${employeeId}`,
+        `/payment-structures/employee-deductions/employee/${employeeId}`,
     );
     return response.data;
 };

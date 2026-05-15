@@ -8,7 +8,7 @@ export interface CreatePayrollBatchPayload {
     payment_method: "BANK" | "CASH" | "MOMO";
 }
 
-export const createPayrollBatch = async (payload: CreatePayrollBatchPayload) => {
+export const createPayrollBatch = async (payload: Partial<CreatePayrollBatchPayload> | any) => {
     const response = await api.post("/payroll/batches", payload);
     return response.data;
 };
@@ -38,6 +38,10 @@ export const rejectPayrollBatch = async (
         rejection_reason,
     });
     return response.data;
+};
+
+export const updatePayrollBatch = async (uuid: string, payload: any) => {
+    return approvePayrollBatch(uuid, payload?.comment);
 };
 
 export const approvePayrollItem = async (uuid: string, comment?: string) => {

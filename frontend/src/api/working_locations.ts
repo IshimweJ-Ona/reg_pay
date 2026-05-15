@@ -31,29 +31,53 @@ export interface CreateDepartmentPayload {
     description?: string;
 }
 
-export const getWorkingLocations = async (): Promise<WorkingLocation[]> => {
+export const getWorkingLocations = async (): Promise<any> => {
     const response = await api.get("/organization/working-locations");
     return response.data;
 };
 
-export const createWorkingLocation = async (
-    payload: CreateWorkingLocationPayload,
-) => {
+export const createWorkingLocation = async (payload: Partial<CreateWorkingLocationPayload> | any) => {
     const response = await api.post("/organization/working-locations", payload);
+    return response.data;
+};
+
+export const updateWorkingLocation = async (
+    uuid: string,
+    payload: Partial<CreateWorkingLocationPayload>,
+) => {
+    const response = await api.patch(`/organization/working-locations/${uuid}`, payload);
+    return response.data;
+};
+
+export const deleteWorkingLocation = async (uuid: string) => {
+    const response = await api.patch(`/organization/working-locations/${uuid}/delete`);
     return response.data;
 };
 
 export const getDepartments = async (
     working_location_id?: string,
-): Promise<Department[]> => {
+): Promise<any> => {
     const response = await api.get("/organization/departments", {
         params: { working_location_id },
     });
     return response.data;
 };
 
-export const createDepartment = async (payload: CreateDepartmentPayload) => {
+export const createDepartment = async (payload: Partial<CreateDepartmentPayload> | any) => {
     const response = await api.post("/organization/departments", payload);
+    return response.data;
+};
+
+export const updateDepartment = async (
+    uuid: string,
+    payload: Partial<CreateDepartmentPayload>,
+) => {
+    const response = await api.patch(`/organization/departments/${uuid}`, payload);
+    return response.data;
+};
+
+export const deleteDepartment = async (uuid: string) => {
+    const response = await api.patch(`/organization/departments/${uuid}/delete`);
     return response.data;
 };
 

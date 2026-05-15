@@ -5,6 +5,7 @@ export interface ApproveUserPayload {
     working_location_id: string;
     department_id: string;
     role_ids?: string[];
+    permission_ids?: string[];
 }
 
 export interface RequestUserTransferPayload {
@@ -13,7 +14,7 @@ export interface RequestUserTransferPayload {
     reason?: string;
 }
 
-export const createUser = async (payload: RegisterUserPayload) => {
+export const createUser = async (payload: Partial<RegisterUserPayload>) => {
     const response = await api.post("/users", payload);
     return response.data;
 };
@@ -41,6 +42,18 @@ export const rejectUser = async (uuid: string, reason: string) => {
 export const suspendUser = async (uuid: string) => {
     const response = await api.patch(`/users/${uuid}/suspend`);
     return response.data;
+};
+
+export const updateUser = async (
+    uuid: string,
+    payload: Partial<RegisterUserPayload & ApproveUserPayload>,
+) => {
+    const response = await api.patch(`/users/${uuid}/approve`, payload);
+    return response.data;
+};
+
+export const deleteUser = async (uuid: string) => {
+    return suspendUser(uuid);
 };
 
 export const assignUserRoles = async (uuid: string, role_ids: string[]) => {

@@ -1,9 +1,9 @@
-⚠ Port 3000 is in use by process 29048, using available port 3001 instead.
+⚠ Port 3000 is in use by process 14188, using available port 3001 instead.
 ⨯ Another next dev server is already running.
 
 - Local:        http://localhost:3000
-- PID:          29048
+- PID:          14188
 - Dir:          C:\Users\siboa\Music\reg_pay\reg_pay\frontend
 - Log:          .next\dev\logs\next-development.log
 
-Run taskkill /PID 29048 /F to stop it.
+Run taskkill /PID 14188 /F to stop it.
