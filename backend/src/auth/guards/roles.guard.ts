@@ -5,6 +5,7 @@ import {
   Injectable,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { PERMISSIONS_KEY } from '../decorators/permissions.decorator';
 import { ROLES_KEY } from '../decorators/roles.decorator';
 import type { CurrentUserType } from '../types/current-user.type';
 
@@ -23,6 +24,24 @@ export class RolesGuard implements CanActivate {
     const { user } = context.switchToHttp().getRequest<{
       user?: CurrentUserType;
     }>();
+
+    if (user?.roles?.some((role) => ['SUPER_ADMIN', 'ADMIN'].includes(role))) {
+      return true;
+    }
+
+    const requiredPermissions = this.reflector.getAllAndOverride<string[]>(
+      PERMISSIONS_KEY,
+      [context.getHandler(), context.getClass()],
+    );
+
+    if (
+      requiredPermissions?.length &&
+      requiredPermissions.some((permission) =>
+        user?.permissions?.includes(permission),
+      )
+    ) {
+      return true;
+    }
 
     const hasRole = requiredRoles.some((role) => user?.roles?.includes(role));
 

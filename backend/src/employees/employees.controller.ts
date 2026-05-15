@@ -15,8 +15,6 @@ import { PermissionsGuard } from '../auth/guards/permissions.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import type { CurrentUserType } from '../auth/types/current-user.type';
 import { RejectTransferDto } from '../common/dto/reject-transfer.dto';
-import { AssignUserAccountDto } from './dto/assign-user-account.dto';
-import { ApproveEmployeeDto } from './dto/approve-employee.dto';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { SuspendEmployeeDto } from './dto/suspend-employee.dto';
 import { TransferEmployeeDto } from './dto/transfer-employee.dto';
@@ -25,11 +23,6 @@ import { EmployeesService } from './employees.service';
 @Controller('employees')
 export class EmployeesController {
   constructor(private readonly employeesService: EmployeesService) {}
-
-  @Post('register')
-  register(@Body() dto: CreateEmployeeDto) {
-    return this.employeesService.create(dto);
-  }
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
   @Roles('SUPER_ADMIN', 'ADMIN', 'HR_MANAGER', 'BRANCH_MANAGER')
@@ -46,40 +39,16 @@ export class EmployeesController {
   @Roles('SUPER_ADMIN', 'ADMIN', 'HR_MANAGER', 'BRANCH_MANAGER')
   @Permissions('employees.read')
   @Get()
-  findAll() {
-    return this.employeesService.findAll();
+  findAll(@CurrentUser() actor: CurrentUserType) {
+    return this.employeesService.findAll(actor);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
   @Roles('SUPER_ADMIN', 'ADMIN', 'HR_MANAGER', 'BRANCH_MANAGER')
   @Permissions('employees.read')
   @Get(':uuid')
-  findOne(@Param('uuid') uuid: string) {
-    return this.employeesService.findOne(uuid);
-  }
-
-  @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
-  @Roles('SUPER_ADMIN', 'ADMIN', 'HR_MANAGER', 'BRANCH_MANAGER')
-  @Permissions('employees.approve')
-  @Patch(':uuid/approve')
-  approve(
-    @Param('uuid') uuid: string,
-    @Body() dto: ApproveEmployeeDto,
-    @CurrentUser() actor: CurrentUserType,
-  ) {
-    return this.employeesService.approve(uuid, dto, actor);
-  }
-
-  @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
-  @Roles('SUPER_ADMIN', 'ADMIN', 'HR_MANAGER', 'BRANCH_MANAGER')
-  @Permissions('employees.update')
-  @Patch(':uuid/link-user')
-  assignUserAccount(
-    @Param('uuid') uuid: string,
-    @Body() dto: AssignUserAccountDto,
-    @CurrentUser() actor: CurrentUserType,
-  ) {
-    return this.employeesService.assignUserAccount(uuid, dto, actor);
+  findOne(@Param('uuid') uuid: string, @CurrentUser() actor: CurrentUserType) {
+    return this.employeesService.findOne(uuid, actor);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)

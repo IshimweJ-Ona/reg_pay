@@ -99,6 +99,7 @@ export class OrganizationService {
     if (!workingLocation) {
       throw new NotFoundException('Working location not found.');
     }
+    this.ensureActorCanUseWorkingLocation(actor, workingLocationId);
 
     const department = await this.prisma.$transaction(async (tx) => {
       const created = await tx.departments.create({
@@ -292,6 +293,20 @@ export class OrganizationService {
       updated_by: workingLocation.updated_by?.toString() ?? null,
       deleted_by: workingLocation.deleted_by?.toString() ?? null,
     };
+  }
+
+  private ensureActorCanUseWorkingLocation(
+    actor: CurrentUserType,
+    workingLocationId: bigint,
+  ) {
+    if (actor.roles.some((role) => ['SUPER_ADMIN', 'ADMIN'].includes(role))) return;
+    if (
+      actor.roles.includes('BRANCH_MANAGER') &&
+      actor.working_location_id === workingLocationId.toString()
+    ) {
+      return;
+    }
+    throw new BadRequestException('You can only manage your working location.');
   }
 
   private serializeDepartment(department: Record<string, any>) {

@@ -15,6 +15,7 @@ import { PermissionsGuard } from '../auth/guards/permissions.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import type { CurrentUserType } from '../auth/types/current-user.type';
 import { AssignPermissionDto } from './dto/assign-permission.dto';
+import { AssignUserPermissionDto } from './dto/assign-user-permission.dto';
 import { CreatePermissionDto } from './dto/create-permission.dto';
 import { PermissionsService } from './permissions.service';
 
@@ -55,5 +56,23 @@ export class PermissionsController {
     @CurrentUser() actor: CurrentUserType,
   ) {
     return this.permissionsService.removeFromRole(dto, actor);
+  }
+
+  @Permissions('permissions.assign')
+  @Post('assign-user')
+  assignToUser(
+    @Body() dto: AssignUserPermissionDto,
+    @CurrentUser() actor: CurrentUserType,
+  ) {
+    return this.permissionsService.assignToUser(dto, actor);
+  }
+
+  @Permissions('permissions.assign')
+  @Delete('assign-user')
+  removeFromUser(
+    @Query() dto: AssignUserPermissionDto,
+    @CurrentUser() actor: CurrentUserType,
+  ) {
+    return this.permissionsService.removeFromUser(dto, actor);
   }
 }

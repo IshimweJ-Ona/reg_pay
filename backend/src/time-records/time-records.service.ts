@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -26,7 +27,8 @@ export class TimeRecordsService {
 
   async create(dto: CreateTimeRecordDto, actor: CurrentUserType) {
     const employeeId = this.toBigInt(dto.employee_id, 'employee_id');
-    await this.ensureEmployee(employeeId);
+    const employee = await this.ensureEmployee(employeeId);
+    this.ensureActorCanAccessEmployee(actor, employee);
 
     const attendanceDate = new Date(dto.attendance_date);
     const existing = await this.prisma.time_records.findFirst({
@@ -75,6 +77,7 @@ export class TimeRecordsService {
 
   async clockOut(uuid: string, dto: UpdateTimeRecordDto, actor: CurrentUserType) {
     const record = await this.findByUuidOrThrow(uuid);
+    this.ensureActorCanAccessEmployee(actor, record.employee);
     const clockOut = dto.clock_out ? new Date(dto.clock_out) : new Date();
 
     if (!record.clock_in) {
@@ -126,6 +129,7 @@ export class TimeRecordsService {
 
   async approve(uuid: string, dto: ApproveTimeRecordDto, actor: CurrentUserType) {
     const record = await this.findByUuidOrThrow(uuid);
+    this.ensureActorCanAccessEmployee(actor, record.employee);
 
     const approved = await this.prisma.$transaction(async (tx) => {
       const saved = await tx.time_records.update({
@@ -157,8 +161,26 @@ export class TimeRecordsService {
     return this.serialize(approved);
   }
 
-  async findByEmployee(employeeIdInput: string) {
+  async findAll(actor: CurrentUserType) {
+    const records = await this.prisma.time_records.findMany({
+      where: {
+        employee: {
+          deleted_at: null,
+          ...this.employeeScopeWhere(actor),
+        },
+      },
+      include: this.includes(),
+      orderBy: { attendance_date: 'desc' },
+    });
+
+    return records.map((record) => this.serialize(record));
+  }
+
+  async findByEmployee(employeeIdInput: string, actor: CurrentUserType) {
     const employeeId = this.toBigInt(employeeIdInput, 'employee_id');
+    const employee = await this.ensureEmployee(employeeId);
+    this.ensureActorCanAccessEmployee(actor, employee);
+
     const records = await this.prisma.time_records.findMany({
       where: { employee_id: employeeId },
       include: this.includes(),
@@ -169,7 +191,10 @@ export class TimeRecordsService {
   }
 
   private async findByUuidOrThrow(uuid: string) {
-    const record = await this.prisma.time_records.findUnique({ where: { uuid } });
+    const record = await this.prisma.time_records.findUnique({
+      where: { uuid },
+      include: { employee: true },
+    });
 
     if (!record) throw new NotFoundException('Time record not found.');
 
@@ -179,10 +204,11 @@ export class TimeRecordsService {
   private async ensureEmployee(employeeId: bigint) {
     const employee = await this.prisma.employees.findFirst({
       where: { id: employeeId, deleted_at: null },
-      select: { id: true },
+      select: { id: true, working_location_id: true, department_id: true },
     });
 
     if (!employee) throw new BadRequestException('Employee does not exist.');
+    return employee;
   }
 
   private includes() {
@@ -204,7 +230,7 @@ export class TimeRecordsService {
         ? {
             ...record.employee,
             id: record.employee.id.toString(),
-            user_id: record.employee.user_id?.toString() ?? null,
+            created_by: record.employee.created_by?.toString() ?? null,
             department_id: record.employee.department_id?.toString() ?? null,
             working_location_id: record.employee.working_location_id?.toString() ?? null,
             employment_category_id:
@@ -228,5 +254,47 @@ export class TimeRecordsService {
     }
 
     return BigInt(value);
+  }
+
+  private isSystemAdmin(actor?: CurrentUserType) {
+    return !!actor?.roles?.some((role) => ['SUPER_ADMIN', 'ADMIN'].includes(role));
+  }
+
+  private employeeScopeWhere(actor: CurrentUserType) {
+    if (this.isSystemAdmin(actor)) return {};
+
+    const where: Record<string, any> = {};
+    if (actor.working_location_id) {
+      where.working_location_id = BigInt(actor.working_location_id);
+    }
+    if (actor.department_id) {
+      where.department_id = BigInt(actor.department_id);
+    }
+
+    return where;
+  }
+
+  private ensureActorCanAccessEmployee(
+    actor: CurrentUserType,
+    employee: {
+      working_location_id?: bigint | null;
+      department_id?: bigint | null;
+    },
+  ) {
+    if (this.isSystemAdmin(actor)) return;
+
+    if (
+      actor.working_location_id &&
+      employee.working_location_id?.toString() !== actor.working_location_id
+    ) {
+      throw new ForbiddenException('You can only manage attendance in your working location.');
+    }
+
+    if (
+      actor.department_id &&
+      employee.department_id?.toString() !== actor.department_id
+    ) {
+      throw new ForbiddenException('You can only manage attendance for your department.');
+    }
   }
 }

@@ -24,7 +24,7 @@ import { ApproveUserDto } from './dto/approve-user.dto';
 export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async createUser(data: RegisterDto) {
+  async createUser(data: RegisterDto, actor?: CurrentUserType) {
     const existingUser = await this.prisma.users.findFirst({
       where: {
         OR: [{ email: data.email }, { phone_number: data.phone_number }],
@@ -35,32 +35,103 @@ export class UsersService {
       throw new BadRequestException('User already exists');
     }
 
-    const user = await this.prisma.users.create({
-      data: {
-        uuid: generateUUID(),
-        first_name: data.first_name,
-        last_name: data.last_name,
-        email: data.email,
-        phone_number: data.phone_number,
-        password_hash: await hashPassword(data.password),
-        gender: data.gender,
-        department_id: data.department_id ? BigInt(data.department_id) : null,
-        working_location_id: data.working_location_id
-          ? BigInt(data.working_location_id)
-          : null,
-        status: STATUS_USER.INACTIVE,
-      },
+    const workingLocationId = data.working_location_id
+      ? this.toBigInt(data.working_location_id, 'working_location_id')
+      : null;
+    const departmentId = data.department_id
+      ? this.toBigInt(data.department_id, 'department_id')
+      : null;
+    const roleIds = data.role_ids?.map((roleId) => this.toBigInt(roleId, 'role_id')) ?? [];
+    const permissionIds =
+      data.permission_ids?.map((permissionId) =>
+        this.toBigInt(permissionId, 'permission_id'),
+      ) ?? [];
+
+    if (workingLocationId) await this.ensureWorkingLocationExists(workingLocationId);
+    if (departmentId) {
+      if (!workingLocationId) {
+        throw new BadRequestException('working_location_id is required with department_id.');
+      }
+      await this.ensureDepartmentExists(departmentId, workingLocationId);
+    }
+    if (actor) this.ensureActorCanManageUser(actor, workingLocationId);
+    if (roleIds.length) await this.ensureRolesExist(roleIds, false);
+    if (permissionIds.length) await this.ensurePermissionsExist(permissionIds);
+
+    const user = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.users.create({
+        data: {
+          uuid: generateUUID(),
+          first_name: data.first_name,
+          last_name: data.last_name,
+          email: data.email,
+          phone_number: data.phone_number,
+          password_hash: await hashPassword(data.password),
+          gender: data.gender,
+          department_id: departmentId,
+          working_location_id: workingLocationId,
+          status: STATUS_USER.ACTIVE,
+        },
+      });
+
+      if (roleIds.length) {
+        await tx.user_roles.createMany({
+          data: roleIds.map((roleId) => ({
+            user_id: created.id,
+            role_id: roleId,
+          })),
+          skipDuplicates: true,
+        });
+      }
+
+      if (permissionIds.length) {
+        await tx.user_permissions.createMany({
+          data: permissionIds.map((permissionId) => ({
+            user_id: created.id,
+            permission_id: permissionId,
+            granted_by: actor ? BigInt(actor.userId) : null,
+          })),
+          skipDuplicates: true,
+        });
+      }
+
+      if (actor) {
+        await tx.audit_logs.create({
+          data: {
+            user_id: BigInt(actor.userId),
+            entity_table: 'users',
+            entity_id: created.id,
+            module_name: 'USER_MANAGEMENT',
+            activity_type: ACTIVITY_TYPE.CREATE,
+            activity_description: 'Created active user account.',
+            action: AUDIT_ACTION.CREATED,
+            new_values: {
+              working_location_id: workingLocationId?.toString() ?? null,
+              department_id: departmentId?.toString() ?? null,
+              role_ids: roleIds.map((roleId) => roleId.toString()),
+              permission_ids: permissionIds.map((permissionId) =>
+                permissionId.toString(),
+              ),
+            },
+          },
+        });
+      }
+
+      return tx.users.findUniqueOrThrow({
+        where: { id: created.id },
+        include: this.userIncludes(),
+      });
     });
 
     return {
-      message: 'User created. Approval pending.',
+      message: 'User created and activated.',
       user: this.serializeUser(user),
     };
   }
 
-  async findAll() {
+  async findAll(actor: CurrentUserType) {
     const users = await this.prisma.users.findMany({
-      where: { deleted_at: null },
+      where: { deleted_at: null, ...this.userScopeWhere(actor) },
       include: this.userIncludes(),
       orderBy: { created_at: 'desc' },
     });
@@ -90,10 +161,16 @@ export class UsersService {
     const workingLocationId = this.toBigInt(dto.working_location_id, 'working_location_id');
     const departmentId = this.toBigInt(dto.department_id, 'department_id');
     const roleIds = dto.role_ids?.map((roleId) => this.toBigInt(roleId, 'role_id')) ?? [];
+    const permissionIds =
+      dto.permission_ids?.map((permissionId) =>
+        this.toBigInt(permissionId, 'permission_id'),
+      ) ?? [];
 
     await this.ensureWorkingLocationExists(workingLocationId);
     await this.ensureDepartmentExists(departmentId, workingLocationId);
     await this.ensureRolesExist(roleIds);
+    if (permissionIds.length) await this.ensurePermissionsExist(permissionIds);
+    this.ensureActorCanManageUser(actor, user.working_location_id ?? workingLocationId);
 
     const updatedUser = await this.prisma.$transaction(async (tx) => {
       await tx.users.update({
@@ -116,6 +193,18 @@ export class UsersService {
         });
       }
 
+      await tx.user_permissions.deleteMany({ where: { user_id: user.id } });
+      if (permissionIds.length) {
+        await tx.user_permissions.createMany({
+          data: permissionIds.map((permissionId) => ({
+            user_id: user.id,
+            permission_id: permissionId,
+            granted_by: BigInt(actor.userId),
+          })),
+          skipDuplicates: true,
+        });
+      }
+
       await tx.audit_logs.create({
         data: {
           user_id: BigInt(actor.userId),
@@ -131,8 +220,17 @@ export class UsersService {
             working_location_id: workingLocationId.toString(),
             department_id: departmentId.toString(),
             role_ids: roleIds.map((roleId) => roleId.toString()),
+            permission_ids: permissionIds.map((permissionId) =>
+              permissionId.toString(),
+            ),
           },
-          changed_fields: ['status', 'working_location_id', 'department_id', 'roles'],
+          changed_fields: [
+            'status',
+            'working_location_id',
+            'department_id',
+            'roles',
+            'permissions',
+          ],
         },
       });
 
@@ -404,10 +502,11 @@ export class UsersService {
     }
   }
 
-  private async ensureRolesExist(roleIds: bigint[]) {
-    if (!roleIds.length) {
+  private async ensureRolesExist(roleIds: bigint[], requireAtLeastOne = true) {
+    if (!roleIds.length && requireAtLeastOne) {
       throw new BadRequestException('At least one role is required for activation.');
     }
+    if (!roleIds.length) return;
 
     const roles = await this.prisma.roles.findMany({
       where: { id: { in: roleIds } },
@@ -416,6 +515,17 @@ export class UsersService {
 
     if (roles.length !== roleIds.length) {
       throw new BadRequestException('One or more roles do not exist.');
+    }
+  }
+
+  private async ensurePermissionsExist(permissionIds: bigint[]) {
+    const permissions = await this.prisma.permissions.findMany({
+      where: { id: { in: permissionIds } },
+      select: { id: true },
+    });
+
+    if (permissions.length !== permissionIds.length) {
+      throw new BadRequestException('One or more permissions do not exist.');
     }
   }
 
@@ -441,6 +551,11 @@ export class UsersService {
           role: true,
         },
       },
+      user_permissions: {
+        include: {
+          permission: true,
+        },
+      },
     };
   }
 
@@ -454,6 +569,12 @@ export class UsersService {
         id: userRole.id.toString(),
         role_id: userRole.role_id.toString(),
         name: userRole.role?.name,
+      })),
+      permissions: user.user_permissions?.map((userPermission) => ({
+        id: userPermission.id.toString(),
+        permission_id: userPermission.permission_id.toString(),
+        permission_key: userPermission.permission?.permission_key,
+        name: userPermission.permission?.name,
       })),
       working_location: user.working_location
         ? {
@@ -487,6 +608,37 @@ export class UsersService {
       requested_by: request.requested_by.toString(),
       approved_by: request.approved_by?.toString() ?? null,
     };
+  }
+
+  private isSystemAdmin(actor?: CurrentUserType) {
+    return !!actor?.roles?.some((role) => ['SUPER_ADMIN', 'ADMIN'].includes(role));
+  }
+
+  private isBranchManager(actor?: CurrentUserType) {
+    return !!actor?.roles?.includes('BRANCH_MANAGER');
+  }
+
+  private userScopeWhere(actor: CurrentUserType) {
+    if (this.isSystemAdmin(actor)) return {};
+    if (this.isBranchManager(actor) && actor.working_location_id) {
+      return { working_location_id: BigInt(actor.working_location_id) };
+    }
+    return { id: BigInt(actor.userId) };
+  }
+
+  private ensureActorCanManageUser(
+    actor: CurrentUserType,
+    workingLocationId?: bigint | null,
+  ) {
+    if (this.isSystemAdmin(actor)) return;
+    if (
+      this.isBranchManager(actor) &&
+      actor.working_location_id &&
+      workingLocationId?.toString() === actor.working_location_id
+    ) {
+      return;
+    }
+    throw new BadRequestException('You can only manage users in your working location.');
   }
 
   private toBigInt(value: string, fieldName: string): bigint {

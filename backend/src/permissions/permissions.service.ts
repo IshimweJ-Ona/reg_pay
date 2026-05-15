@@ -9,6 +9,7 @@ import type { CurrentUserType } from '../auth/types/current-user.type';
 import { generateUUID } from '../common/utils/uuid.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { AssignPermissionDto } from './dto/assign-permission.dto';
+import { AssignUserPermissionDto } from './dto/assign-user-permission.dto';
 import { CreatePermissionDto } from './dto/create-permission.dto';
 
 @Injectable()
@@ -155,6 +156,94 @@ export class PermissionsService {
     return { message: 'Permission removed from role.' };
   }
 
+  async assignToUser(dto: AssignUserPermissionDto, actor: CurrentUserType) {
+    const userId = this.toBigInt(dto.user_id, 'user_id');
+    const permissionId = this.toBigInt(dto.permission_id, 'permission_id');
+
+    await this.ensureUserAndPermission(userId, permissionId);
+    await this.ensureActorCanGrantUserPermission(actor, userId);
+
+    const assignment = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.user_permissions.upsert({
+        where: {
+          user_id_permission_id: {
+            user_id: userId,
+            permission_id: permissionId,
+          },
+        },
+        update: {},
+        create: {
+          user_id: userId,
+          permission_id: permissionId,
+          granted_by: BigInt(actor.userId),
+        },
+      });
+
+      await tx.audit_logs.create({
+        data: {
+          user_id: BigInt(actor.userId),
+          entity_table: 'user_permissions',
+          entity_id: created.id,
+          module_name: 'RBAC',
+          activity_type: ACTIVITY_TYPE.UPDATE,
+          activity_description: 'Assigned permission directly to user.',
+          action: AUDIT_ACTION.UPDATED,
+          new_values: {
+            user_id: userId.toString(),
+            permission_id: permissionId.toString(),
+          },
+        },
+      });
+
+      return created;
+    });
+
+    return {
+      message: 'Permission assigned to user.',
+      user_permission: this.serializeUserPermission(assignment),
+    };
+  }
+
+  async removeFromUser(dto: AssignUserPermissionDto, actor: CurrentUserType) {
+    const userId = this.toBigInt(dto.user_id, 'user_id');
+    const permissionId = this.toBigInt(dto.permission_id, 'permission_id');
+    await this.ensureActorCanGrantUserPermission(actor, userId);
+
+    const existing = await this.prisma.user_permissions.findUnique({
+      where: {
+        user_id_permission_id: {
+          user_id: userId,
+          permission_id: permissionId,
+        },
+      },
+    });
+
+    if (!existing) {
+      throw new NotFoundException('User permission assignment not found.');
+    }
+
+    await this.prisma.$transaction([
+      this.prisma.user_permissions.delete({ where: { id: existing.id } }),
+      this.prisma.audit_logs.create({
+        data: {
+          user_id: BigInt(actor.userId),
+          entity_table: 'user_permissions',
+          entity_id: existing.id,
+          module_name: 'RBAC',
+          activity_type: ACTIVITY_TYPE.UPDATE,
+          activity_description: 'Removed direct permission from user.',
+          action: AUDIT_ACTION.UPDATED,
+          old_values: {
+            user_id: userId.toString(),
+            permission_id: permissionId.toString(),
+          },
+        },
+      }),
+    ]);
+
+    return { message: 'Permission removed from user.' };
+  }
+
   private async ensureRoleAndPermission(roleId: bigint, permissionId: bigint) {
     const [role, permission] = await Promise.all([
       this.prisma.roles.findUnique({ where: { id: roleId }, select: { id: true } }),
@@ -166,6 +255,50 @@ export class PermissionsService {
 
     if (!role) throw new BadRequestException('Role does not exist.');
     if (!permission) throw new BadRequestException('Permission does not exist.');
+  }
+
+  private async ensureUserAndPermission(userId: bigint, permissionId: bigint) {
+    const [user, permission] = await Promise.all([
+      this.prisma.users.findFirst({
+        where: { id: userId, deleted_at: null },
+        select: { id: true },
+      }),
+      this.prisma.permissions.findUnique({
+        where: { id: permissionId },
+        select: { id: true },
+      }),
+    ]);
+
+    if (!user) throw new BadRequestException('User does not exist.');
+    if (!permission) throw new BadRequestException('Permission does not exist.');
+  }
+
+  private isSystemAdmin(actor: CurrentUserType) {
+    return actor.roles.some((role) => ['SUPER_ADMIN', 'ADMIN'].includes(role));
+  }
+
+  private async ensureActorCanGrantUserPermission(
+    actor: CurrentUserType,
+    userId: bigint,
+  ) {
+    if (this.isSystemAdmin(actor)) return;
+
+    if (!actor.roles.includes('BRANCH_MANAGER') || !actor.working_location_id) {
+      throw new BadRequestException('You can only grant permissions as an administrator or branch manager.');
+    }
+
+    const target = await this.prisma.users.findFirst({
+      where: {
+        id: userId,
+        deleted_at: null,
+        working_location_id: BigInt(actor.working_location_id),
+      },
+      select: { id: true },
+    });
+
+    if (!target) {
+      throw new BadRequestException('Branch managers can only grant permissions within their working location.');
+    }
   }
 
   private serializePermission(permission: Record<string, any>) {
@@ -181,6 +314,16 @@ export class PermissionsService {
       id: rolePermission.id.toString(),
       role_id: rolePermission.role_id.toString(),
       permission_id: rolePermission.permission_id.toString(),
+    };
+  }
+
+  private serializeUserPermission(userPermission: Record<string, any>) {
+    return {
+      ...userPermission,
+      id: userPermission.id.toString(),
+      user_id: userPermission.user_id.toString(),
+      permission_id: userPermission.permission_id.toString(),
+      granted_by: userPermission.granted_by?.toString() ?? null,
     };
   }
 

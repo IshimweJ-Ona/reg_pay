@@ -10,10 +10,6 @@ import {
 } from 'class-validator';
 
 export class CreateEmployeeDto {
-  @IsOptional()
-  @IsString()
-  user_id?: string;
-
   @IsString()
   @IsNotEmpty()
   first_name: string;
@@ -32,15 +28,11 @@ export class CreateEmployeeDto {
 
   @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  password?: string;
-
-  @IsOptional()
-  @IsString()
   national_id?: string;
 
+  @IsOptional()
   @IsEnum(GENDER)
-  gender: GENDER;
+  gender?: GENDER;
 
   @IsOptional()
   @IsDateString()

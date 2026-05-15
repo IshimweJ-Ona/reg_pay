@@ -20,4 +20,10 @@ export class ApproveUserDto {
   @ArrayUnique()
   @IsString({ each: true })
   role_ids?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @ArrayUnique()
+  @IsString({ each: true })
+  permission_ids?: string[];
 }

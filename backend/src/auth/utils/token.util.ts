@@ -15,6 +15,9 @@ export type UserForToken = Pick<
   | 'id'
   | 'email'
   | 'phone_number'
+  | 'first_name'
+  | 'last_name'
+  | 'status'
   | 'working_location_id'
   | 'department_id'
 >;
@@ -27,6 +30,9 @@ export const buildJwtPayload = (
   sub: user.id.toString(),
   email: user.email,
   phone_number: user.phone_number,
+  first_name: user.first_name,
+  last_name: user.last_name,
+  status: user.status,
   roles,
   permissions,
   working_location_id:

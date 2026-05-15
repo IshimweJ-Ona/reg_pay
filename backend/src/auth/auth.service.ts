@@ -83,7 +83,7 @@ export class AuthService {
     });
 
     return {
-      message: 'User registered. Approval pending.',
+      message: 'User registered. You can sign in, but system activities require permissions from an administrator.',
       user,
     };
   }
@@ -107,8 +107,8 @@ export class AuthService {
       throw new UnauthorizedException('Incorrect password.');
     }
 
-    if (user.status !== STATUS_USER.ACTIVE) {
-      throw new UnauthorizedException('Account is not active. Still pending not yet approved.');
+    if (user.status === STATUS_USER.SUSPENDED) {
+      throw new UnauthorizedException('Account is suspended. Contact an administrator.');
     }
 
     const payload = await this.buildPayload(user.id);
@@ -203,6 +203,94 @@ export class AuthService {
     return { message: 'All sessions revoked successfully.' };
   }
 
+  async me(userId: string) {
+    const user = await this.prisma.users.findUniqueOrThrow({
+      where: { id: BigInt(userId) },
+      include: {
+        working_location: true,
+        department: true,
+        roles: { include: { role: true } },
+        user_permissions: { include: { permission: true, grantedBy: true } },
+      },
+    });
+    const admins = await this.prisma.users.findMany({
+      where: {
+        deleted_at: null,
+        status: STATUS_USER.ACTIVE,
+        roles: {
+          some: {
+            role: {
+              name: { in: ['SUPER_ADMIN', 'ADMIN'] },
+            },
+          },
+        },
+      },
+      select: {
+        uuid: true,
+        first_name: true,
+        last_name: true,
+        email: true,
+        phone_number: true,
+      },
+      orderBy: { created_at: 'asc' },
+    });
+    const activityHistory = await this.prisma.audit_logs.findMany({
+      where: { user_id: user.id },
+      orderBy: { created_at: 'desc' },
+      take: 100,
+    });
+
+    return {
+      profile: {
+        uuid: user.uuid,
+        first_name: user.first_name,
+        last_name: user.last_name,
+        email: user.email,
+        phone_number: user.phone_number,
+        gender: user.gender,
+        status: user.status,
+        working_location: user.working_location
+          ? {
+              uuid: user.working_location.uuid,
+              name: user.working_location.name,
+              type: user.working_location.type,
+            }
+          : null,
+        department: user.department
+          ? {
+              uuid: user.department.uuid,
+              name: user.department.name,
+              code: user.department.code,
+            }
+          : null,
+        roles: user.roles.map((userRole) => userRole.role.name),
+        permissions: user.user_permissions.map((userPermission) => ({
+          uuid: userPermission.permission.uuid,
+          key: userPermission.permission.permission_key,
+          name: userPermission.permission.name,
+          module_name: userPermission.permission.module_name,
+          granted_at: userPermission.created_at,
+          granted_by: userPermission.grantedBy
+            ? {
+                uuid: userPermission.grantedBy.uuid,
+                email: userPermission.grantedBy.email,
+                phone_number: userPermission.grantedBy.phone_number,
+              }
+            : null,
+        })),
+      },
+      admin_contacts: admins,
+      activity_history: activityHistory.map((log) => ({
+        id: log.id.toString(),
+        module_name: log.module_name,
+        activity_type: log.activity_type,
+        activity_description: log.activity_description,
+        action: log.action,
+        created_at: log.created_at,
+      })),
+    };
+  }
+
   private async buildPayload(userId: bigint): Promise<JwtPayload> {
     const user = await this.prisma.users.findUniqueOrThrow({
       where: { id: userId },
@@ -213,7 +301,9 @@ export class AuthService {
   }
 
   private async loadUserRbac(userId: bigint) {
-    const userRoles = await this.prisma.user_roles.findMany({
+    const [user, userRoles, userPermissions, activeBranchManager] = await Promise.all([
+      this.prisma.users.findUnique({ where: { id: userId } }),
+      this.prisma.user_roles.findMany({
       where: { user_id: userId },
       include: {
         role: {
@@ -224,15 +314,34 @@ export class AuthService {
           },
         },
       },
-    });
+      }),
+      this.prisma.user_permissions.findMany({
+      where: { user_id: userId },
+      include: { permission: true },
+      }),
+      this.prisma.branch_managers.findFirst({
+        where: { user_id: userId, is_active: true },
+        select: { id: true },
+      }),
+    ]);
 
     const roles = userRoles.map((userRole) => userRole.role.name);
     const permissions = new Set<string>();
+
+    if (activeBranchManager && !roles.includes('BRANCH_MANAGER')) {
+      roles.push('BRANCH_MANAGER');
+    }
+    if (user?.status !== STATUS_USER.ACTIVE) {
+      return { roles, permissions: [] };
+    }
 
     for (const userRole of userRoles) {
       for (const rolePermission of userRole.role.role_permissions) {
         permissions.add(rolePermission.permission.permission_key);
       }
+    }
+    for (const userPermission of userPermissions) {
+      permissions.add(userPermission.permission.permission_key);
     }
 
     return {

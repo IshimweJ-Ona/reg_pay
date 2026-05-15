@@ -8,8 +8,10 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { Permissions } from '../auth/decorators/permissions.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { PermissionsGuard } from '../auth/guards/permissions.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import type { CurrentUserType } from '../auth/types/current-user.type';
 import { RejectTransferDto } from '../common/dto/reject-transfer.dto';
@@ -24,27 +26,33 @@ import { UsersService } from './users.service';
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
+  @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
+  @Roles('SUPER_ADMIN', 'ADMIN', 'BRANCH_MANAGER')
+  @Permissions('users.create')
   @Post()
-  create(@Body() dto: RegisterDto) {
-    return this.usersService.createUser(dto);
+  create(@Body() dto: RegisterDto, @CurrentUser() actor: CurrentUserType) {
+    return this.usersService.createUser(dto, actor);
   }
 
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('SUPER_ADMIN', 'ADMIN')
+  @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
+  @Roles('SUPER_ADMIN', 'ADMIN', 'BRANCH_MANAGER')
+  @Permissions('users.read')
   @Get()
-  findAll() {
-    return this.usersService.findAll();
+  findAll(@CurrentUser() actor: CurrentUserType) {
+    return this.usersService.findAll(actor);
   }
 
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('SUPER_ADMIN', 'ADMIN')
+  @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
+  @Roles('SUPER_ADMIN', 'ADMIN', 'BRANCH_MANAGER')
+  @Permissions('users.read')
   @Get('pending')
   findPending() {
     return this.usersService.findPendingApproval();
   }
 
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('SUPER_ADMIN', 'ADMIN')
+  @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
+  @Roles('SUPER_ADMIN', 'ADMIN', 'BRANCH_MANAGER')
+  @Permissions('users.approve')
   @Patch(':uuid/approve')
   approve(
     @Param('uuid') uuid: string,
@@ -54,8 +62,9 @@ export class UsersController {
     return this.usersService.approveUser(uuid, dto, actor);
   }
 
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('SUPER_ADMIN', 'ADMIN')
+  @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
+  @Roles('SUPER_ADMIN', 'ADMIN', 'BRANCH_MANAGER')
+  @Permissions('users.approve')
   @Patch(':uuid/reject')
   reject(
     @Param('uuid') uuid: string,
@@ -65,15 +74,17 @@ export class UsersController {
     return this.usersService.rejectUser(uuid, dto.reason, actor);
   }
 
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('SUPER_ADMIN', 'ADMIN')
+  @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
+  @Roles('SUPER_ADMIN', 'ADMIN', 'BRANCH_MANAGER')
+  @Permissions('users.suspend')
   @Patch(':uuid/suspend')
   suspend(@Param('uuid') uuid: string, @CurrentUser() actor: CurrentUserType) {
     return this.usersService.suspendUser(uuid, actor);
   }
 
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
   @Roles('SUPER_ADMIN', 'ADMIN')
+  @Permissions('users.update')
   @Patch(':uuid/roles')
   assignRoles(
     @Param('uuid') uuid: string,
@@ -83,8 +94,9 @@ export class UsersController {
     return this.usersService.assignRoles(uuid, dto.role_ids, actor);
   }
 
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
   @Roles('SUPER_ADMIN', 'ADMIN', 'BRANCH_MANAGER')
+  @Permissions('users.transfer')
   @Post(':uuid/transfer-requests')
   requestTransfer(
     @Param('uuid') uuid: string,
@@ -94,8 +106,9 @@ export class UsersController {
     return this.usersService.requestTransfer(uuid, dto, actor);
   }
 
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
   @Roles('SUPER_ADMIN', 'ADMIN', 'HQ_MANAGER')
+  @Permissions('users.transfer')
   @Patch('transfer-requests/:uuid/approve')
   approveTransfer(
     @Param('uuid') uuid: string,
@@ -104,8 +117,9 @@ export class UsersController {
     return this.usersService.approveTransfer(uuid, actor);
   }
 
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
   @Roles('SUPER_ADMIN', 'ADMIN', 'HQ_MANAGER')
+  @Permissions('users.transfer')
   @Patch('transfer-requests/:uuid/reject')
   rejectTransfer(
     @Param('uuid') uuid: string,

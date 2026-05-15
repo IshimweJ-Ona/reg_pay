@@ -9,8 +9,10 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { Permissions } from '../auth/decorators/permissions.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { PermissionsGuard } from '../auth/guards/permissions.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import type { CurrentUserType } from '../auth/types/current-user.type';
 import { AssignManagerDto } from './dto/assign-manager.dto';
@@ -22,8 +24,9 @@ import { OrganizationService } from './organization.service';
 export class OrganizationController {
   constructor(private readonly organizationService: OrganizationService) {}
 
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
   @Roles('SUPER_ADMIN', 'ADMIN')
+  @Permissions('branches.manage')
   @Post('working-locations')
   createWorkingLocation(
     @Body() dto: CreateWorkingLocationDto,
@@ -37,8 +40,9 @@ export class OrganizationController {
     return this.organizationService.findWorkingLocations();
   }
 
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('SUPER_ADMIN', 'ADMIN')
+  @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
+  @Roles('SUPER_ADMIN', 'ADMIN', 'BRANCH_MANAGER')
+  @Permissions('departments.manage')
   @Post('departments')
   createDepartment(
     @Body() dto: CreateDepartmentDto,
@@ -52,8 +56,9 @@ export class OrganizationController {
     return this.organizationService.findDepartments(workingLocationId);
   }
 
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
   @Roles('SUPER_ADMIN', 'ADMIN')
+  @Permissions('branches.manage')
   @Patch('working-locations/:uuid/manager')
   assignBranchManager(
     @Param('uuid') uuid: string,
@@ -63,8 +68,9 @@ export class OrganizationController {
     return this.organizationService.assignBranchManager(uuid, dto, actor);
   }
 
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
   @Roles('SUPER_ADMIN', 'ADMIN')
+  @Permissions('departments.manage')
   @Patch('departments/:uuid/manager')
   assignDepartmentManager(
     @Param('uuid') uuid: string,

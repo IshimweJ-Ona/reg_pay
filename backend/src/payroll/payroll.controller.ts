@@ -28,14 +28,14 @@ export class PayrollController {
 
   @Permissions('payroll.read')
   @Get('batches')
-  findBatches() {
-    return this.payrollService.findBatches();
+  findBatches(@CurrentUser() actor: CurrentUserType) {
+    return this.payrollService.findBatches(actor);
   }
 
   @Permissions('payroll.read')
   @Get('batches/:uuid')
-  findBatch(@Param('uuid') uuid: string) {
-    return this.payrollService.findBatch(uuid);
+  findBatch(@Param('uuid') uuid: string, @CurrentUser() actor: CurrentUserType) {
+    return this.payrollService.findBatch(uuid, actor);
   }
 
   @Permissions('payroll.approve')

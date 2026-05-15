@@ -6,6 +6,7 @@ import {
   IsOptional,
   IsPhoneNumber,
   IsString,
+  IsArray,
 } from 'class-validator';
 
 export class RegisterDto {
@@ -37,4 +38,14 @@ export class RegisterDto {
   @IsOptional()
   @IsString()
   working_location_id?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  role_ids?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  permission_ids?: string[];
 }

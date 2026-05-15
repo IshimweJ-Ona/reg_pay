@@ -283,9 +283,11 @@ model Users {
   department Departments? @relation(fields: [department_id], references: [id])
 
   roles User_roles[]
+  user_permissions User_permissions[]
+  permissions_granted User_permissions[] @relation("PermissionGrantedBy")
   user_departments User_departments[]
 
-  employees Employees[]
+  employees_created Employees[] @relation("EmployeeCreatedBy")
 
   approval_requests Approval_requests[]
   approval_actions Approval_request_actions[]
@@ -402,6 +404,7 @@ model Permissions {
   created_at DateTime @default(now())
 
   role_permissions Role_permissions[]
+  user_permissions User_permissions[]
 
   @@index([module_name], name: "idx_permission_module")
 }
@@ -420,6 +423,28 @@ model Role_permissions {
   permission Permissions @relation(fields: [permission_id], references: [id])
 
   @@unique([role_id, permission_id])
+}
+
+/* =========================================================
+   USER PERMISSIONS
+========================================================= */
+
+model User_permissions {
+  id BigInt @id @default(autoincrement())
+
+  user_id BigInt
+  permission_id BigInt
+
+  granted_by BigInt?
+  created_at DateTime @default(now())
+
+  user Users @relation(fields: [user_id], references: [id])
+  permission Permissions @relation(fields: [permission_id], references: [id])
+  grantedBy Users? @relation("PermissionGrantedBy", fields: [granted_by], references: [id])
+
+  @@unique([user_id, permission_id])
+  @@index([user_id], name: "idx_user_permission_user")
+  @@index([permission_id], name: "idx_user_permission_permission")
 }
 
 /* =========================================================
@@ -456,8 +481,6 @@ model Employees {
   id BigInt @id @default(autoincrement())
   uuid String @unique @db.Char(36)
 
-  user_id BigInt?
-
   first_name String @db.VarChar(100)
   last_name String @db.VarChar(100)
 
@@ -466,7 +489,7 @@ model Employees {
 
   national_id String? @unique @db.VarChar(50)
 
-  gender GENDER
+  gender GENDER?
 
   hire_date DateTime? @db.Date
 
@@ -474,14 +497,15 @@ model Employees {
   working_location_id BigInt?
   employment_category_id BigInt?
 
-  status STATUS_USER @default(INACTIVE)
+  status STATUS_USER @default(ACTIVE)
+  created_by BigInt?
 
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt
 
   deleted_at DateTime?
 
-  user Users? @relation(fields: [user_id], references: [id])
+  createdBy Users? @relation("EmployeeCreatedBy", fields: [created_by], references: [id])
 
   department Departments? @relation(fields: [department_id], references: [id])
   working_location Working_locations? @relation(fields: [working_location_id], references: [id])
@@ -502,6 +526,7 @@ model Employees {
   @@index([working_location_id], name: "idx_employee_location")
   @@index([employment_category_id], name: "idx_employee_category")
   @@index([status], name: "idx_employee_status")
+  @@index([created_by], name: "idx_employee_created_by")
 }
 
 /* =========================================================

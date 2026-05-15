@@ -34,6 +34,7 @@ export class PayrollService {
   async createBatch(dto: CreatePayrollBatchDto, actor: CurrentUserType) {
     const workingLocationId = this.toBigInt(dto.working_location_id, 'working_location_id');
     await this.ensureWorkingLocation(workingLocationId);
+    this.ensureActorCanUseWorkingLocation(actor, workingLocationId);
 
     const employees = await this.prisma.employees.findMany({
       where: {
@@ -143,8 +144,9 @@ export class PayrollService {
     return this.serializeBatch(batch);
   }
 
-  async findBatches() {
+  async findBatches(actor: CurrentUserType) {
     const batches = await this.prisma.payment_batches.findMany({
+      where: this.batchScopeWhere(actor),
       include: this.batchIncludes(),
       orderBy: { created_at: 'desc' },
     });
@@ -152,13 +154,14 @@ export class PayrollService {
     return batches.map((batch) => this.serializeBatch(batch));
   }
 
-  async findBatch(uuid: string) {
+  async findBatch(uuid: string, actor: CurrentUserType) {
     const batch = await this.prisma.payment_batches.findUnique({
       where: { uuid },
       include: this.batchIncludes(),
     });
 
     if (!batch) throw new NotFoundException('Payroll batch not found.');
+    this.ensureActorCanUseWorkingLocation(actor, batch.working_location_id);
 
     return this.serializeBatch(batch);
   }
@@ -498,6 +501,24 @@ export class PayrollService {
     if (!workingLocation) throw new BadRequestException('Working location does not exist.');
   }
 
+  private isSystemAdmin(actor: CurrentUserType) {
+    return actor.roles.some((role) => ['SUPER_ADMIN', 'ADMIN'].includes(role));
+  }
+
+  private batchScopeWhere(actor: CurrentUserType) {
+    if (this.isSystemAdmin(actor)) return {};
+    if (actor.working_location_id) {
+      return { working_location_id: BigInt(actor.working_location_id) };
+    }
+    return { id: BigInt(0) };
+  }
+
+  private ensureActorCanUseWorkingLocation(actor: CurrentUserType, workingLocationId: bigint) {
+    if (this.isSystemAdmin(actor)) return;
+    if (actor.working_location_id === workingLocationId.toString()) return;
+    throw new BadRequestException('You can only access payroll in your working location.');
+  }
+
   private async findItemByUuidOrThrow(uuid: string) {
     const item = await this.prisma.payment_batch_items.findUnique({ where: { uuid } });
 
@@ -559,7 +580,7 @@ export class PayrollService {
         ? {
             ...item.employee,
             id: item.employee.id.toString(),
-            user_id: item.employee.user_id?.toString() ?? null,
+            created_by: item.employee.created_by?.toString() ?? null,
             department_id: item.employee.department_id?.toString() ?? null,
             working_location_id: item.employee.working_location_id?.toString() ?? null,
             employment_category_id:

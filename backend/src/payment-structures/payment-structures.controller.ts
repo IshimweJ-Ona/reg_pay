@@ -13,10 +13,6 @@ import { CreateDeductionTypeDto } from './dto/create-deduction-type.dto';
 import { UpdateDeductionTypeDto } from './dto/update-deduction-type.dto';
 import { CreateEmployeeDeductionDto } from './dto/create-employee-deduction.dto';
 import { UpdateEmployeeDeductionDto } from './dto/update-employee-deduction.dto';
-import { doesNotMatch } from 'assert';
-
-
-
 
 @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
 @Roles('SUPER_ADMIN', 'ADMIN', 'HR_MANAGER', 'FINANCE')
@@ -43,7 +39,7 @@ export class PaymentStructuresController {
   }
 
   @Permissions('payment-structures.read')
-  @Get('decution-types')
+  @Get('deduction-types')
   findDeductionTypes() {
     return this.paymentStructuresService.findDeductionTypes();
   }
@@ -85,7 +81,7 @@ export class PaymentStructuresController {
   }
 
   @Permissions('payment-structures.create')
-  @Post('employee-dedductions')
+  @Post('employee-deductions')
   createEmployeeDeduction(
     @Body() dto: CreateEmployeeDeductionDto,
     @CurrentUser() actor: CurrentUserType,
@@ -97,7 +93,7 @@ export class PaymentStructuresController {
   }
 
   @Permissions('payment-structures.read')
-  @Get('employee-dedductions/empoyee/:employeeId')
+  @Get('employee-deductions/employee/:employeeId')
   findEmployeeDeductions(
     @Param('employeeId') employeeId: string,
   ) {

@@ -166,6 +166,20 @@ CREATE TABLE `Role_permissions` (
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 -- CreateTable
+CREATE TABLE `User_permissions` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `user_id` BIGINT NOT NULL,
+    `permission_id` BIGINT NOT NULL,
+    `granted_by` BIGINT NULL,
+    `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+
+    INDEX `idx_user_permission_user`(`user_id`),
+    INDEX `idx_user_permission_permission`(`permission_id`),
+    UNIQUE INDEX `User_permissions_user_id_permission_id_key`(`user_id`, `permission_id`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
 CREATE TABLE `Employment_categories` (
     `id` BIGINT NOT NULL AUTO_INCREMENT,
     `uuid` CHAR(36) NOT NULL,
@@ -186,18 +200,18 @@ CREATE TABLE `Employment_categories` (
 CREATE TABLE `Employees` (
     `id` BIGINT NOT NULL AUTO_INCREMENT,
     `uuid` CHAR(36) NOT NULL,
-    `user_id` BIGINT NULL,
     `first_name` VARCHAR(100) NOT NULL,
     `last_name` VARCHAR(100) NOT NULL,
     `email` VARCHAR(150) NULL,
     `phone_number` VARCHAR(20) NULL,
     `national_id` VARCHAR(50) NULL,
-    `gender` ENUM('MALE', 'FEMALE') NOT NULL,
+    `gender` ENUM('MALE', 'FEMALE') NULL,
     `hire_date` DATE NULL,
     `department_id` BIGINT NULL,
     `working_location_id` BIGINT NULL,
     `employment_category_id` BIGINT NULL,
-    `status` ENUM('ACTIVE', 'INACTIVE', 'SUSPENDED') NOT NULL DEFAULT 'INACTIVE',
+    `status` ENUM('ACTIVE', 'INACTIVE', 'SUSPENDED') NOT NULL DEFAULT 'ACTIVE',
+    `created_by` BIGINT NULL,
     `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     `updated_at` DATETIME(3) NOT NULL,
     `deleted_at` DATETIME(3) NULL,
@@ -210,6 +224,7 @@ CREATE TABLE `Employees` (
     INDEX `idx_employee_location`(`working_location_id`),
     INDEX `idx_employee_category`(`employment_category_id`),
     INDEX `idx_employee_status`(`status`),
+    INDEX `idx_employee_created_by`(`created_by`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -596,7 +611,16 @@ ALTER TABLE `Role_permissions` ADD CONSTRAINT `Role_permissions_role_id_fkey` FO
 ALTER TABLE `Role_permissions` ADD CONSTRAINT `Role_permissions_permission_id_fkey` FOREIGN KEY (`permission_id`) REFERENCES `Permissions`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE `Employees` ADD CONSTRAINT `Employees_user_id_fkey` FOREIGN KEY (`user_id`) REFERENCES `Users`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE `User_permissions` ADD CONSTRAINT `User_permissions_user_id_fkey` FOREIGN KEY (`user_id`) REFERENCES `Users`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `User_permissions` ADD CONSTRAINT `User_permissions_permission_id_fkey` FOREIGN KEY (`permission_id`) REFERENCES `Permissions`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `User_permissions` ADD CONSTRAINT `User_permissions_granted_by_fkey` FOREIGN KEY (`granted_by`) REFERENCES `Users`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `Employees` ADD CONSTRAINT `Employees_created_by_fkey` FOREIGN KEY (`created_by`) REFERENCES `Users`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE `Employees` ADD CONSTRAINT `Employees_department_id_fkey` FOREIGN KEY (`department_id`) REFERENCES `Departments`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;

@@ -187,7 +187,7 @@ export class PaymentStructuresService {
         ? {
             ...structure.employee,
             id: structure.employee.id.toString(),
-            user_id: structure.employee.user_id?.toString() ?? null,
+            created_by: structure.employee.created_by?.toString() ?? null,
             department_id:
               structure.employee.department_id?.toString() ?? null,
             working_location_id:

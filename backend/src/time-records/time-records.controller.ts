@@ -47,8 +47,17 @@ export class TimeRecordsController {
   }
 
   @Permissions('attendance.read')
+  @Get()
+  findAll(@CurrentUser() actor: CurrentUserType) {
+    return this.timeRecordsService.findAll(actor);
+  }
+
+  @Permissions('attendance.read')
   @Get('employee/:employeeId')
-  findByEmployee(@Param('employeeId') employeeId: string) {
-    return this.timeRecordsService.findByEmployee(employeeId);
+  findByEmployee(
+    @Param('employeeId') employeeId: string,
+    @CurrentUser() actor: CurrentUserType,
+  ) {
+    return this.timeRecordsService.findByEmployee(employeeId, actor);
   }
 }
