@@ -28,6 +28,7 @@ export interface TokenPair {
 
 export interface JwtUser {
     sub: string;
+    uuid?: string;
     email: string;
     phone_number: string;
     first_name: string;

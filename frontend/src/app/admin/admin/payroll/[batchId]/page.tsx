@@ -1,0 +1,231 @@
+
+"use client";
+
+import React, { useEffect, useMemo, useState } from 'react';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { 
+  ArrowLeft, FileText, Users, Calendar, Banknote, 
+  CheckCircle2, XCircle, Clock, MessageSquare, Download, Plus
+} from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { useRouter } from 'next/navigation';
+import { PayrollStatusBadge } from '@/components/payroll/payroll-status-badge';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Textarea } from '@/components/ui/textarea';
+import { useToast } from '@/hooks/use-toast';
+import { approvePayrollBatch, getPayrollBatch, rejectPayrollBatch } from '@/api/payroll';
+
+export default function PayrollBatchDetailsPage({ params }: { params: { batchId: string } }) {
+  const router = useRouter();
+  const { toast } = useToast();
+  const [comment, setComment] = useState('');
+  const [batch, setBatch] = useState<any | null>(null);
+
+  const loadBatch = async () => {
+    const response = await getPayrollBatch(params.batchId);
+    setBatch(response);
+  };
+
+  useEffect(() => {
+    loadBatch().catch(() => setBatch(null));
+  }, [params.batchId]);
+
+  const rows = useMemo(() => batch?.items ?? [], [batch]);
+
+  const handleAction = async (type: 'APPROVE' | 'REJECT') => {
+    try {
+      if (type === 'APPROVE') await approvePayrollBatch(params.batchId, comment);
+      if (type === 'REJECT') await rejectPayrollBatch(params.batchId, comment || 'Rejected from dashboard.');
+      await loadBatch();
+      toast({
+        title: type === 'APPROVE' ? "Batch Approved" : "Batch Rejected",
+        description: `Payroll cycle ${batch?.batch_code ?? params.batchId} has been updated.`
+      });
+      setComment('');
+    } catch (error: any) {
+      toast({
+        variant: "destructive",
+        title: "Payroll action failed",
+        description: error?.response?.data?.message ?? "Please try again.",
+      });
+    }
+  };
+
+  if (!batch) return <div className="p-8 text-sm text-muted-foreground">Loading payroll batch...</div>;
+
+  return (
+    <div className="space-y-8 pb-12">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-2xl border shadow-sm">
+        <div className="flex items-center gap-4">
+          <Button variant="ghost" size="icon" onClick={() => router.back()}>
+            <ArrowLeft className="h-5 w-5" />
+          </Button>
+          <div>
+            <div className="flex items-center gap-3">
+              <h1 className="text-2xl font-headline font-bold">{batch.batch_code}</h1>
+              <PayrollStatusBadge status={batch.status} />
+            </div>
+            <p className="text-sm text-muted-foreground">{batch.working_location?.name ?? batch.working_location_id} • {batch.payroll_month}/{batch.payroll_year}</p>
+          </div>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" className="gap-2">
+            <Download className="h-4 w-4" /> Export Assets
+          </Button>
+          <Dialog>
+            <DialogTrigger asChild>
+              <Button variant="destructive" className="gap-2">
+                <XCircle className="h-4 w-4" /> Reject Cycle
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Reject Payroll Batch</DialogTitle>
+                <DialogDescription>Please provide a reason for the rejection. This will be visible to the batch creator.</DialogDescription>
+              </DialogHeader>
+              <Textarea placeholder="Type reason here..." value={comment} onChange={(e) => setComment(e.target.value)} className="min-h-[100px]" />
+              <DialogFooter>
+                <Button variant="ghost" onClick={() => setComment('')}>Cancel</Button>
+                <Button variant="destructive" onClick={() => handleAction('REJECT')}>Confirm Rejection</Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+          <Dialog>
+            <DialogTrigger asChild>
+              <Button className="bg-emerald-600 hover:bg-emerald-700 gap-2 shadow-lg shadow-emerald-600/20">
+                <CheckCircle2 className="h-4 w-4" /> Authorize Batch
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Final Authorization</DialogTitle>
+                <DialogDescription>You are authorizing the disbursement of ${Number(batch.total_amount).toLocaleString()} to {rows.length} employees.</DialogDescription>
+              </DialogHeader>
+              <Textarea placeholder="Optional comment..." value={comment} onChange={(e) => setComment(e.target.value)} />
+              <DialogFooter>
+                <Button variant="ghost" onClick={() => setComment('')}>Cancel</Button>
+                <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={() => handleAction('APPROVE')}>Execute Payment</Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+        <Card className="border-none shadow-sm">
+          <CardContent className="pt-6">
+            <p className="text-xs font-bold text-muted-foreground uppercase">Net Disbursement</p>
+            <h3 className="text-2xl font-bold mt-1 text-primary">${Number(batch.total_amount).toLocaleString()}</h3>
+          </CardContent>
+        </Card>
+        <Card className="border-none shadow-sm">
+          <CardContent className="pt-6">
+            <p className="text-xs font-bold text-muted-foreground uppercase">Staff Count</p>
+            <h3 className="text-2xl font-bold mt-1">{rows.length} Employees</h3>
+          </CardContent>
+        </Card>
+        <Card className="border-none shadow-sm">
+          <CardContent className="pt-6">
+            <p className="text-xs font-bold text-muted-foreground uppercase">Payment Date</p>
+            <h3 className="text-2xl font-bold mt-1">{batch.approved_at ? new Date(batch.approved_at).toLocaleDateString() : 'Pending'}</h3>
+          </CardContent>
+        </Card>
+        <Card className="border-none shadow-sm">
+          <CardContent className="pt-6">
+            <p className="text-xs font-bold text-muted-foreground uppercase">Currency</p>
+            <h3 className="text-2xl font-bold mt-1">Configured</h3>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Tabs defaultValue="employees" className="w-full">
+        <TabsList className="bg-white border p-1 h-12 rounded-xl mb-6">
+          <TabsTrigger value="employees" className="gap-2 px-6 rounded-lg data-[state=active]:bg-primary data-[state=active]:text-white">
+            <Users className="h-4 w-4" /> Employee Breakdown
+          </TabsTrigger>
+          <TabsTrigger value="history" className="gap-2 px-6 rounded-lg data-[state=active]:bg-primary data-[state=active]:text-white">
+            <Clock className="h-4 w-4" /> Approval Audit Trail
+          </TabsTrigger>
+          <TabsTrigger value="documents" className="gap-2 px-6 rounded-lg data-[state=active]:bg-primary data-[state=active]:text-white">
+            <FileText className="h-4 w-4" /> Attachments
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="employees">
+          <Card className="border-none shadow-sm overflow-hidden">
+            <CardContent className="p-0">
+              <Table>
+                <TableHeader className="bg-secondary/30">
+                  <TableRow>
+                    <TableHead>Employee</TableHead>
+                    <TableHead>Role / Dept</TableHead>
+                    <TableHead>Base Salary</TableHead>
+                    <TableHead>OT/Bonus</TableHead>
+                    <TableHead>Deductions</TableHead>
+                    <TableHead className="text-right">Net Salary</TableHead>
+                    <TableHead className="w-[100px]">Status</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {rows.map((item: any) => (
+                    <TableRow key={item.uuid} className="hover:bg-secondary/10 transition-colors">
+                      <TableCell className="font-semibold">{`${item.employee?.first_name ?? ''} ${item.employee?.last_name ?? ''}`.trim()}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{item.employee?.department?.name ?? 'Employee'}</TableCell>
+                      <TableCell>${Number(item.transaction?.gross_amount ?? 0).toLocaleString()}</TableCell>
+                      <TableCell className="text-emerald-600">+$0</TableCell>
+                      <TableCell className="text-rose-600">-${Number(item.transaction?.total_deductions ?? 0).toLocaleString()}</TableCell>
+                      <TableCell className="text-right font-bold text-primary">${Number(item.transaction?.net_amount ?? 0).toLocaleString()}</TableCell>
+                      <TableCell>
+                        <Badge variant="secondary" className="bg-amber-100 text-amber-700">{item.status}</Badge>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="history">
+          <Card className="border-none shadow-sm">
+            <CardContent className="pt-6 space-y-6">
+              {(batch.approval_actions ?? []).map((step: any, idx: number) => (
+                <div key={idx} className="flex gap-4 relative">
+                  {idx < (batch.approval_actions?.length ?? 0) - 1 && (
+                    <div className="absolute left-[19px] top-10 bottom-0 w-0.5 bg-slate-200" />
+                  )}
+                  <div className={`h-10 w-10 rounded-full flex items-center justify-center shrink-0 shadow-sm border ${
+                    step.action === 'REJECTED' ? 'bg-rose-500 text-white' : 'bg-emerald-500 text-white'
+                  }`}>
+                    {step.action === 'REJECTED' ? <XCircle className="h-5 w-5" /> : <CheckCircle2 className="h-5 w-5" />}
+                  </div>
+                  <div className="flex-1 space-y-1 pb-8">
+                    <div className="flex items-center justify-between">
+                      <p className="font-bold">{step.action} - {step.actionBy?.email ?? step.action_by}</p>
+                      <span className="text-xs font-medium text-muted-foreground">{new Date(step.action_at).toLocaleString()}</span>
+                    </div>
+                    <div className="bg-secondary/40 p-3 rounded-xl flex gap-3 items-start">
+                      <MessageSquare className="h-4 w-4 text-muted-foreground mt-0.5" />
+                      <p className="text-sm italic">"{step.comment ?? 'No comment'}"</p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}

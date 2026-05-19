@@ -2,8 +2,8 @@ import type { RegisterUserPayload } from "./auth";
 import api from "./axios";
 
 export interface ApproveUserPayload {
-    working_location_id: string;
-    department_id: string;
+    working_location_id?: string;
+    department_id?: string;
     role_ids?: string[];
     permission_ids?: string[];
 }
