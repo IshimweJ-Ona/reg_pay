@@ -64,11 +64,12 @@ export const suspendEmployee = async (uuid: string, reason?: string) => {
     return response.data;
 };
 
+// Update an existing employee's profile information
 export const updateEmployee = async (
     uuid: string,
     payload: Partial<CreateEmployeePayload>,
 ) => {
-    const response = await api.patch(`/employees/${uuid}/reactivate`, payload);
+    const response = await api.patch(`/employees/${uuid}`, payload);
     return response.data;
 };
 

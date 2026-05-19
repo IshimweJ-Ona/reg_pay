@@ -26,7 +26,7 @@ export function PageLoader() {
         setTimeout(() => setProgress(val), i * 100 + 50)
       );
 
-      hide = setTimeout(() => setVisible(false), 800);
+      hide = setTimeout(() => setVisible(false), 1000);
     };
 
     runLoader();
@@ -60,7 +60,7 @@ export function PageLoader() {
         </div>
         <div className="text-center">
           <h1 className="text-4xl font-headline font-bold tracking-[0.2em] text-white">
-            REG <span className="text-primary">NEXUS</span>
+            REG <span className="text-primary"></span>
           </h1>
           <p className="mt-2 text-[10px] uppercase tracking-[0.3em] text-white/40 font-bold font-body">
             Enterprise Payment Systems
