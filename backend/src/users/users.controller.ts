@@ -5,6 +5,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -38,16 +39,20 @@ export class UsersController {
   @Roles('SUPER_ADMIN', 'ADMIN', 'BRANCH_MANAGER')
   @Permissions('users.read')
   @Get()
-  findAll(@CurrentUser() actor: CurrentUserType) {
-    return this.usersService.findAll(actor);
+  findAll(
+    @CurrentUser() actor: CurrentUserType,
+    @Query('q') q?: string,
+    @Query('status') status?: string,
+  ) {
+    return this.usersService.findAll(actor, { q, status });
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
   @Roles('SUPER_ADMIN', 'ADMIN', 'BRANCH_MANAGER')
   @Permissions('users.read')
   @Get('pending')
-  findPending() {
-    return this.usersService.findPendingApproval();
+  findPending(@Query('q') q?: string) {
+    return this.usersService.findPendingApproval(q);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)

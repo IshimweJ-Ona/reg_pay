@@ -1,18 +1,12 @@
-import {
-  ArrayUnique,
-  IsArray,
-  IsNotEmpty,
-  IsOptional,
-  IsString,
-} from 'class-validator';
+import { ArrayUnique, IsArray, IsOptional, IsString } from 'class-validator';
 
 export class ApproveUserDto {
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
   working_location_id: string;
 
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
   department_id: string;
 
   @IsOptional()

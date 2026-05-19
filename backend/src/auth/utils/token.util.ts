@@ -13,6 +13,7 @@ import type { JwtPayload } from '../interfaces/jwt-payload.interface';
 export type UserForToken = Pick<
   Users,
   | 'id'
+  | 'uuid'
   | 'email'
   | 'phone_number'
   | 'first_name'
@@ -28,6 +29,7 @@ export const buildJwtPayload = (
   permissions: string[],
 ): JwtPayload => ({
   sub: user.id.toString(),
+  uuid: user.uuid,
   email: user.email,
   phone_number: user.phone_number,
   first_name: user.first_name,

@@ -5,6 +5,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -39,8 +40,8 @@ export class EmployeesController {
   @Roles('SUPER_ADMIN', 'ADMIN', 'HR_MANAGER', 'BRANCH_MANAGER')
   @Permissions('employees.read')
   @Get()
-  findAll(@CurrentUser() actor: CurrentUserType) {
-    return this.employeesService.findAll(actor);
+  findAll(@CurrentUser() actor: CurrentUserType, @Query('q') q?: string) {
+    return this.employeesService.findAll(actor, q);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)

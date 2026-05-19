@@ -1,5 +1,11 @@
-import { Module } from '@nestjs/common';
+import {
+  MiddlewareConsumer,
+  Module,
+  NestModule,
+} from '@nestjs/common';
+
 import { ConfigModule } from '@nestjs/config';
+import { CacheModule } from '@nestjs/cache-manager';
 
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -15,10 +21,18 @@ import { TimeRecordsModule } from './time-records/time-records.module';
 import { PaymentStructuresModule } from './payment-structures/payment-structures.module';
 import { PayrollModule } from './payroll/payroll.module';
 
+import { SecurityMiddleware } from './common/security/security.middleware';
+
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
+    }),
+
+    CacheModule.register({
+      isGlobal: true,
+      ttl: 60000,
+      max: 100,
     }),
 
     PrismaModule,
@@ -46,4 +60,8 @@ import { PayrollModule } from './payroll/payroll.module';
 
   providers: [AppService],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(SecurityMiddleware).forRoutes('*');
+  }
+}

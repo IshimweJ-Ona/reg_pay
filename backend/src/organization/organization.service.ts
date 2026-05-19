@@ -8,16 +8,25 @@ import {
   AUDIT_ACTION,
   WORKING_LOCATION_TYPE,
 } from '@prisma/client';
+
 import type { CurrentUserType } from '../auth/types/current-user.type';
+import {
+  isNumericId,
+  normalizeSearch,
+  requireUuidOrNumeric,
+} from '../common/utils/lookup.util';
 import { generateUUID } from '../common/utils/uuid.util';
 import { PrismaService } from '../prisma/prisma.service';
+
 import { AssignManagerDto } from './dto/assign-manager.dto';
 import { CreateDepartmentDto } from './dto/create-department.dto';
 import { CreateWorkingLocationDto } from './dto/create-working-location.dto';
 
 @Injectable()
 export class OrganizationService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+  ) {}
 
   async createWorkingLocation(
     dto: CreateWorkingLocationDto,
@@ -71,35 +80,64 @@ export class OrganizationService {
     return this.serializeWorkingLocation(workingLocation);
   }
 
-  async findWorkingLocations() {
-    const workingLocations = await this.prisma.working_locations.findMany({
-      where: { deleted_at: null },
-      orderBy: [{ type: 'asc' }, { name: 'asc' }],
-    });
+  async findWorkingLocations(qInput?: string) {
+    const q = normalizeSearch(qInput);
+
+    const workingLocations =
+      await this.prisma.working_locations.findMany({
+        where: {
+          deleted_at: null,
+          ...(q
+            ? {
+                OR: [
+                  { name: { contains: q } },
+                  { address: { contains: q } },
+                ],
+              }
+            : {}),
+        },
+        include: {
+          _count: {
+            select: {
+              users: true,
+              departments: true,
+              employees: true,
+            },
+          },
+        },
+        orderBy: [{ type: 'asc' }, { name: 'asc' }],
+      });
 
     return workingLocations.map((workingLocation) =>
       this.serializeWorkingLocation(workingLocation),
     );
   }
 
-  async createDepartment(dto: CreateDepartmentDto, actor: CurrentUserType) {
-    const workingLocationId = this.toBigInt(
+  async createDepartment(
+    dto: CreateDepartmentDto,
+    actor: CurrentUserType,
+  ) {
+    const workingLocationId = await this.resolveWorkingLocationId(
       dto.working_location_id,
-      'working_location_id',
     );
 
-    const workingLocation = await this.prisma.working_locations.findFirst({
-      where: {
-        id: workingLocationId,
-        deleted_at: null,
-      },
-      select: { id: true },
-    });
+    const workingLocation =
+      await this.prisma.working_locations.findFirst({
+        where: {
+          id: workingLocationId,
+          deleted_at: null,
+        },
+        select: { id: true },
+      });
 
     if (!workingLocation) {
       throw new NotFoundException('Working location not found.');
     }
-    this.ensureActorCanUseWorkingLocation(actor, workingLocationId);
+
+    this.ensureActorCanUseWorkingLocation(
+      actor,
+      workingLocationId,
+    );
 
     const department = await this.prisma.$transaction(async (tx) => {
       const created = await tx.departments.create({
@@ -122,7 +160,8 @@ export class OrganizationService {
           activity_description: 'Created department.',
           action: AUDIT_ACTION.CREATED,
           new_values: {
-            working_location_id: workingLocationId.toString(),
+            working_location_id:
+              workingLocationId.toString(),
             code: created.code,
             name: created.name,
           },
@@ -135,19 +174,46 @@ export class OrganizationService {
     return this.serializeDepartment(department);
   }
 
-  async findDepartments(workingLocationIdInput?: string) {
+  async findDepartments(
+    workingLocationIdInput?: string,
+    qInput?: string,
+  ) {
     const workingLocationId = workingLocationIdInput
-      ? this.toBigInt(workingLocationIdInput, 'working_location_id')
+      ? await this.resolveWorkingLocationId(
+          workingLocationIdInput,
+        )
       : undefined;
+
+    const q = normalizeSearch(qInput);
 
     const departments = await this.prisma.departments.findMany({
       where: {
         working_location_id: workingLocationId,
+        ...(q
+          ? {
+              OR: [
+                { name: { contains: q } },
+                { code: { contains: q } },
+                { description: { contains: q } },
+              ],
+            }
+          : {}),
+      },
+      include: {
+        working_location: true,
+        _count: {
+          select: {
+            users: true,
+            employees: true,
+          },
+        },
       },
       orderBy: { name: 'asc' },
     });
 
-    return departments.map((department) => this.serializeDepartment(department));
+    return departments.map((department) =>
+      this.serializeDepartment(department),
+    );
   }
 
   async assignBranchManager(
@@ -155,15 +221,24 @@ export class OrganizationService {
     dto: AssignManagerDto,
     actor: CurrentUserType,
   ) {
-    const userId = this.toBigInt(dto.user_id, 'user_id');
+    const userId = await this.resolveUserId(dto.user_id);
 
-    const branch = await this.prisma.working_locations.findFirst({
-      where: { uuid: workingLocationUuid, deleted_at: null },
-    });
+    const branch =
+      await this.prisma.working_locations.findFirst({
+        where: {
+          uuid: workingLocationUuid,
+          deleted_at: null,
+        },
+      });
 
-    if (!branch) throw new NotFoundException('Working location not found.');
+    if (!branch) {
+      throw new NotFoundException(
+        'Working location not found.',
+      );
+    }
 
     const workingLocationId = branch.id;
+
     const user = await this.prisma.users.findFirst({
       where: {
         id: userId,
@@ -181,19 +256,29 @@ export class OrganizationService {
 
     const manager = await this.prisma.$transaction(async (tx) => {
       await tx.branch_managers.updateMany({
-        where: { working_location_id: workingLocationId, is_active: true },
-        data: { is_active: false, unassigned_at: new Date() },
+        where: {
+          working_location_id: workingLocationId,
+          is_active: true,
+        },
+        data: {
+          is_active: false,
+          unassigned_at: new Date(),
+        },
       });
 
-      const assigned = await tx.branch_managers.create({
-        data: {
-          uuid: generateUUID(),
-          working_location_id: workingLocationId,
-          user_id: userId,
-          assigned_by: BigInt(actor.userId),
-        },
-        include: { user: true, branch: true },
-      });
+      const assigned =
+        await tx.branch_managers.create({
+          data: {
+            uuid: generateUUID(),
+            working_location_id: workingLocationId,
+            user_id: userId,
+            assigned_by: BigInt(actor.userId),
+          },
+          include: {
+            user: true,
+            branch: true,
+          },
+        });
 
       await tx.audit_logs.create({
         data: {
@@ -202,10 +287,12 @@ export class OrganizationService {
           entity_id: assigned.id,
           module_name: 'ORGANIZATION',
           activity_type: ACTIVITY_TYPE.UPDATE,
-          activity_description: 'Assigned active branch manager.',
+          activity_description:
+            'Assigned active branch manager.',
           action: AUDIT_ACTION.UPDATED,
           new_values: {
-            working_location_id: workingLocationId.toString(),
+            working_location_id:
+              workingLocationId.toString(),
             user_id: userId.toString(),
           },
         },
@@ -222,20 +309,25 @@ export class OrganizationService {
     dto: AssignManagerDto,
     actor: CurrentUserType,
   ) {
-    const userId = this.toBigInt(dto.user_id, 'user_id');
+    const userId = await this.resolveUserId(dto.user_id);
 
-    const department = await this.prisma.departments.findUnique({
-      where: { uuid: departmentUuid },
-    });
+    const department =
+      await this.prisma.departments.findUnique({
+        where: { uuid: departmentUuid },
+      });
 
-    if (!department) throw new NotFoundException('Department not found.');
+    if (!department) {
+      throw new NotFoundException('Department not found.');
+    }
+
     const departmentId = department.id;
 
     const user = await this.prisma.users.findFirst({
       where: {
         id: userId,
         status: 'ACTIVE',
-        working_location_id: department.working_location_id,
+        working_location_id:
+          department.working_location_id,
         department_id: departmentId,
         deleted_at: null,
       },
@@ -249,19 +341,29 @@ export class OrganizationService {
 
     const manager = await this.prisma.$transaction(async (tx) => {
       await tx.department_managers.updateMany({
-        where: { department_id: departmentId, is_active: true },
-        data: { is_active: false, unassigned_at: new Date() },
+        where: {
+          department_id: departmentId,
+          is_active: true,
+        },
+        data: {
+          is_active: false,
+          unassigned_at: new Date(),
+        },
       });
 
-      const assigned = await tx.department_managers.create({
-        data: {
-          uuid: generateUUID(),
-          department_id: departmentId,
-          user_id: userId,
-          assigned_by: BigInt(actor.userId),
-        },
-        include: { user: true, department: true },
-      });
+      const assigned =
+        await tx.department_managers.create({
+          data: {
+            uuid: generateUUID(),
+            department_id: departmentId,
+            user_id: userId,
+            assigned_by: BigInt(actor.userId),
+          },
+          include: {
+            user: true,
+            department: true,
+          },
+        });
 
       await tx.audit_logs.create({
         data: {
@@ -270,7 +372,8 @@ export class OrganizationService {
           entity_id: assigned.id,
           module_name: 'ORGANIZATION',
           activity_type: ACTIVITY_TYPE.UPDATE,
-          activity_description: 'Assigned active department manager.',
+          activity_description:
+            'Assigned active department manager.',
           action: AUDIT_ACTION.UPDATED,
           new_values: {
             department_id: departmentId.toString(),
@@ -285,60 +388,146 @@ export class OrganizationService {
     return this.serializeManager(manager);
   }
 
-  private serializeWorkingLocation(workingLocation: Record<string, any>) {
+  private serializeWorkingLocation(
+    workingLocation: Record<string, any>,
+  ) {
     return {
       ...workingLocation,
       id: workingLocation.id.toString(),
-      created_by: workingLocation.created_by?.toString() ?? null,
-      updated_by: workingLocation.updated_by?.toString() ?? null,
-      deleted_by: workingLocation.deleted_by?.toString() ?? null,
+      created_by:
+        workingLocation.created_by?.toString() ?? null,
+      updated_by:
+        workingLocation.updated_by?.toString() ?? null,
+      deleted_by:
+        workingLocation.deleted_by?.toString() ?? null,
     };
+  }
+
+  private async resolveWorkingLocationId(value: string) {
+    requireUuidOrNumeric(value, 'working_location_id');
+
+    const workingLocation =
+      await this.prisma.working_locations.findFirst({
+        where: isNumericId(value)
+          ? {
+              id: BigInt(value),
+              deleted_at: null,
+            }
+          : {
+              uuid: value,
+              deleted_at: null,
+            },
+        select: { id: true },
+      });
+
+    if (!workingLocation) {
+      throw new NotFoundException(
+        'Working location not found.',
+      );
+    }
+
+    return workingLocation.id;
+  }
+
+  private async resolveUserId(value: string) {
+    requireUuidOrNumeric(value, 'user_id');
+
+    const user = await this.prisma.users.findFirst({
+      where: isNumericId(value)
+        ? {
+            id: BigInt(value),
+            deleted_at: null,
+          }
+        : {
+            uuid: value,
+            deleted_at: null,
+          },
+      select: { id: true },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found.');
+    }
+
+    return user.id;
   }
 
   private ensureActorCanUseWorkingLocation(
     actor: CurrentUserType,
     workingLocationId: bigint,
   ) {
-    if (actor.roles.some((role) => ['SUPER_ADMIN', 'ADMIN'].includes(role))) return;
     if (
-      actor.roles.includes('BRANCH_MANAGER') &&
-      actor.working_location_id === workingLocationId.toString()
+      actor.roles.some((role) =>
+        ['SUPER_ADMIN', 'ADMIN'].includes(role),
+      )
     ) {
       return;
     }
-    throw new BadRequestException('You can only manage your working location.');
+
+    if (
+      actor.roles.includes('BRANCH_MANAGER') &&
+      actor.working_location_id ===
+        workingLocationId.toString()
+    ) {
+      return;
+    }
+
+    throw new BadRequestException(
+      'You can only manage your working location.',
+    );
   }
 
-  private serializeDepartment(department: Record<string, any>) {
+  private serializeDepartment(
+    department: Record<string, any>,
+  ) {
     return {
       ...department,
       id: department.id.toString(),
-      working_location_id: department.working_location_id.toString(),
+      working_location_id:
+        department.working_location_id.toString(),
+      working_location: department.working_location
+        ? this.serializeWorkingLocation(
+            department.working_location,
+          )
+        : undefined,
     };
   }
 
-  private serializeManager(manager: Record<string, any>) {
+  private serializeManager(
+    manager: Record<string, any>,
+  ) {
     return {
       ...manager,
       id: manager.id.toString(),
-      working_location_id: manager.working_location_id?.toString(),
-      department_id: manager.department_id?.toString(),
+      working_location_id:
+        manager.working_location_id?.toString(),
+      department_id:
+        manager.department_id?.toString(),
       user_id: manager.user_id.toString(),
       assigned_by: manager.assigned_by.toString(),
       user: manager.user
         ? {
             ...manager.user,
             id: manager.user.id.toString(),
-            working_location_id: manager.user.working_location_id?.toString() ?? null,
-            department_id: manager.user.department_id?.toString() ?? null,
+            working_location_id:
+              manager.user.working_location_id?.toString() ??
+              null,
+            department_id:
+              manager.user.department_id?.toString() ??
+              null,
           }
         : undefined,
     };
   }
 
-  private toBigInt(value: string, fieldName: string): bigint {
+  private toBigInt(
+    value: string,
+    fieldName: string,
+  ): bigint {
     if (!/^\d+$/.test(value)) {
-      throw new BadRequestException(`${fieldName} must be a numeric id.`);
+      throw new BadRequestException(
+        `${fieldName} must be a numeric id.`,
+      );
     }
 
     return BigInt(value);

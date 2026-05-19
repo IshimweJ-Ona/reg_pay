@@ -10,6 +10,7 @@ import {
   STATUS_USER ,
 } from '@prisma/client';
 import { compareHash, hashValue } from '../common/utils/hash.util';
+import { isNumericId, requireUuidOrNumeric } from '../common/utils/lookup.util';
 import { generateUUID } from '../common/utils/uuid.util';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -56,6 +57,13 @@ export class AuthService {
       throw new ConflictException('A user with this email or phone already exists.');
     }
 
+    const workingLocationId = dto.working_location_id
+      ? await this.resolveWorkingLocationId(dto.working_location_id)
+      : null;
+    const departmentId = dto.department_id
+      ? await this.resolveDepartmentId(dto.department_id, workingLocationId)
+      : null;
+
     const user = await this.prisma.users.create({
       data: {
         uuid: generateUUID(),
@@ -65,10 +73,8 @@ export class AuthService {
         phone_number: dto.phone_number,
         gender: dto.gender,
         password_hash: await hashPassword(dto.password),
-        department_id: dto.department_id ? BigInt(dto.department_id) : null,
-        working_location_id: dto.working_location_id
-          ? BigInt(dto.working_location_id)
-          : null,
+        department_id: departmentId,
+        working_location_id: workingLocationId,
         status: STATUS_USER.INACTIVE,
       },
       select: {
@@ -384,6 +390,37 @@ export class AuthService {
 
   private normalizeDeviceInfo(deviceInfo?: string | string[]): string | undefined {
     return Array.isArray(deviceInfo) ? deviceInfo.join(', ') : deviceInfo;
+  }
+
+  private async resolveWorkingLocationId(value: string) {
+    requireUuidOrNumeric(value, 'working_location_id');
+    const workingLocation = await this.prisma.working_locations.findFirst({
+      where: isNumericId(value)
+        ? { id: BigInt(value), deleted_at: null }
+        : { uuid: value, deleted_at: null },
+      select: { id: true },
+    });
+
+    if (!workingLocation) {
+      throw new ConflictException('Working location does not exist.');
+    }
+    return workingLocation.id;
+  }
+
+  private async resolveDepartmentId(value: string, workingLocationId: bigint | null) {
+    requireUuidOrNumeric(value, 'department_id');
+    const department = await this.prisma.departments.findFirst({
+      where: {
+        ...(isNumericId(value) ? { id: BigInt(value) } : { uuid: value }),
+        ...(workingLocationId ? { working_location_id: workingLocationId } : {}),
+      },
+      select: { id: true },
+    });
+
+    if (!department) {
+      throw new ConflictException('Department does not exist.');
+    }
+    return department.id;
   }
 
   private async writeLoginAudit(

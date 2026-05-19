@@ -36,8 +36,8 @@ export class OrganizationController {
   }
 
   @Get('working-locations')
-  findWorkingLocations() {
-    return this.organizationService.findWorkingLocations();
+  findWorkingLocations(@Query('q') q?: string) {
+    return this.organizationService.findWorkingLocations(q);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
@@ -52,8 +52,11 @@ export class OrganizationController {
   }
 
   @Get('departments')
-  findDepartments(@Query('working_location_id') workingLocationId?: string) {
-    return this.organizationService.findDepartments(workingLocationId);
+  findDepartments(
+    @Query('working_location_id') workingLocationId?: string,
+    @Query('q') q?: string,
+  ) {
+    return this.organizationService.findDepartments(workingLocationId, q);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)

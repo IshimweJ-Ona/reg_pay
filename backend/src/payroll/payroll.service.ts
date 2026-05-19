@@ -13,6 +13,8 @@ import {
   TRANSACTION_STATUS,
 } from '@prisma/client';
 import type { CurrentUserType } from '../auth/types/current-user.type';
+import { SimpleCacheService } from '../common/cache/simple-cache.service';
+import { isNumericId, normalizeSearch, requireUuidOrNumeric } from '../common/utils/lookup.util';
 import { generateUUID } from '../common/utils/uuid.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { ApprovePayrollItemDto } from './dto/approve-payroll-item.dto';
@@ -29,10 +31,13 @@ type PayrollCalculation = {
 
 @Injectable()
 export class PayrollService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly cache: SimpleCacheService,
+  ) {}
 
   async createBatch(dto: CreatePayrollBatchDto, actor: CurrentUserType) {
-    const workingLocationId = this.toBigInt(dto.working_location_id, 'working_location_id');
+    const workingLocationId = await this.resolveWorkingLocationId(dto.working_location_id);
     await this.ensureWorkingLocation(workingLocationId);
     this.ensureActorCanUseWorkingLocation(actor, workingLocationId);
 
@@ -140,16 +145,26 @@ export class PayrollService {
         include: this.batchIncludes(),
       });
     });
+    this.cache.deleteByPrefix('payroll:');
 
     return this.serializeBatch(batch);
   }
 
-  async findBatches(actor: CurrentUserType) {
-    const batches = await this.prisma.payment_batches.findMany({
-      where: this.batchScopeWhere(actor),
-      include: this.batchIncludes(),
-      orderBy: { created_at: 'desc' },
-    });
+  async findBatches(actor: CurrentUserType, qInput?: string) {
+    const q = normalizeSearch(qInput);
+    const batches = await this.cache.remember(
+      `payroll:batches:${actor.userId}:${actor.working_location_id ?? ''}:${q ?? ''}`,
+      20_000,
+      () =>
+        this.prisma.payment_batches.findMany({
+          where: {
+            ...this.batchScopeWhere(actor),
+            ...(q ? { batch_code: { contains: q } } : {}),
+          },
+          include: this.batchIncludes(),
+          orderBy: { created_at: 'desc' },
+        }),
+    );
 
     return batches.map((batch) => this.serializeBatch(batch));
   }
@@ -389,6 +404,19 @@ export class PayrollService {
     return this.serializeBatch(rejected);
   }
 
+  private async resolveWorkingLocationId(value: string) {
+    requireUuidOrNumeric(value, 'working_location_id');
+    const workingLocation = await this.prisma.working_locations.findFirst({
+      where: isNumericId(value)
+        ? { id: BigInt(value), deleted_at: null }
+        : { uuid: value, deleted_at: null },
+      select: { id: true },
+    });
+
+    if (!workingLocation) throw new BadRequestException('Working location does not exist.');
+    return workingLocation.id;
+  }
+
   private async calculateEmployeePayroll(
     employeeId: bigint,
     month: number,
@@ -536,6 +564,10 @@ export class PayrollService {
         include: this.itemIncludes(),
         orderBy: { created_at: 'asc' as const },
       },
+      approval_actions: {
+        include: { actionBy: true },
+        orderBy: { action_at: 'asc' as const },
+      },
     };
   }
 
@@ -565,6 +597,21 @@ export class PayrollService {
           }
         : undefined,
       items: batch.items?.map((item) => this.serializeItem(item)),
+      approval_actions: batch.approval_actions?.map((action) => ({
+        ...action,
+        id: action.id.toString(),
+        payment_batch_id: action.payment_batch_id.toString(),
+        action_by: action.action_by.toString(),
+        actionBy: action.actionBy
+          ? {
+              ...action.actionBy,
+              id: action.actionBy.id.toString(),
+              working_location_id:
+                action.actionBy.working_location_id?.toString() ?? null,
+              department_id: action.actionBy.department_id?.toString() ?? null,
+            }
+          : undefined,
+      })),
     };
   }
 
