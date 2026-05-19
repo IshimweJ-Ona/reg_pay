@@ -11,15 +11,16 @@ import {
   TRANSFER_SUBJECT,
 } from '@prisma/client';
 
-import { PrismaService } from 'src/prisma/prisma.service';
-import { RegisterDto } from 'src/auth/dto/register.dto';
-import { hashPassword } from 'src/auth/utils/password.util';
+// Standard relative imports to ensure consistency across the project
+import { PrismaService } from '../prisma/prisma.service';
+import { RegisterDto } from '../auth/dto/register.dto';
+import { hashPassword } from '../auth/utils/password.util';
 import {
   isNumericId,
   normalizeSearch,
   requireUuidOrNumeric,
-} from 'src/common/utils/lookup.util';
-import { generateUUID } from 'src/common/utils/uuid.util';
+} from '../common/utils/lookup.util';
+import { generateUUID } from '../common/utils/uuid.util';
 
 import type { CurrentUserType } from '../auth/types/current-user.type';
 import { RejectTransferDto } from '../common/dto/reject-transfer.dto';
@@ -46,16 +47,11 @@ export class UsersService {
       : null;
 
     const departmentId = data.department_id
-      ? await this.resolveDepartmentId(
-          data.department_id,
-          workingLocationId,
-        )
+      ? await this.resolveDepartmentId(data.department_id, workingLocationId)
       : null;
 
     const roleIds =
-      data.role_ids?.map((roleId) =>
-        this.toBigInt(roleId, 'role_id'),
-      ) ?? [];
+      data.role_ids?.map((roleId) => this.toBigInt(roleId, 'role_id')) ?? [];
 
     const permissionIds =
       data.permission_ids?.map((permissionId) =>
@@ -73,10 +69,7 @@ export class UsersService {
         );
       }
 
-      await this.ensureDepartmentExists(
-        departmentId,
-        workingLocationId,
-      );
+      await this.ensureDepartmentExists(departmentId, workingLocationId);
     }
 
     if (actor) {
@@ -138,21 +131,15 @@ export class UsersService {
             entity_id: created.id,
             module_name: 'USER_MANAGEMENT',
             activity_type: ACTIVITY_TYPE.CREATE,
-            activity_description:
-              'Created pending user account.',
+            activity_description: 'Created pending user account.',
             action: AUDIT_ACTION.CREATED,
             new_values: {
               status: STATUS_USER.INACTIVE,
-              working_location_id:
-                workingLocationId?.toString() ?? null,
-              department_id:
-                departmentId?.toString() ?? null,
-              role_ids: roleIds.map((roleId) =>
-                roleId.toString(),
-              ),
-              permission_ids: permissionIds.map(
-                (permissionId) =>
-                  permissionId.toString(),
+              working_location_id: workingLocationId?.toString() ?? null,
+              department_id: departmentId?.toString() ?? null,
+              role_ids: roleIds.map((roleId) => roleId.toString()),
+              permission_ids: permissionIds.map((permissionId) =>
+                permissionId.toString(),
               ),
             },
           },
@@ -166,8 +153,7 @@ export class UsersService {
     });
 
     return {
-      message:
-        'Registration submitted successfully. Awaiting admin approval.',
+      message: 'Registration submitted successfully. Awaiting admin approval.',
       user: this.serializeUser(user),
     };
   }
@@ -185,8 +171,7 @@ export class UsersService {
 
         ...(filters.status
           ? {
-              status:
-                filters.status as STATUS_USER,
+              status: filters.status as STATUS_USER,
             }
           : {}),
 
@@ -225,9 +210,7 @@ export class UsersService {
       },
     });
 
-    return users.map((user) =>
-      this.serializeUser(user),
-    );
+    return users.map((user) => this.serializeUser(user));
   }
 
   async findPendingApproval(qInput?: string) {
@@ -273,53 +256,34 @@ export class UsersService {
       },
     });
 
-    return users.map((user) =>
-      this.serializeUser(user),
-    );
+    return users.map((user) => this.serializeUser(user));
   }
 
-  async approveUser(
-    uuid: string,
-    dto: ApproveUserDto,
-    actor: CurrentUserType,
-  ) {
+  async approveUser(uuid: string, dto: ApproveUserDto, actor: CurrentUserType) {
     const user = await this.findUserByUuidOrThrow(uuid);
 
     const workingLocationId = dto.working_location_id
-      ? await this.resolveWorkingLocationId(
-          dto.working_location_id,
-        )
-      : user.working_location_id ??
-        (await this.getDefaultWorkingLocationId());
+      ? await this.resolveWorkingLocationId(dto.working_location_id)
+      : (user.working_location_id ??
+        (await this.getDefaultWorkingLocationId()));
 
     const departmentId = dto.department_id
-      ? await this.resolveDepartmentId(
-          dto.department_id,
-          workingLocationId,
-        )
-      : user.department_id ??
-        (await this.getDefaultDepartmentId(
-          workingLocationId,
-        ));
+      ? await this.resolveDepartmentId(dto.department_id, workingLocationId)
+      : (user.department_id ??
+        (await this.getDefaultDepartmentId(workingLocationId)));
 
-    const roleIds =
-      dto.role_ids?.map((roleId) =>
-        this.toBigInt(roleId, 'role_id'),
-      ) ?? [await this.getDefaultRoleId()];
+    const roleIds = dto.role_ids?.map((roleId) =>
+      this.toBigInt(roleId, 'role_id'),
+    ) ?? [await this.getDefaultRoleId()];
 
     const permissionIds =
       dto.permission_ids?.map((permissionId) =>
         this.toBigInt(permissionId, 'permission_id'),
       ) ?? [];
 
-    await this.ensureWorkingLocationExists(
-      workingLocationId,
-    );
+    await this.ensureWorkingLocationExists(workingLocationId);
 
-    await this.ensureDepartmentExists(
-      departmentId,
-      workingLocationId,
-    );
+    await this.ensureDepartmentExists(departmentId, workingLocationId);
 
     await this.ensureRolesExist(roleIds);
 
@@ -329,91 +293,75 @@ export class UsersService {
 
     this.ensureActorCanManageUser(
       actor,
-      user.working_location_id ??
-        workingLocationId,
+      user.working_location_id ?? workingLocationId,
     );
 
-    const updatedUser =
-      await this.prisma.$transaction(async (tx) => {
-        await tx.users.update({
-          where: { id: user.id },
+    const updatedUser = await this.prisma.$transaction(async (tx) => {
+      await tx.users.update({
+        where: { id: user.id },
 
-          data: {
-            working_location_id:
-              workingLocationId,
-            department_id: departmentId,
-            status: STATUS_USER.ACTIVE,
-          },
-        });
-
-        await tx.user_roles.deleteMany({
-          where: { user_id: user.id },
-        });
-
-        if (roleIds.length) {
-          await tx.user_roles.createMany({
-            data: roleIds.map((roleId) => ({
-              user_id: user.id,
-              role_id: roleId,
-            })),
-            skipDuplicates: true,
-          });
-        }
-
-        await tx.user_permissions.deleteMany({
-          where: { user_id: user.id },
-        });
-
-        if (permissionIds.length) {
-          await tx.user_permissions.createMany({
-            data: permissionIds.map(
-              (permissionId) => ({
-                user_id: user.id,
-                permission_id: permissionId,
-                granted_by: BigInt(
-                  actor.userId,
-                ),
-              }),
-            ),
-            skipDuplicates: true,
-          });
-        }
-
-        await tx.audit_logs.create({
-          data: {
-            user_id: BigInt(actor.userId),
-            entity_table: 'users',
-            entity_id: user.id,
-            module_name: 'USER_MANAGEMENT',
-            activity_type:
-              ACTIVITY_TYPE.UPDATE,
-            activity_description:
-              'User account approved and activated.',
-            action: AUDIT_ACTION.APPROVED,
-          },
-        });
-
-        return tx.users.findUniqueOrThrow({
-          where: { id: user.id },
-          include: this.userIncludes(),
-        });
+        data: {
+          working_location_id: workingLocationId,
+          department_id: departmentId,
+          status: STATUS_USER.ACTIVE,
+        },
       });
 
+      await tx.user_roles.deleteMany({
+        where: { user_id: user.id },
+      });
+
+      if (roleIds.length) {
+        await tx.user_roles.createMany({
+          data: roleIds.map((roleId) => ({
+            user_id: user.id,
+            role_id: roleId,
+          })),
+          skipDuplicates: true,
+        });
+      }
+
+      await tx.user_permissions.deleteMany({
+        where: { user_id: user.id },
+      });
+
+      if (permissionIds.length) {
+        await tx.user_permissions.createMany({
+          data: permissionIds.map((permissionId) => ({
+            user_id: user.id,
+            permission_id: permissionId,
+            granted_by: BigInt(actor.userId),
+          })),
+          skipDuplicates: true,
+        });
+      }
+
+      await tx.audit_logs.create({
+        data: {
+          user_id: BigInt(actor.userId),
+          entity_table: 'users',
+          entity_id: user.id,
+          module_name: 'USER_MANAGEMENT',
+          activity_type: ACTIVITY_TYPE.UPDATE,
+          activity_description: 'User account approved and activated.',
+          action: AUDIT_ACTION.APPROVED,
+        },
+      });
+
+      return tx.users.findUniqueOrThrow({
+        where: { id: user.id },
+        include: this.userIncludes(),
+      });
+    });
+
     return {
-      message:
-        'User approved and activated.',
+      message: 'User approved and activated.',
       user: this.serializeUser(updatedUser),
     };
   }
 
-  async rejectUser(
-    uuid: string,
-    reason: string,
-    actor: CurrentUserType,
-  ) {
-    const user = await this.findUserByUuidOrThrow(
-      uuid,
-    );
+  async rejectUser(uuid: string, reason: string, actor: CurrentUserType) {
+    const user = await this.findUserByUuidOrThrow(uuid);
 
     await this.prisma.$transaction(async (tx) => {
       await tx.user_sessions.updateMany({
@@ -441,8 +389,7 @@ export class UsersService {
           entity_table: 'users',
           entity_id: user.id,
           module_name: 'USER_MANAGEMENT',
-          activity_type:
-            ACTIVITY_TYPE.DELETE,
+          activity_type: ACTIVITY_TYPE.DELETE,
           activity_description: `User rejected: ${reason}`,
           action: AUDIT_ACTION.DENIED,
         },
@@ -450,48 +397,39 @@ export class UsersService {
     });
 
     return {
-      message:
-        'User rejected and removed.',
+      message: 'User rejected and removed.',
     };
   }
 
-  async suspendUser(
-    uuid: string,
-    actor: CurrentUserType,
-  ) {
-    const user = await this.findUserByUuidOrThrow(
-      uuid,
-    );
+  async suspendUser(uuid: string, actor: CurrentUserType) {
+    const user = await this.findUserByUuidOrThrow(uuid);
 
-    const updatedUser =
-      await this.prisma.$transaction(async (tx) => {
-        await tx.user_sessions.updateMany({
-          where: {
-            user_id: user.id,
-            is_revoked: false,
-          },
-          data: {
-            is_revoked: true,
-          },
-        });
-
-        const suspended = await tx.users.update({
-          where: { id: user.id },
-
-          data: {
-            status:
-              STATUS_USER.SUSPENDED,
-          },
-
-          include: this.userIncludes(),
-        });
-
-        return suspended;
+    const updatedUser = await this.prisma.$transaction(async (tx) => {
+      await tx.user_sessions.updateMany({
+        where: {
+          user_id: user.id,
+          is_revoked: false,
+        },
+        data: {
+          is_revoked: true,
+        },
       });
 
+      const suspended = await tx.users.update({
+        where: { id: user.id },
+
+        data: {
+          status: STATUS_USER.SUSPENDED,
+        },
+
+        include: this.userIncludes(),
+      });
+
+      return suspended;
+    });
+
     return {
-      message:
-        'User suspended successfully.',
+      message: 'User suspended successfully.',
       user: this.serializeUser(updatedUser),
     };
   }
@@ -501,9 +439,7 @@ export class UsersService {
     roleIdsInput: string[],
     actor: CurrentUserType,
   ) {
-    const user = await this.findUserByUuidOrThrow(
-      uuid,
-    );
+    const user = await this.findUserByUuidOrThrow(uuid);
 
     const roleIds = roleIdsInput.map((roleId) =>
       this.toBigInt(roleId, 'role_id'),
@@ -511,25 +447,24 @@ export class UsersService {
 
     await this.ensureRolesExist(roleIds);
 
-    const updatedUser =
-      await this.prisma.$transaction(async (tx) => {
-        await tx.user_roles.deleteMany({
-          where: { user_id: user.id },
-        });
-
-        await tx.user_roles.createMany({
-          data: roleIds.map((roleId) => ({
-            user_id: user.id,
-            role_id: roleId,
-          })),
-          skipDuplicates: true,
-        });
-
-        return tx.users.findUniqueOrThrow({
-          where: { id: user.id },
-          include: this.userIncludes(),
-        });
+    const updatedUser = await this.prisma.$transaction(async (tx) => {
+      await tx.user_roles.deleteMany({
+        where: { user_id: user.id },
       });
+
+      await tx.user_roles.createMany({
+        data: roleIds.map((roleId) => ({
+          user_id: user.id,
+          role_id: roleId,
+        })),
+        skipDuplicates: true,
+      });
+
+      return tx.users.findUniqueOrThrow({
+        where: { id: user.id },
+        include: this.userIncludes(),
+      });
+    });
 
     return {
       message: 'User roles updated.',
@@ -542,9 +477,7 @@ export class UsersService {
     dto: RequestTransferDto,
     actor: CurrentUserType,
   ) {
-    const user = await this.findUserByUuidOrThrow(
-      uuid,
-    );
+    const user = await this.findUserByUuidOrThrow(uuid);
 
     const newLocationId = this.toBigInt(
       dto.working_location_id,
@@ -552,101 +485,68 @@ export class UsersService {
     );
 
     const newDepartmentId = dto.department_id
-      ? this.toBigInt(
-          dto.department_id,
-          'department_id',
-        )
+      ? this.toBigInt(dto.department_id, 'department_id')
       : null;
 
-    await this.ensureWorkingLocationExists(
-      newLocationId,
-    );
+    await this.ensureWorkingLocationExists(newLocationId);
 
     if (newDepartmentId) {
-      await this.ensureDepartmentExists(
-        newDepartmentId,
-        newLocationId,
-      );
+      await this.ensureDepartmentExists(newDepartmentId, newLocationId);
     }
 
-    const request =
-      await this.prisma.transfer_requests.create({
+    const request = await this.prisma.transfer_requests.create({
+      data: {
+        uuid: generateUUID(),
+        subject_type: TRANSFER_SUBJECT.USER,
+        user_id: user.id,
+        old_working_location_id: user.working_location_id,
+        new_working_location_id: newLocationId,
+        old_department_id: user.department_id,
+        new_department_id: newDepartmentId,
+        reason: dto.reason,
+        requested_by: BigInt(actor.userId),
+      },
+    });
+
+    return this.serializeTransferRequest(request);
+  }
+
+  async approveTransfer(requestUuid: string, actor: CurrentUserType) {
+    const request = await this.findTransferRequestOrThrow(
+      requestUuid,
+      TRANSFER_SUBJECT.USER,
+    );
+
+    if (!request.user_id) {
+      throw new BadRequestException('Transfer request has no user.');
+    }
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      await tx.users.update({
+        where: {
+          id: request.user_id!,
+        },
+
         data: {
-          uuid: generateUUID(),
-          subject_type:
-            TRANSFER_SUBJECT.USER,
-          user_id: user.id,
-          old_working_location_id:
-            user.working_location_id,
-          new_working_location_id:
-            newLocationId,
-          old_department_id:
-            user.department_id,
-          new_department_id:
-            newDepartmentId,
-          reason: dto.reason,
-          requested_by: BigInt(
-            actor.userId,
-          ),
+          working_location_id: request.new_working_location_id,
+          department_id: request.new_department_id,
         },
       });
 
-    return this.serializeTransferRequest(
-      request,
-    );
-  }
+      const approved = await tx.transfer_requests.update({
+        where: { id: request.id },
 
-  async approveTransfer(
-    requestUuid: string,
-    actor: CurrentUserType,
-  ) {
-    const request =
-      await this.findTransferRequestOrThrow(
-        requestUuid,
-        TRANSFER_SUBJECT.USER,
-      );
-
-    if (!request.user_id) {
-      throw new BadRequestException(
-        'Transfer request has no user.',
-      );
-    }
-
-    const updated =
-      await this.prisma.$transaction(async (tx) => {
-        await tx.users.update({
-          where: {
-            id: request.user_id!,
-          },
-
-          data: {
-            working_location_id:
-              request.new_working_location_id,
-            department_id:
-              request.new_department_id,
-          },
-        });
-
-        const approved =
-          await tx.transfer_requests.update({
-            where: { id: request.id },
-
-            data: {
-              status:
-                APPROVAL_STATUS.APPROVED,
-              approved_by: BigInt(
-                actor.userId,
-              ),
-              approved_at: new Date(),
-            },
-          });
-
-        return approved;
+        data: {
+          status: APPROVAL_STATUS.APPROVED,
+          approved_by: BigInt(actor.userId),
+          approved_at: new Date(),
+        },
       });
 
-    return this.serializeTransferRequest(
-      updated,
-    );
+      return approved;
+    });
+
+    return this.serializeTransferRequest(updated);
   }
 
   async rejectTransfer(
@@ -654,31 +554,23 @@ export class UsersService {
     dto: RejectTransferDto,
     actor: CurrentUserType,
   ) {
-    const request =
-      await this.findTransferRequestOrThrow(
-        requestUuid,
-        TRANSFER_SUBJECT.USER,
-      );
-
-    const rejected =
-      await this.prisma.transfer_requests.update({
-        where: { id: request.id },
-
-        data: {
-          status:
-            APPROVAL_STATUS.REJECTED,
-          rejection_reason:
-            dto.rejection_reason,
-          approved_by: BigInt(
-            actor.userId,
-          ),
-          approved_at: new Date(),
-        },
-      });
-
-    return this.serializeTransferRequest(
-      rejected,
+    const request = await this.findTransferRequestOrThrow(
+      requestUuid,
+      TRANSFER_SUBJECT.USER,
     );
+
+    const rejected = await this.prisma.transfer_requests.update({
+      where: { id: request.id },
+
+      data: {
+        status: APPROVAL_STATUS.REJECTED,
+        rejection_reason: dto.rejection_reason,
+        approved_by: BigInt(actor.userId),
+        approved_at: new Date(),
+      },
+    });
+
+    return this.serializeTransferRequest(rejected);
   }
 
   async findByEmail(email: string) {
@@ -695,73 +587,50 @@ export class UsersService {
     });
   }
 
-  private async findUserByUuidOrThrow(
-    uuid: string,
-  ) {
-    const user = await this.prisma.users.findUnique(
-      {
-        where: { uuid },
-      },
-    );
+  private async findUserByUuidOrThrow(uuid: string) {
+    const user = await this.prisma.users.findUnique({
+      where: { uuid },
+    });
 
     if (!user || user.deleted_at) {
-      throw new NotFoundException(
-        'User not found.',
-      );
+      throw new NotFoundException('User not found.');
     }
 
     return user;
   }
 
-  private async ensureWorkingLocationExists(
-    id: bigint,
-  ) {
-    const workingLocation =
-      await this.prisma.working_locations.findUnique(
-        {
-          where: { id },
-          select: { id: true },
-        },
-      );
+  private async ensureWorkingLocationExists(id: bigint) {
+    const workingLocation = await this.prisma.working_locations.findUnique({
+      where: { id },
+      select: { id: true },
+    });
 
     if (!workingLocation) {
-      throw new BadRequestException(
-        'Working location does not exist.',
-      );
+      throw new BadRequestException('Working location does not exist.');
     }
   }
 
-  private async resolveWorkingLocationId(
-    value: string,
-  ) {
-    requireUuidOrNumeric(
-      value,
-      'working_location_id',
-    );
+  private async resolveWorkingLocationId(value: string) {
+    requireUuidOrNumeric(value, 'working_location_id');
 
-    const workingLocation =
-      await this.prisma.working_locations.findFirst(
-        {
-          where: isNumericId(value)
-            ? {
-                id: BigInt(value),
-                deleted_at: null,
-              }
-            : {
-                uuid: value,
-                deleted_at: null,
-              },
-
-          select: {
-            id: true,
+    const workingLocation = await this.prisma.working_locations.findFirst({
+      where: isNumericId(value)
+        ? {
+            id: BigInt(value),
+            deleted_at: null,
+          }
+        : {
+            uuid: value,
+            deleted_at: null,
           },
-        },
-      );
+
+      select: {
+        id: true,
+      },
+    });
 
     if (!workingLocation) {
-      throw new BadRequestException(
-        'Working location does not exist.',
-      );
+      throw new BadRequestException('Working location does not exist.');
     }
 
     return workingLocation.id;
@@ -771,32 +640,25 @@ export class UsersService {
     value: string,
     workingLocationId?: bigint | null,
   ) {
-    requireUuidOrNumeric(
-      value,
-      'department_id',
-    );
+    requireUuidOrNumeric(value, 'department_id');
 
-    const department =
-      await this.prisma.departments.findFirst({
-        where: {
-          ...(isNumericId(value)
-            ? { id: BigInt(value) }
-            : { uuid: value }),
+    const department = await this.prisma.departments.findFirst({
+      where: {
+        ...(isNumericId(value) ? { id: BigInt(value) } : { uuid: value }),
 
-          ...(workingLocationId
-            ? {
-                working_location_id:
-                  workingLocationId,
-              }
-            : {}),
+        ...(workingLocationId
+          ? {
+              working_location_id: workingLocationId,
+            }
+          : {}),
 
-          status: 'ACTIVE',
-        },
+        status: 'ACTIVE',
+      },
 
-        select: {
-          id: true,
-        },
-      });
+      select: {
+        id: true,
+      },
+    });
 
     if (!department) {
       throw new BadRequestException(
@@ -808,23 +670,17 @@ export class UsersService {
   }
 
   private async getDefaultWorkingLocationId() {
-    const workingLocation =
-      await this.prisma.working_locations.findFirst(
-        {
-          where: {
-            deleted_at: null,
-          },
+    const workingLocation = await this.prisma.working_locations.findFirst({
+      where: {
+        deleted_at: null,
+      },
 
-          orderBy: [
-            { type: 'asc' },
-            { name: 'asc' },
-          ],
+      orderBy: [{ type: 'asc' }, { name: 'asc' }],
 
-          select: {
-            id: true,
-          },
-        },
-      );
+      select: {
+        id: true,
+      },
+    });
 
     if (!workingLocation) {
       throw new BadRequestException(
@@ -835,25 +691,21 @@ export class UsersService {
     return workingLocation.id;
   }
 
-  private async getDefaultDepartmentId(
-    workingLocationId: bigint,
-  ) {
-    const department =
-      await this.prisma.departments.findFirst({
-        where: {
-          working_location_id:
-            workingLocationId,
-          status: 'ACTIVE',
-        },
+  private async getDefaultDepartmentId(workingLocationId: bigint) {
+    const department = await this.prisma.departments.findFirst({
+      where: {
+        working_location_id: workingLocationId,
+        status: 'ACTIVE',
+      },
 
-        orderBy: {
-          name: 'asc',
-        },
+      orderBy: {
+        name: 'asc',
+      },
 
-        select: {
-          id: true,
-        },
-      });
+      select: {
+        id: true,
+      },
+    });
 
     if (!department) {
       throw new BadRequestException(
@@ -865,27 +717,21 @@ export class UsersService {
   }
 
   private async getDefaultRoleId() {
-    const role = await this.prisma.roles.findFirst(
-      {
-        where: {
-          name: {
-            in: [
-              'USER',
-              'EMPLOYEE',
-              'STAFF',
-            ],
-          },
-        },
-
-        orderBy: {
-          created_at: 'asc',
-        },
-
-        select: {
-          id: true,
+    const role = await this.prisma.roles.findFirst({
+      where: {
+        name: {
+          in: ['USER', 'EMPLOYEE', 'STAFF'],
         },
       },
-    );
+
+      orderBy: {
+        created_at: 'asc',
+      },
+
+      select: {
+        id: true,
+      },
+    });
 
     if (!role) {
       throw new BadRequestException(
@@ -896,23 +742,18 @@ export class UsersService {
     return role.id;
   }
 
-  private async ensureDepartmentExists(
-    id: bigint,
-    workingLocationId: bigint,
-  ) {
-    const department =
-      await this.prisma.departments.findFirst({
-        where: {
-          id,
-          working_location_id:
-            workingLocationId,
-          status: 'ACTIVE',
-        },
+  private async ensureDepartmentExists(id: bigint, workingLocationId: bigint) {
+    const department = await this.prisma.departments.findFirst({
+      where: {
+        id,
+        working_location_id: workingLocationId,
+        status: 'ACTIVE',
+      },
 
-        select: {
-          id: true,
-        },
-      });
+      select: {
+        id: true,
+      },
+    });
 
     if (!department) {
       throw new BadRequestException(
@@ -921,14 +762,8 @@ export class UsersService {
     }
   }
 
-  private async ensureRolesExist(
-    roleIds: bigint[],
-    requireAtLeastOne = true,
-  ) {
-    if (
-      !roleIds.length &&
-      requireAtLeastOne
-    ) {
+  private async ensureRolesExist(roleIds: bigint[], requireAtLeastOne = true) {
+    if (!roleIds.length && requireAtLeastOne) {
       throw new BadRequestException(
         'At least one role is required for activation.',
       );
@@ -938,49 +773,38 @@ export class UsersService {
       return;
     }
 
-    const roles =
-      await this.prisma.roles.findMany({
-        where: {
-          id: {
-            in: roleIds,
-          },
+    const roles = await this.prisma.roles.findMany({
+      where: {
+        id: {
+          in: roleIds,
         },
+      },
 
-        select: {
-          id: true,
-        },
-      });
+      select: {
+        id: true,
+      },
+    });
 
     if (roles.length !== roleIds.length) {
-      throw new BadRequestException(
-        'One or more roles do not exist.',
-      );
+      throw new BadRequestException('One or more roles do not exist.');
     }
   }
 
-  private async ensurePermissionsExist(
-    permissionIds: bigint[],
-  ) {
-    const permissions =
-      await this.prisma.permissions.findMany({
-        where: {
-          id: {
-            in: permissionIds,
-          },
+  private async ensurePermissionsExist(permissionIds: bigint[]) {
+    const permissions = await this.prisma.permissions.findMany({
+      where: {
+        id: {
+          in: permissionIds,
         },
+      },
 
-        select: {
-          id: true,
-        },
-      });
+      select: {
+        id: true,
+      },
+    });
 
-    if (
-      permissions.length !==
-      permissionIds.length
-    ) {
-      throw new BadRequestException(
-        'One or more permissions do not exist.',
-      );
+    if (permissions.length !== permissionIds.length) {
+      throw new BadRequestException('One or more permissions do not exist.');
     }
   }
 
@@ -988,22 +812,16 @@ export class UsersService {
     uuid: string,
     subjectType: TRANSFER_SUBJECT,
   ) {
-    const request =
-      await this.prisma.transfer_requests.findFirst(
-        {
-          where: {
-            uuid,
-            subject_type: subjectType,
-            status:
-              APPROVAL_STATUS.PENDING,
-          },
-        },
-      );
+    const request = await this.prisma.transfer_requests.findFirst({
+      where: {
+        uuid,
+        subject_type: subjectType,
+        status: APPROVAL_STATUS.PENDING,
+      },
+    });
 
     if (!request) {
-      throw new NotFoundException(
-        'Pending transfer request not found.',
-      );
+      throw new NotFoundException('Pending transfer request not found.');
     }
 
     return request;
@@ -1029,147 +847,92 @@ export class UsersService {
     };
   }
 
-  private serializeUser(
-    user: Record<string, any>,
-  ) {
+  private serializeUser(user: Record<string, any>) {
     return {
       ...user,
 
       id: user.id?.toString(),
 
-      working_location_id:
-        user.working_location_id?.toString() ??
-        null,
+      working_location_id: user.working_location_id?.toString() ?? null,
 
-      department_id:
-        user.department_id?.toString() ??
-        null,
+      department_id: user.department_id?.toString() ?? null,
 
       roles: user.roles?.map((userRole) => ({
         id: userRole.id.toString(),
-        role_id:
-          userRole.role_id.toString(),
+        role_id: userRole.role_id.toString(),
         name: userRole.role?.name,
       })),
 
-      permissions:
-        user.user_permissions?.map(
-          (userPermission) => ({
-            id:
-              userPermission.id.toString(),
-            permission_id:
-              userPermission.permission_id.toString(),
-            permission_key:
-              userPermission.permission
-                ?.permission_key,
-            name:
-              userPermission.permission
-                ?.name,
-          }),
-        ),
+      permissions: user.user_permissions?.map((userPermission) => ({
+        id: userPermission.id.toString(),
+        permission_id: userPermission.permission_id.toString(),
+        permission_key: userPermission.permission?.permission_key,
+        name: userPermission.permission?.name,
+      })),
 
       working_location: user.working_location
         ? {
             ...user.working_location,
-            id:
-              user.working_location.id.toString(),
-            created_by:
-              user.working_location.created_by?.toString() ??
-              null,
-            updated_by:
-              user.working_location.updated_by?.toString() ??
-              null,
-            deleted_by:
-              user.working_location.deleted_by?.toString() ??
-              null,
+            id: user.working_location.id.toString(),
+            created_by: user.working_location.created_by?.toString() ?? null,
+            updated_by: user.working_location.updated_by?.toString() ?? null,
+            deleted_by: user.working_location.deleted_by?.toString() ?? null,
           }
         : null,
 
       department: user.department
         ? {
             ...user.department,
-            id:
-              user.department.id.toString(),
-            working_location_id:
-              user.department.working_location_id.toString(),
+            id: user.department.id.toString(),
+            working_location_id: user.department.working_location_id.toString(),
           }
         : undefined,
     };
   }
 
-  private serializeTransferRequest(
-    request: Record<string, any>,
-  ) {
+  private serializeTransferRequest(request: Record<string, any>) {
     return {
       ...request,
 
       id: request.id.toString(),
 
-      user_id:
-        request.user_id?.toString() ??
-        null,
+      user_id: request.user_id?.toString() ?? null,
 
-      employee_id:
-        request.employee_id?.toString() ??
-        null,
+      employee_id: request.employee_id?.toString() ?? null,
 
       old_working_location_id:
-        request.old_working_location_id?.toString() ??
-        null,
+        request.old_working_location_id?.toString() ?? null,
 
-      new_working_location_id:
-        request.new_working_location_id.toString(),
+      new_working_location_id: request.new_working_location_id.toString(),
 
-      old_department_id:
-        request.old_department_id?.toString() ??
-        null,
+      old_department_id: request.old_department_id?.toString() ?? null,
 
-      new_department_id:
-        request.new_department_id?.toString() ??
-        null,
+      new_department_id: request.new_department_id?.toString() ?? null,
 
-      requested_by:
-        request.requested_by.toString(),
+      requested_by: request.requested_by.toString(),
 
-      approved_by:
-        request.approved_by?.toString() ??
-        null,
+      approved_by: request.approved_by?.toString() ?? null,
     };
   }
 
-  private isSystemAdmin(
-    actor?: CurrentUserType,
-  ) {
+  private isSystemAdmin(actor?: CurrentUserType) {
     return !!actor?.roles?.some((role) =>
-      ['SUPER_ADMIN', 'ADMIN'].includes(
-        role,
-      ),
+      ['SUPER_ADMIN', 'ADMIN'].includes(role),
     );
   }
 
-  private isBranchManager(
-    actor?: CurrentUserType,
-  ) {
-    return !!actor?.roles?.includes(
-      'BRANCH_MANAGER',
-    );
+  private isBranchManager(actor?: CurrentUserType) {
+    return !!actor?.roles?.includes('BRANCH_MANAGER');
   }
 
-  private userScopeWhere(
-    actor: CurrentUserType,
-  ) {
+  private userScopeWhere(actor: CurrentUserType) {
     if (this.isSystemAdmin(actor)) {
       return {};
     }
 
-    if (
-      this.isBranchManager(actor) &&
-      actor.working_location_id
-    ) {
+    if (this.isBranchManager(actor) && actor.working_location_id) {
       return {
-        working_location_id: BigInt(
-          actor.working_location_id,
-        ),
+        working_location_id: BigInt(actor.working_location_id),
       };
     }
 
@@ -1189,8 +952,7 @@ export class UsersService {
     if (
       this.isBranchManager(actor) &&
       actor.working_location_id &&
-      workingLocationId?.toString() ===
-        actor.working_location_id
+      workingLocationId?.toString() === actor.working_location_id
     ) {
       return;
     }
@@ -1200,14 +962,9 @@ export class UsersService {
     );
   }
 
-  private toBigInt(
-    value: string,
-    fieldName: string,
-  ): bigint {
+  private toBigInt(value: string, fieldName: string): bigint {
     if (!/^\d+$/.test(value)) {
-      throw new BadRequestException(
-        `${fieldName} must be a numeric id.`,
-      );
+      throw new BadRequestException(`${fieldName} must be a numeric id.`);
     }
 
     return BigInt(value);

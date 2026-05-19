@@ -5,11 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import {
-  ACTIVITY_TYPE,
-  ATTENDANCE_STATUS,
-  AUDIT_ACTION,
-} from '@prisma/client';
+import { ACTIVITY_TYPE, ATTENDANCE_STATUS, AUDIT_ACTION } from '@prisma/client';
 import type { CurrentUserType } from '../auth/types/current-user.type';
 import { generateUUID } from '../common/utils/uuid.util';
 import { PrismaService } from '../prisma/prisma.service';
@@ -37,7 +33,9 @@ export class TimeRecordsService {
     });
 
     if (existing) {
-      throw new ConflictException('Time record already exists for this employee and date.');
+      throw new ConflictException(
+        'Time record already exists for this employee and date.',
+      );
     }
 
     const record = await this.prisma.$transaction(async (tx) => {
@@ -75,20 +73,29 @@ export class TimeRecordsService {
     return this.serialize(record);
   }
 
-  async clockOut(uuid: string, dto: UpdateTimeRecordDto, actor: CurrentUserType) {
+  async clockOut(
+    uuid: string,
+    dto: UpdateTimeRecordDto,
+    actor: CurrentUserType,
+  ) {
     const record = await this.findByUuidOrThrow(uuid);
     this.ensureActorCanAccessEmployee(actor, record.employee);
     const clockOut = dto.clock_out ? new Date(dto.clock_out) : new Date();
 
     if (!record.clock_in) {
-      throw new BadRequestException('Cannot clock out without a clock in time.');
+      throw new BadRequestException(
+        'Cannot clock out without a clock in time.',
+      );
     }
 
     const hoursWorked = Math.max(
       0,
       (clockOut.getTime() - record.clock_in.getTime()) / (1000 * 60 * 60),
     );
-    const overtimeHours = Math.max(0, hoursWorked - this.overtimeThresholdHours);
+    const overtimeHours = Math.max(
+      0,
+      hoursWorked - this.overtimeThresholdHours,
+    );
 
     const updated = await this.prisma.$transaction(async (tx) => {
       const saved = await tx.time_records.update({
@@ -127,7 +134,11 @@ export class TimeRecordsService {
     return this.serialize(updated);
   }
 
-  async approve(uuid: string, dto: ApproveTimeRecordDto, actor: CurrentUserType) {
+  async approve(
+    uuid: string,
+    dto: ApproveTimeRecordDto,
+    actor: CurrentUserType,
+  ) {
     const record = await this.findByUuidOrThrow(uuid);
     this.ensureActorCanAccessEmployee(actor, record.employee);
 
@@ -232,7 +243,8 @@ export class TimeRecordsService {
             id: record.employee.id.toString(),
             created_by: record.employee.created_by?.toString() ?? null,
             department_id: record.employee.department_id?.toString() ?? null,
-            working_location_id: record.employee.working_location_id?.toString() ?? null,
+            working_location_id:
+              record.employee.working_location_id?.toString() ?? null,
             employment_category_id:
               record.employee.employment_category_id?.toString() ?? null,
           }
@@ -242,7 +254,8 @@ export class TimeRecordsService {
             ...record.approvedBy,
             id: record.approvedBy.id.toString(),
             department_id: record.approvedBy.department_id?.toString() ?? null,
-            working_location_id: record.approvedBy.working_location_id?.toString() ?? null,
+            working_location_id:
+              record.approvedBy.working_location_id?.toString() ?? null,
           }
         : null,
     };
@@ -257,7 +270,9 @@ export class TimeRecordsService {
   }
 
   private isSystemAdmin(actor?: CurrentUserType) {
-    return !!actor?.roles?.some((role) => ['SUPER_ADMIN', 'ADMIN'].includes(role));
+    return !!actor?.roles?.some((role) =>
+      ['SUPER_ADMIN', 'ADMIN'].includes(role),
+    );
   }
 
   private employeeScopeWhere(actor: CurrentUserType) {
@@ -287,14 +302,18 @@ export class TimeRecordsService {
       actor.working_location_id &&
       employee.working_location_id?.toString() !== actor.working_location_id
     ) {
-      throw new ForbiddenException('You can only manage attendance in your working location.');
+      throw new ForbiddenException(
+        'You can only manage attendance in your working location.',
+      );
     }
 
     if (
       actor.department_id &&
       employee.department_id?.toString() !== actor.department_id
     ) {
-      throw new ForbiddenException('You can only manage attendance for your department.');
+      throw new ForbiddenException(
+        'You can only manage attendance for your department.',
+      );
     }
   }
 }

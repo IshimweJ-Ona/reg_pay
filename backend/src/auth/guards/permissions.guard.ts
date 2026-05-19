@@ -24,15 +24,8 @@ export class PermissionsGuard implements CanActivate {
       'attendance.update',
       'attendance.approve',
     ],
-    'payroll.create': [
-      'payroll.read',
-      'payroll.manage',
-    ],
-    'payroll.manage': [
-      'payroll.read',
-      'payroll.create',
-      'payroll.approve',
-    ],
+    'payroll.create': ['payroll.read', 'payroll.manage'],
+    'payroll.manage': ['payroll.read', 'payroll.create', 'payroll.approve'],
     'payment-structures.create': [
       'payment-structures.read',
       'payment-structures.update',
@@ -49,10 +42,7 @@ export class PermissionsGuard implements CanActivate {
       'permissions.create',
       'permissions.assign',
     ],
-    'branches.manage': [
-      'departments.manage',
-      'branch-manager.manage',
-    ],
+    'branches.manage': ['departments.manage', 'branch-manager.manage'],
     'branch-manager.manage': [
       'users.read',
       'users.update',
@@ -100,7 +90,9 @@ export class PermissionsGuard implements CanActivate {
 
     if (
       user?.roles?.includes('BRANCH_MANAGER') &&
-      requiredPermissions.some((permission) => branchManagerPermissions.has(permission))
+      requiredPermissions.some((permission) =>
+        branchManagerPermissions.has(permission),
+      )
     ) {
       return true;
     }

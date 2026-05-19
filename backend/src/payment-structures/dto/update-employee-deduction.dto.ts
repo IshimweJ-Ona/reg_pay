@@ -1,19 +1,15 @@
-import {
-    IsBoolean,
-    IsDateString,
-    IsOptional,
-} from 'class-validator';
+import { IsBoolean, IsDateString, IsOptional } from 'class-validator';
 
 export class UpdateEmployeeDeductionDto {
-    @IsOptional()
-    @IsDateString()
-    start_date?: string;
+  @IsOptional()
+  @IsDateString()
+  start_date?: string;
 
-    @IsOptional()
-    @IsDateString()
-    end_date?: string;
+  @IsOptional()
+  @IsDateString()
+  end_date?: string;
 
-    @IsOptional()
-    @IsBoolean()
-    is_active?: boolean;
+  @IsOptional()
+  @IsBoolean()
+  is_active?: boolean;
 }

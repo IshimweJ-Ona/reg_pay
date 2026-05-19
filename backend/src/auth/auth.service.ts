@@ -4,11 +4,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { 
-  ACTIVITY_TYPE, 
-  AUDIT_ACTION, 
-  STATUS_USER ,
-} from '@prisma/client';
+import { ACTIVITY_TYPE, AUDIT_ACTION, STATUS_USER } from '@prisma/client';
 import { compareHash, hashValue } from '../common/utils/hash.util';
 import { isNumericId, requireUuidOrNumeric } from '../common/utils/lookup.util';
 import { generateUUID } from '../common/utils/uuid.util';
@@ -54,7 +50,9 @@ export class AuthService {
     });
 
     if (existingUser) {
-      throw new ConflictException('A user with this email or phone already exists.');
+      throw new ConflictException(
+        'A user with this email or phone already exists.',
+      );
     }
 
     const workingLocationId = dto.working_location_id
@@ -75,8 +73,8 @@ export class AuthService {
         password_hash: await hashPassword(dto.password),
         department_id: departmentId,
         working_location_id: workingLocationId,
-        status: STATUS_USER.INACTIVE,
-      },
+        status: STATUS_USER.ACTIVE,
+        },
       select: {
         uuid: true,
         first_name: true,
@@ -89,7 +87,8 @@ export class AuthService {
     });
 
     return {
-      message: 'User registered. You can sign in, but system activities require permissions from an administrator.',
+      message:
+        'User registered. You can sign in, but system activities require permissions from an administrator.',
       user,
     };
   }
@@ -100,13 +99,19 @@ export class AuthService {
         OR: [{ email: dto.identifier }, { phone_number: dto.identifier }],
         deleted_at: null,
       },
+      include: {
+        roles: { include: { role: true } },
+      },
     });
 
     if (!user) {
       throw new UnauthorizedException('Incorrect email or phone number');
     }
 
-    const passwordIsValid = await comparePassword(dto.password, user.password_hash);
+    const passwordIsValid = await comparePassword(
+      dto.password,
+      user.password_hash,
+    );
 
     if (!passwordIsValid) {
       await this.writeLoginAudit(user.id, context.ipAddress, false);
@@ -114,7 +119,9 @@ export class AuthService {
     }
 
     if (user.status === STATUS_USER.SUSPENDED) {
-      throw new UnauthorizedException('Account is suspended. Contact an administrator.');
+      throw new UnauthorizedException(
+        'Account is suspended. Contact an administrator.',
+      );
     }
 
     const payload = await this.buildPayload(user.id);
@@ -139,7 +146,78 @@ export class AuthService {
 
     await this.writeLoginAudit(user.id, context.ipAddress, true);
 
-    return tokens;
+    const roles = user.roles.map((r) => r.role.name);
+    const isAdmin = roles.includes('ADMIN') || roles.includes('SUPER_ADMIN');
+    const redirectUrl = isAdmin ? `/admin/dashboard` : `/user/dashboard/${user.uuid}`;
+
+    return { ...tokens, redirectUrl, uuid: user.uuid };
+  }
+
+  async forgotPassword(emailOrPhone: string) {
+    const user = await this.prisma.users.findFirst({
+      where: {
+        OR: [{ email: emailOrPhone }, { phone_number: emailOrPhone }],
+        deleted_at: null,
+      },
+    });
+
+    if (!user) {
+      // For security, don't reveal if user exists
+      return { message: 'If an account exists, a reset token has been generated.' };
+    }
+
+    const token = generateUUID();
+    const expires = new Date();
+    expires.setHours(expires.getHours() + 1); // 1 hour expiry
+
+    await this.prisma.users.update({
+      where: { id: user.id },
+      data: {
+        reset_password_token: token,
+        reset_password_expires: expires,
+      },
+    });
+
+    // In a real app, send an email/SMS here. For now, we return the token as requested for the "small page" flow.
+    return {
+      message: 'Reset token generated.',
+      reset_token: token,
+      user_name: `${user.first_name} ${user.last_name}`,
+    };
+  }
+
+  async resetPassword(token: string, dto: any) {
+    const user = await this.prisma.users.findFirst({
+      where: {
+        reset_password_token: token,
+        reset_password_expires: { gt: new Date() },
+      },
+    });
+
+    if (!user) {
+      throw new UnauthorizedException('Invalid or expired reset token.');
+    }
+
+    if (dto.password !== dto.confirmPassword) {
+      throw new ConflictException('Passwords do not match.');
+    }
+
+    // Password regex: minimum 5, two digits, one capital, one small, one symbol
+    const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{5,}$/;
+    if (!passwordRegex.test(dto.password)) {
+      throw new ConflictException('Password does not meet security requirements.');
+    }
+
+    await this.prisma.users.update({
+      where: { id: user.id },
+      data: {
+        password_hash: await hashPassword(dto.password),
+        reset_password_token: null,
+        reset_password_expires: null,
+      },
+    });
+
+    return { message: 'Password has been reset successfully.' };
   }
 
   async refresh(refreshToken: string, context: RequestContext = {}) {
@@ -185,7 +263,10 @@ export class AuthService {
   }
 
   async logout(userId: string, refreshToken: string) {
-    const session = await this.findMatchingActiveSession(BigInt(userId), refreshToken);
+    const session = await this.findMatchingActiveSession(
+      BigInt(userId),
+      refreshToken,
+    );
 
     if (session) {
       await this.prisma.user_sessions.update({
@@ -307,29 +388,30 @@ export class AuthService {
   }
 
   private async loadUserRbac(userId: bigint) {
-    const [user, userRoles, userPermissions, activeBranchManager] = await Promise.all([
-      this.prisma.users.findUnique({ where: { id: userId } }),
-      this.prisma.user_roles.findMany({
-      where: { user_id: userId },
-      include: {
-        role: {
+    const [user, userRoles, userPermissions, activeBranchManager] =
+      await Promise.all([
+        this.prisma.users.findUnique({ where: { id: userId } }),
+        this.prisma.user_roles.findMany({
+          where: { user_id: userId },
           include: {
-            role_permissions: {
-              include: { permission: true },
+            role: {
+              include: {
+                role_permissions: {
+                  include: { permission: true },
+                },
+              },
             },
           },
-        },
-      },
-      }),
-      this.prisma.user_permissions.findMany({
-      where: { user_id: userId },
-      include: { permission: true },
-      }),
-      this.prisma.branch_managers.findFirst({
-        where: { user_id: userId, is_active: true },
-        select: { id: true },
-      }),
-    ]);
+        }),
+        this.prisma.user_permissions.findMany({
+          where: { user_id: userId },
+          include: { permission: true },
+        }),
+        this.prisma.branch_managers.findFirst({
+          where: { user_id: userId, is_active: true },
+          select: { id: true },
+        }),
+      ]);
 
     const roles = userRoles.map((userRole) => userRole.role.name);
     const permissions = new Set<string>();
@@ -364,7 +446,10 @@ export class AuthService {
     };
   }
 
-  private async findMatchingActiveSession(userId: bigint, refreshToken: string) {
+  private async findMatchingActiveSession(
+    userId: bigint,
+    refreshToken: string,
+  ) {
     const sessions = await this.prisma.user_sessions.findMany({
       where: {
         user_id: userId,
@@ -374,7 +459,10 @@ export class AuthService {
     });
 
     for (const session of sessions) {
-      const matches = await compareHash(refreshToken, session.refresh_token_hash);
+      const matches = await compareHash(
+        refreshToken,
+        session.refresh_token_hash,
+      );
 
       if (matches) return session;
     }
@@ -388,7 +476,9 @@ export class AuthService {
     return date;
   }
 
-  private normalizeDeviceInfo(deviceInfo?: string | string[]): string | undefined {
+  private normalizeDeviceInfo(
+    deviceInfo?: string | string[],
+  ): string | undefined {
     return Array.isArray(deviceInfo) ? deviceInfo.join(', ') : deviceInfo;
   }
 
@@ -407,12 +497,17 @@ export class AuthService {
     return workingLocation.id;
   }
 
-  private async resolveDepartmentId(value: string, workingLocationId: bigint | null) {
+  private async resolveDepartmentId(
+    value: string,
+    workingLocationId: bigint | null,
+  ) {
     requireUuidOrNumeric(value, 'department_id');
     const department = await this.prisma.departments.findFirst({
       where: {
         ...(isNumericId(value) ? { id: BigInt(value) } : { uuid: value }),
-        ...(workingLocationId ? { working_location_id: workingLocationId } : {}),
+        ...(workingLocationId
+          ? { working_location_id: workingLocationId }
+          : {}),
       },
       select: { id: true },
     });
@@ -434,8 +529,12 @@ export class AuthService {
         entity_table: 'users',
         entity_id: userId,
         module_name: 'AUTH',
-        activity_type: success ? ACTIVITY_TYPE.LOGIN : ACTIVITY_TYPE.FAILED_LOGIN,
-        activity_description: success ? 'User logged in.' : 'Failed login attempt.',
+        activity_type: success
+          ? ACTIVITY_TYPE.LOGIN
+          : ACTIVITY_TYPE.FAILED_LOGIN,
+        activity_description: success
+          ? 'User logged in.'
+          : 'Failed login attempt.',
         action: success ? AUDIT_ACTION.LOGIN : AUDIT_ACTION.DENIED,
         ip_address: ipAddress,
       },

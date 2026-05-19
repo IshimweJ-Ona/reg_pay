@@ -2,7 +2,10 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
+  Inject,
 } from '@nestjs/common';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import * as cacheManager from 'cache-manager';
 import {
   ACTIVITY_TYPE,
   AUDIT_ACTION,
@@ -13,8 +16,11 @@ import {
   TRANSACTION_STATUS,
 } from '@prisma/client';
 import type { CurrentUserType } from '../auth/types/current-user.type';
-import { SimpleCacheService } from '../common/cache/simple-cache.service';
-import { isNumericId, normalizeSearch, requireUuidOrNumeric } from '../common/utils/lookup.util';
+import {
+  isNumericId,
+  normalizeSearch,
+  requireUuidOrNumeric,
+} from '../common/utils/lookup.util';
 import { generateUUID } from '../common/utils/uuid.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { ApprovePayrollItemDto } from './dto/approve-payroll-item.dto';
@@ -33,11 +39,13 @@ type PayrollCalculation = {
 export class PayrollService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly cache: SimpleCacheService,
+    @Inject(CACHE_MANAGER) private cacheManager: cacheManager.Cache,
   ) {}
 
   async createBatch(dto: CreatePayrollBatchDto, actor: CurrentUserType) {
-    const workingLocationId = await this.resolveWorkingLocationId(dto.working_location_id);
+    const workingLocationId = await this.resolveWorkingLocationId(
+      dto.working_location_id,
+    );
     await this.ensureWorkingLocation(workingLocationId);
     this.ensureActorCanUseWorkingLocation(actor, workingLocationId);
 
@@ -50,7 +58,9 @@ export class PayrollService {
     });
 
     if (!employees.length) {
-      throw new BadRequestException('No active employees found for this working location.');
+      throw new BadRequestException(
+        'No active employees found for this working location.',
+      );
     }
 
     const calculations: PayrollCalculation[] = [];
@@ -71,7 +81,10 @@ export class PayrollService {
       );
     }
 
-    const totalAmount = calculations.reduce((sum, item) => sum + item.netAmount, 0);
+    const totalAmount = calculations.reduce(
+      (sum, item) => sum + item.netAmount,
+      0,
+    );
     const batchCode = `PAY-${dto.payroll_year}-${dto.payroll_month
       .toString()
       .padStart(2, '0')}-${Date.now()}`;
@@ -145,28 +158,36 @@ export class PayrollService {
         include: this.batchIncludes(),
       });
     });
-    this.cache.deleteByPrefix('payroll:');
+
+    // Invalidate payroll batches cache when a new batch is created
+    await this.cacheManager.del('payroll:batches');
 
     return this.serializeBatch(batch);
   }
 
+  // Retrieve payroll batches with scoping and caching
   async findBatches(actor: CurrentUserType, qInput?: string) {
     const q = normalizeSearch(qInput);
-    const batches = await this.cache.remember(
-      `payroll:batches:${actor.userId}:${actor.working_location_id ?? ''}:${q ?? ''}`,
-      20_000,
-      () =>
-        this.prisma.payment_batches.findMany({
-          where: {
-            ...this.batchScopeWhere(actor),
-            ...(q ? { batch_code: { contains: q } } : {}),
-          },
-          include: this.batchIncludes(),
-          orderBy: { created_at: 'desc' },
-        }),
-    );
+    const cacheKey = `payroll:batches:${actor.userId}:${actor.working_location_id ?? ''}:${q ?? ''}`;
 
-    return batches.map((batch) => this.serializeBatch(batch));
+    // Check if result is in cache
+    const cached = await this.cacheManager.get(cacheKey);
+    if (cached) return cached as any;
+
+    const batches = await this.prisma.payment_batches.findMany({
+      where: {
+        ...this.batchScopeWhere(actor),
+        ...(q ? { batch_code: { contains: q } } : {}),
+      },
+      include: this.batchIncludes(),
+      orderBy: { created_at: 'desc' },
+    });
+
+    const result = batches.map((batch) => this.serializeBatch(batch));
+
+    // Store results in cache for 20 seconds
+    await this.cacheManager.set(cacheKey, result, 20000);
+    return result;
   }
 
   async findBatch(uuid: string, actor: CurrentUserType) {
@@ -217,7 +238,11 @@ export class PayrollService {
         },
       });
 
-      await this.recalculateBatchStatus(tx, item.payment_batch_id, BigInt(actor.userId));
+      await this.recalculateBatchStatus(
+        tx,
+        item.payment_batch_id,
+        BigInt(actor.userId),
+      );
 
       return saved;
     });
@@ -263,11 +288,20 @@ export class PayrollService {
             status: PAYMENT_BATCH_STATUS.REJECTED,
             rejection_reason: dto.rejection_reason,
           },
-          changed_fields: ['status', 'rejection_reason', 'approved_by', 'approved_at'],
+          changed_fields: [
+            'status',
+            'rejection_reason',
+            'approved_by',
+            'approved_at',
+          ],
         },
       });
 
-      await this.recalculateBatchStatus(tx, item.payment_batch_id, BigInt(actor.userId));
+      await this.recalculateBatchStatus(
+        tx,
+        item.payment_batch_id,
+        BigInt(actor.userId),
+      );
 
       return saved;
     });
@@ -308,8 +342,12 @@ export class PayrollService {
       const updated = await tx.payment_batches.update({
         where: { id: batch.id },
         data: {
-          status: isFinal ? PAYMENT_BATCH_STATUS.APPROVED : PAYMENT_BATCH_STATUS.IN_REVIEW,
-          current_approval_step: isFinal ? batch.current_approval_step : nextStep,
+          status: isFinal
+            ? PAYMENT_BATCH_STATUS.APPROVED
+            : PAYMENT_BATCH_STATUS.IN_REVIEW,
+          current_approval_step: isFinal
+            ? batch.current_approval_step
+            : nextStep,
           approved_by: isFinal ? BigInt(actor.userId) : null,
           approved_at: isFinal ? new Date() : null,
         },
@@ -343,7 +381,9 @@ export class PayrollService {
     dto: RejectPayrollItemDto,
     actor: CurrentUserType,
   ) {
-    const batch = await this.prisma.payment_batches.findUnique({ where: { uuid } });
+    const batch = await this.prisma.payment_batches.findUnique({
+      where: { uuid },
+    });
 
     if (!batch) throw new NotFoundException('Payroll batch not found.');
 
@@ -413,7 +453,8 @@ export class PayrollService {
       select: { id: true },
     });
 
-    if (!workingLocation) throw new BadRequestException('Working location does not exist.');
+    if (!workingLocation)
+      throw new BadRequestException('Working location does not exist.');
     return workingLocation.id;
   }
 
@@ -457,9 +498,11 @@ export class PayrollService {
     const workingDaysInPeriod = Math.max(attendance.length, presentDays, 1);
     const baseAmount =
       paymentStructure.payroll_frequency === EMPLOYMENT_TYPE.MONTHLY
-        ? (Number(paymentStructure.basic_salary) / workingDaysInPeriod) * presentDays
+        ? (Number(paymentStructure.basic_salary) / workingDaysInPeriod) *
+          presentDays
         : Number(paymentStructure.daily_rate) * presentDays;
-    const overtimeAmount = Number(paymentStructure.overtime_rate) * overtimeHours;
+    const overtimeAmount =
+      Number(paymentStructure.overtime_rate) * overtimeHours;
     const grossAmount = baseAmount + overtimeAmount;
 
     const employeeDeductions = await this.prisma.employee_deductions.findMany({
@@ -474,7 +517,11 @@ export class PayrollService {
 
     const configuredDeductions = employeeDeductions.reduce((sum, deduction) => {
       if (deduction.deduction_type.deduction_mode === 'PERCENTAGE') {
-        return sum + grossAmount * (Number(deduction.deduction_type.percentage_value) / 100);
+        return (
+          sum +
+          grossAmount *
+            (Number(deduction.deduction_type.percentage_value) / 100)
+        );
       }
 
       return sum + Number(deduction.deduction_type.amount);
@@ -526,7 +573,8 @@ export class PayrollService {
       select: { id: true },
     });
 
-    if (!workingLocation) throw new BadRequestException('Working location does not exist.');
+    if (!workingLocation)
+      throw new BadRequestException('Working location does not exist.');
   }
 
   private isSystemAdmin(actor: CurrentUserType) {
@@ -541,14 +589,21 @@ export class PayrollService {
     return { id: BigInt(0) };
   }
 
-  private ensureActorCanUseWorkingLocation(actor: CurrentUserType, workingLocationId: bigint) {
+  private ensureActorCanUseWorkingLocation(
+    actor: CurrentUserType,
+    workingLocationId: bigint,
+  ) {
     if (this.isSystemAdmin(actor)) return;
     if (actor.working_location_id === workingLocationId.toString()) return;
-    throw new BadRequestException('You can only access payroll in your working location.');
+    throw new BadRequestException(
+      'You can only access payroll in your working location.',
+    );
   }
 
   private async findItemByUuidOrThrow(uuid: string) {
-    const item = await this.prisma.payment_batch_items.findUnique({ where: { uuid } });
+    const item = await this.prisma.payment_batch_items.findUnique({
+      where: { uuid },
+    });
 
     if (!item) throw new NotFoundException('Payroll item not found.');
 
@@ -629,7 +684,8 @@ export class PayrollService {
             id: item.employee.id.toString(),
             created_by: item.employee.created_by?.toString() ?? null,
             department_id: item.employee.department_id?.toString() ?? null,
-            working_location_id: item.employee.working_location_id?.toString() ?? null,
+            working_location_id:
+              item.employee.working_location_id?.toString() ?? null,
             employment_category_id:
               item.employee.employment_category_id?.toString() ?? null,
           }
@@ -639,7 +695,8 @@ export class PayrollService {
             ...item.transaction,
             id: item.transaction.id.toString(),
             employee_id: item.transaction.employee_id.toString(),
-            payment_structure_id: item.transaction.payment_structure_id.toString(),
+            payment_structure_id:
+              item.transaction.payment_structure_id.toString(),
             approved_by: item.transaction.approved_by?.toString() ?? null,
             gross_amount: item.transaction.gross_amount.toString(),
             total_deductions: item.transaction.total_deductions.toString(),

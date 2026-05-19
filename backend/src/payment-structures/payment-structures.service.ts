@@ -120,9 +120,7 @@ export class PaymentStructuresService {
         daily_rate: dto.daily_rate,
         overtime_rate: dto.overtime_rate,
         tax_percentage: dto.tax_percentage,
-        effective_to: dto.effective_to
-          ? new Date(dto.effective_to)
-          : undefined,
+        effective_to: dto.effective_to ? new Date(dto.effective_to) : undefined,
       },
       include: { employee: true },
     });
@@ -188,8 +186,7 @@ export class PaymentStructuresService {
             ...structure.employee,
             id: structure.employee.id.toString(),
             created_by: structure.employee.created_by?.toString() ?? null,
-            department_id:
-              structure.employee.department_id?.toString() ?? null,
+            department_id: structure.employee.department_id?.toString() ?? null,
             working_location_id:
               structure.employee.working_location_id?.toString() ?? null,
             employment_category_id:
@@ -267,7 +264,10 @@ export class PaymentStructuresService {
     actor: CurrentUserType,
   ) {
     const employeeId = this.toBigInt(dto.employee_id, 'employee_id');
-    const deductionTypeId = this.toBigInt(dto.deduction_type_id, 'deduction_type_id');
+    const deductionTypeId = this.toBigInt(
+      dto.deduction_type_id,
+      'deduction_type_id',
+    );
 
     await this.ensureEmployee(employeeId);
 
@@ -345,10 +345,7 @@ export class PaymentStructuresService {
     return this.serializeEmployeeDeduction(updated);
   }
 
-  async deleteEmployeeDeduction(
-    uuid: string,
-    actor: CurrentUserType,
-  ) {
+  async deleteEmployeeDeduction(uuid: string, actor: CurrentUserType) {
     const existing = await this.prisma.employee_deductions.findUnique({
       where: { uuid },
     });

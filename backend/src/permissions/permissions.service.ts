@@ -66,7 +66,9 @@ export class PermissionsService {
       orderBy: [{ module_name: 'asc' }, { permission_key: 'asc' }],
     });
 
-    return permissions.map((permission) => this.serializePermission(permission));
+    return permissions.map((permission) =>
+      this.serializePermission(permission),
+    );
   }
 
   async assignToRole(dto: AssignPermissionDto, actor: CurrentUserType) {
@@ -246,7 +248,10 @@ export class PermissionsService {
 
   private async ensureRoleAndPermission(roleId: bigint, permissionId: bigint) {
     const [role, permission] = await Promise.all([
-      this.prisma.roles.findUnique({ where: { id: roleId }, select: { id: true } }),
+      this.prisma.roles.findUnique({
+        where: { id: roleId },
+        select: { id: true },
+      }),
       this.prisma.permissions.findUnique({
         where: { id: permissionId },
         select: { id: true },
@@ -254,7 +259,8 @@ export class PermissionsService {
     ]);
 
     if (!role) throw new BadRequestException('Role does not exist.');
-    if (!permission) throw new BadRequestException('Permission does not exist.');
+    if (!permission)
+      throw new BadRequestException('Permission does not exist.');
   }
 
   private async ensureUserAndPermission(userId: bigint, permissionId: bigint) {
@@ -270,7 +276,8 @@ export class PermissionsService {
     ]);
 
     if (!user) throw new BadRequestException('User does not exist.');
-    if (!permission) throw new BadRequestException('Permission does not exist.');
+    if (!permission)
+      throw new BadRequestException('Permission does not exist.');
   }
 
   private isSystemAdmin(actor: CurrentUserType) {
@@ -284,7 +291,9 @@ export class PermissionsService {
     if (this.isSystemAdmin(actor)) return;
 
     if (!actor.roles.includes('BRANCH_MANAGER') || !actor.working_location_id) {
-      throw new BadRequestException('You can only grant permissions as an administrator or branch manager.');
+      throw new BadRequestException(
+        'You can only grant permissions as an administrator or branch manager.',
+      );
     }
 
     const target = await this.prisma.users.findFirst({
@@ -297,7 +306,9 @@ export class PermissionsService {
     });
 
     if (!target) {
-      throw new BadRequestException('Branch managers can only grant permissions within their working location.');
+      throw new BadRequestException(
+        'Branch managers can only grant permissions within their working location.',
+      );
     }
   }
 

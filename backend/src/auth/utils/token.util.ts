@@ -37,8 +37,7 @@ export const buildJwtPayload = (
   status: user.status,
   roles,
   permissions,
-  working_location_id:
-    user.working_location_id?.toString() ?? null,
+  working_location_id: user.working_location_id?.toString() ?? null,
   department_id: user.department_id?.toString() ?? null,
 });
 

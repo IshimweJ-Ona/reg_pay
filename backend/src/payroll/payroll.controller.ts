@@ -1,4 +1,13 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Permissions } from '../auth/decorators/permissions.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -34,7 +43,10 @@ export class PayrollController {
 
   @Permissions('payroll.read')
   @Get('batches/:uuid')
-  findBatch(@Param('uuid') uuid: string, @CurrentUser() actor: CurrentUserType) {
+  findBatch(
+    @Param('uuid') uuid: string,
+    @CurrentUser() actor: CurrentUserType,
+  ) {
     return this.payrollService.findBatch(uuid, actor);
   }
 

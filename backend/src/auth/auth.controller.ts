@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
 import { AuthService } from './auth.service';
 import { CurrentUser } from './decorators/current-user.decorator';
@@ -11,7 +11,7 @@ import type { CurrentUserType } from './types/current-user.type';
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
-  
+
   @Post('register')
   register(@Body() dto: RegisterDto) {
     return this.authService.register(dto);
@@ -41,16 +41,22 @@ export class AuthController {
 
   @UseGuards(JwtAuthGuard)
   @Post('logout')
-  logout(
-    @CurrentUser() user: CurrentUserType,
-    @Body() dto: RefreshTokenDto,
-  ) {
+  logout(@CurrentUser() user: CurrentUserType, @Body() dto: RefreshTokenDto) {
     return this.authService.logout(user.userId, dto.refresh_token);
   }
 
-  @UseGuards(JwtAuthGuard)
   @Post('logout-all')
   logoutAll(@CurrentUser() user: CurrentUserType) {
     return this.authService.logoutAll(user.userId);
+  }
+
+  @Post('forgot-password')
+  forgotPassword(@Body('identifier') identifier: string) {
+    return this.authService.forgotPassword(identifier);
+  }
+
+  @Post('reset-password/:token')
+  resetPassword(@Param('token') token: string, @Body() dto: any) {
+    return this.authService.resetPassword(token, dto);
   }
 }

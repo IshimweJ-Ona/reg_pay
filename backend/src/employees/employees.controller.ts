@@ -52,6 +52,19 @@ export class EmployeesController {
     return this.employeesService.findOne(uuid, actor);
   }
 
+  // Update employee profile information
+  @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
+  @Roles('SUPER_ADMIN', 'ADMIN', 'HR_MANAGER', 'BRANCH_MANAGER')
+  @Permissions('employees.update')
+  @Patch(':uuid')
+  update(
+    @Param('uuid') uuid: string,
+    @Body() dto: Partial<CreateEmployeeDto>,
+    @CurrentUser() actor: CurrentUserType,
+  ) {
+    return this.employeesService.update(uuid, dto, actor);
+  }
+
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
   @Roles('SUPER_ADMIN', 'ADMIN', 'HR_MANAGER', 'BRANCH_MANAGER')
   @Permissions('employees.transfer')
@@ -103,7 +116,10 @@ export class EmployeesController {
   @Roles('SUPER_ADMIN', 'ADMIN', 'HR_MANAGER', 'BRANCH_MANAGER')
   @Permissions('employees.update')
   @Patch(':uuid/reactivate')
-  reactivate(@Param('uuid') uuid: string, @CurrentUser() actor: CurrentUserType) {
+  reactivate(
+    @Param('uuid') uuid: string,
+    @CurrentUser() actor: CurrentUserType,
+  ) {
     return this.employeesService.reactivate(uuid, actor);
   }
 }

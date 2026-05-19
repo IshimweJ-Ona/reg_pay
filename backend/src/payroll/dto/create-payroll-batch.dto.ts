@@ -1,5 +1,13 @@
 import { PAYMENT_METHOD } from '@prisma/client';
-import { IsDateString, IsEnum, IsInt, IsNotEmpty, IsString, Max, Min } from 'class-validator';
+import {
+  IsDateString,
+  IsEnum,
+  IsInt,
+  IsNotEmpty,
+  IsString,
+  Max,
+  Min,
+} from 'class-validator';
 
 export class CreatePayrollBatchDto {
   @IsString()

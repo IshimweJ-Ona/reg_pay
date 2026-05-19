@@ -5,10 +5,7 @@ export function isNumericId(value: string) {
 }
 
 export function normalizeSearch(value?: string) {
-  return value
-    ?.trim()
-    .replace(/\s+/g, ' ')
-    .slice(0, 120);
+  return value?.trim().replace(/\s+/g, ' ').slice(0, 120);
 }
 
 export function requireUuidOrNumeric(value: string, fieldName: string) {

@@ -1,5 +1,11 @@
 import { EMPLOYMENT_TYPE } from '@prisma/client';
-import { IsDateString, IsDecimal, IsEnum, IsNotEmpty, IsString } from 'class-validator';
+import {
+  IsDateString,
+  IsDecimal,
+  IsEnum,
+  IsNotEmpty,
+  IsString,
+} from 'class-validator';
 
 export class CreatePaymentStructureDto {
   @IsString()

@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Permissions } from '../auth/decorators/permissions.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -18,7 +26,9 @@ import { UpdateEmployeeDeductionDto } from './dto/update-employee-deduction.dto'
 @Roles('SUPER_ADMIN', 'ADMIN', 'HR_MANAGER', 'FINANCE')
 @Controller('payment-structures')
 export class PaymentStructuresController {
-  constructor(private readonly paymentStructuresService: PaymentStructuresService) {}
+  constructor(
+    private readonly paymentStructuresService: PaymentStructuresService,
+  ) {}
 
   @Permissions('payment-structures.create')
   @Post()
@@ -51,13 +61,9 @@ export class PaymentStructuresController {
     @Body() dto: UpdateDeductionTypeDto,
     @CurrentUser() actor: CurrentUserType,
   ) {
-    return this.paymentStructuresService.updateDeductionType(
-      uuid,
-      dto,
-      actor,
-    );
+    return this.paymentStructuresService.updateDeductionType(uuid, dto, actor);
   }
-  
+
   @Permissions('payment-structures.update')
   @Patch(':uuid')
   update(
@@ -86,20 +92,13 @@ export class PaymentStructuresController {
     @Body() dto: CreateEmployeeDeductionDto,
     @CurrentUser() actor: CurrentUserType,
   ) {
-    return this.paymentStructuresService.createEmployeeDeduction(
-      dto,
-      actor,
-    );
+    return this.paymentStructuresService.createEmployeeDeduction(dto, actor);
   }
 
   @Permissions('payment-structures.read')
   @Get('employee-deductions/employee/:employeeId')
-  findEmployeeDeductions(
-    @Param('employeeId') employeeId: string,
-  ) {
-    return this.paymentStructuresService.findEmployeeDeductions(
-      employeeId,
-    );
+  findEmployeeDeductions(@Param('employeeId') employeeId: string) {
+    return this.paymentStructuresService.findEmployeeDeductions(employeeId);
   }
 
   @Permissions('payment-structures.update')
@@ -122,9 +121,6 @@ export class PaymentStructuresController {
     @Param('uuid') uuid: string,
     @CurrentUser() actor: CurrentUserType,
   ) {
-    return this.paymentStructuresService.deleteEmployeeDeduction(
-      uuid,
-      actor,
-    );
+    return this.paymentStructuresService.deleteEmployeeDeduction(uuid, actor);
   }
 }
