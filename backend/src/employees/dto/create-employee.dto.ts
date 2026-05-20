@@ -7,6 +7,7 @@ import {
   IsOptional,
   IsPhoneNumber,
   IsString,
+  Matches,
 } from 'class-validator';
 
 export class CreateEmployeeDto {
@@ -19,11 +20,17 @@ export class CreateEmployeeDto {
   last_name: string;
 
   @IsOptional()
-  @IsEmail()
+  @IsString()
+  @Matches(/^[a-zA-Z0-9._%+-]+@(gmail\.com|reg\.com)$/, {
+    message: 'Email must be a valid @gmail.com or @reg.com address.',
+  })
   email?: string;
 
   @IsOptional()
-  @IsPhoneNumber()
+  @IsString()
+  @Matches(/^\+2507[2389][0-9]{7}$/, {
+    message: 'Phone number must be a valid Rwanda number (+2507...).',
+  })
   phone_number?: string;
 
   @IsOptional()
