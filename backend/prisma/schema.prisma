@@ -32,6 +32,41 @@ enum STATUS_USER {
   ACTIVE
   INACTIVE
   SUSPENDED
+  PENDING
+  REJECTED
+}
+
+/* =========================================================
+   NOTIFICATIONS
+========================================================= */
+
+model Notifications {
+  id BigInt @id @default(autoincrement())
+  uuid String @unique @db.Char(36)
+
+  user_id BigInt? // Recipient (null for all admins)
+  sender_id BigInt? // Who triggered the notification
+  
+  title String @db.VarChar(150)
+  message String @db.Text
+  
+  type String @db.VarChar(50) // e.g., "REGISTRATION_REQUEST", "TRANSFER_REQUEST"
+  
+  reference_id String? @db.Char(36) // e.g., User/Transfer UUID
+  metadata Json? // Additional context (reason, level, etc.)
+  
+  is_read Boolean @default(false)
+  action_taken Boolean @default(false)
+  
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  user Users? @relation("NotificationRecipient", fields: [user_id], references: [id])
+  sender Users? @relation("NotificationSender", fields: [sender_id], references: [id])
+
+  @@index([user_id], name: "idx_notification_user")
+  @@index([sender_id], name: "idx_notification_sender")
+  @@index([is_read], name: "idx_notification_read")
 }
 
 enum GENDER {
@@ -324,6 +359,9 @@ model Users {
   user_transfers_requested Transfer_requests[] @relation("TransferRequestedBy")
   user_transfers_approved Transfer_requests[] @relation("TransferApprovedBy")
   user_transfer_subjects Transfer_requests[] @relation("TransferUserSubject")
+
+  notifications Notifications[] @relation("NotificationRecipient")
+  notifications_sent Notifications[] @relation("NotificationSender")
 
   @@index([working_location_id], name: "idx_user_location")
   @@index([department_id], name: "idx_user_department")
@@ -1040,8 +1078,11 @@ model Transfer_requests {
   new_department_id BigInt?
 
   status APPROVAL_STATUS @default(PENDING)
+  current_level String? @default("BRANCH_MANAGER") // e.g., "BRANCH_MANAGER", "ADMIN"
+  
   reason String? @db.Text
   rejection_reason String? @db.Text
+  history Json? // Array of actions taken [{level: "BRANCH_MANAGER", action: "APPROVED", by: "uuid", at: "iso"}]
 
   requested_by BigInt
   approved_by BigInt?

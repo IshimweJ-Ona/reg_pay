@@ -1,4 +1,27 @@
 -- CreateTable
+CREATE TABLE `Notifications` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `uuid` CHAR(36) NOT NULL,
+    `user_id` BIGINT NULL,
+    `sender_id` BIGINT NULL,
+    `title` VARCHAR(150) NOT NULL,
+    `message` TEXT NOT NULL,
+    `type` VARCHAR(50) NOT NULL,
+    `reference_id` CHAR(36) NULL,
+    `metadata` JSON NULL,
+    `is_read` BOOLEAN NOT NULL DEFAULT false,
+    `action_taken` BOOLEAN NOT NULL DEFAULT false,
+    `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `updated_at` DATETIME(3) NOT NULL,
+
+    UNIQUE INDEX `Notifications_uuid_key`(`uuid`),
+    INDEX `idx_notification_user`(`user_id`),
+    INDEX `idx_notification_sender`(`sender_id`),
+    INDEX `idx_notification_read`(`is_read`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
 CREATE TABLE `Working_locations` (
     `id` BIGINT NOT NULL AUTO_INCREMENT,
     `uuid` CHAR(36) NOT NULL,
@@ -87,7 +110,7 @@ CREATE TABLE `Users` (
     `reset_password_token` VARCHAR(255) NULL,
     `reset_password_expires` DATETIME(3) NULL,
     `gender` ENUM('MALE', 'FEMALE') NOT NULL,
-    `status` ENUM('ACTIVE', 'INACTIVE', 'SUSPENDED') NOT NULL DEFAULT 'ACTIVE',
+    `status` ENUM('ACTIVE', 'INACTIVE', 'SUSPENDED', 'PENDING', 'REJECTED') NOT NULL DEFAULT 'ACTIVE',
     `last_login_at` DATETIME(3) NULL,
     `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     `updated_at` DATETIME(3) NOT NULL,
@@ -213,7 +236,7 @@ CREATE TABLE `Employees` (
     `department_id` BIGINT NULL,
     `working_location_id` BIGINT NULL,
     `employment_category_id` BIGINT NULL,
-    `status` ENUM('ACTIVE', 'INACTIVE', 'SUSPENDED') NOT NULL DEFAULT 'ACTIVE',
+    `status` ENUM('ACTIVE', 'INACTIVE', 'SUSPENDED', 'PENDING', 'REJECTED') NOT NULL DEFAULT 'ACTIVE',
     `created_by` BIGINT NULL,
     `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     `updated_at` DATETIME(3) NOT NULL,
@@ -546,8 +569,10 @@ CREATE TABLE `Transfer_requests` (
     `old_department_id` BIGINT NULL,
     `new_department_id` BIGINT NULL,
     `status` ENUM('PENDING', 'APPROVED', 'REJECTED') NOT NULL DEFAULT 'PENDING',
+    `current_level` VARCHAR(191) NULL DEFAULT 'BRANCH_MANAGER',
     `reason` TEXT NULL,
     `rejection_reason` TEXT NULL,
+    `history` JSON NULL,
     `requested_by` BIGINT NOT NULL,
     `approved_by` BIGINT NULL,
     `requested_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
@@ -558,6 +583,12 @@ CREATE TABLE `Transfer_requests` (
     INDEX `idx_transfer_status`(`status`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- AddForeignKey
+ALTER TABLE `Notifications` ADD CONSTRAINT `Notifications_user_id_fkey` FOREIGN KEY (`user_id`) REFERENCES `Users`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `Notifications` ADD CONSTRAINT `Notifications_sender_id_fkey` FOREIGN KEY (`sender_id`) REFERENCES `Users`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE `Working_locations` ADD CONSTRAINT `Working_locations_created_by_fkey` FOREIGN KEY (`created_by`) REFERENCES `Users`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;

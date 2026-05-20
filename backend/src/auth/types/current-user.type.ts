@@ -1,5 +1,6 @@
 export type CurrentUserType = {
   userId: string;
+  uuid: string;
   email: string;
   phone_number: string;
   first_name: string;

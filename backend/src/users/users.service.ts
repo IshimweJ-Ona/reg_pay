@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -27,9 +28,14 @@ import { RejectTransferDto } from '../common/dto/reject-transfer.dto';
 import { RequestTransferDto } from '../common/dto/request-transfer.dto';
 import { ApproveUserDto } from './dto/approve-user.dto';
 
+import { NotificationsService } from '../notifications/notifications.service';
+
 @Injectable()
 export class UsersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationsService: NotificationsService,
+  ) {}
 
   async createUser(data: RegisterDto, actor?: CurrentUserType) {
     const existingUser = await this.prisma.users.findFirst({
@@ -218,7 +224,7 @@ export class UsersService {
 
     const users = await this.prisma.users.findMany({
       where: {
-        status: STATUS_USER.INACTIVE,
+        status: STATUS_USER.PENDING,
         deleted_at: null,
 
         ...(q
@@ -282,9 +288,7 @@ export class UsersService {
       ) ?? [];
 
     await this.ensureWorkingLocationExists(workingLocationId);
-
     await this.ensureDepartmentExists(departmentId, workingLocationId);
-
     await this.ensureRolesExist(roleIds);
 
     if (permissionIds.length) {
@@ -296,10 +300,19 @@ export class UsersService {
       user.working_location_id ?? workingLocationId,
     );
 
+    const roles = await this.prisma.roles.findMany({
+      where: { id: { in: roleIds } },
+      select: { name: true },
+    });
+    const isBranchManagerRole = roles.some((r) => r.name === 'BRANCH_MANAGER');
+
+    if (isBranchManagerRole) {
+      await this.ensureOnlyOneBranchManager(workingLocationId, user.id);
+    }
+
     const updatedUser = await this.prisma.$transaction(async (tx) => {
       await tx.users.update({
         where: { id: user.id },
-
         data: {
           working_location_id: workingLocationId,
           department_id: departmentId,
@@ -335,6 +348,45 @@ export class UsersService {
           skipDuplicates: true,
         });
       }
+
+      if (isBranchManagerRole) {
+        const existingRecord = await tx.branch_managers.findFirst({
+          where: {
+            working_location_id: workingLocationId,
+            user_id: user.id,
+          },
+        });
+
+        if (existingRecord) {
+          await tx.branch_managers.update({
+            where: { id: existingRecord.id },
+            data: {
+              is_active: true,
+              unassigned_at: null,
+            },
+          });
+        } else {
+          await tx.branch_managers.create({
+            data: {
+              uuid: generateUUID(),
+              working_location_id: workingLocationId,
+              user_id: user.id,
+              assigned_by: BigInt(actor.userId),
+              is_active: true,
+            },
+          });
+        }
+      }
+
+      // Mark notifications as read
+      await tx.notifications.updateMany({
+        where: {
+          reference_id: user.uuid,
+          type: 'REGISTRATION_REQUEST',
+          is_read: false,
+        },
+        data: { is_read: true },
+      });
 
       await tx.audit_logs.create({
         data: {
@@ -376,11 +428,20 @@ export class UsersService {
 
       await tx.users.update({
         where: { id: user.id },
-
         data: {
           deleted_at: new Date(),
-          status: STATUS_USER.INACTIVE,
+          status: STATUS_USER.REJECTED,
         },
+      });
+
+      // Mark notifications as read
+      await tx.notifications.updateMany({
+        where: {
+          reference_id: user.uuid,
+          type: 'REGISTRATION_REQUEST',
+          is_read: false,
+        },
+        data: { is_read: true },
       });
 
       await tx.audit_logs.create({
@@ -399,6 +460,23 @@ export class UsersService {
     return {
       message: 'User rejected and removed.',
     };
+  }
+
+  private async ensureOnlyOneBranchManager(locationId: bigint, userId: bigint) {
+    const existing = await this.prisma.branch_managers.findFirst({
+      where: {
+        working_location_id: locationId,
+        is_active: true,
+        user_id: { not: userId },
+      },
+      include: { user: true },
+    });
+
+    if (existing) {
+      throw new BadRequestException(
+        `This branch already has an active Branch Manager: ${existing.user.first_name} ${existing.user.last_name}. Only one is allowed.`,
+      );
+    }
   }
 
   async suspendUser(uuid: string, actor: CurrentUserType) {
@@ -505,8 +583,37 @@ export class UsersService {
         new_department_id: newDepartmentId,
         reason: dto.reason,
         requested_by: BigInt(actor.userId),
+        current_level: 'BRANCH_MANAGER',
       },
     });
+
+    // Notify Branch Manager
+    if (user.working_location_id) {
+      await this.notificationsService.notifyBranchManager(
+        user.working_location_id,
+        {
+          senderId: actor.userId,
+          title: 'User Transfer Request',
+          message: `A transfer request has been initiated for ${user.first_name} ${user.last_name}.`,
+          type: 'TRANSFER_REQUEST',
+          referenceId: request.uuid,
+          metadata: { level: 'BRANCH_MANAGER' },
+        },
+      );
+    } else {
+      await this.notificationsService.notifyAdmins({
+        senderId: actor.userId,
+        title: 'User Transfer Request',
+        message: `A transfer request has been initiated for ${user.first_name} ${user.last_name}.`,
+        type: 'TRANSFER_REQUEST',
+        referenceId: request.uuid,
+        metadata: { level: 'ADMIN' },
+      });
+      await this.prisma.transfer_requests.update({
+        where: { id: request.id },
+        data: { current_level: 'ADMIN' },
+      });
+    }
 
     return this.serializeTransferRequest(request);
   }
@@ -521,32 +628,86 @@ export class UsersService {
       throw new BadRequestException('Transfer request has no user.');
     }
 
-    const updated = await this.prisma.$transaction(async (tx) => {
-      await tx.users.update({
-        where: {
-          id: request.user_id!,
-        },
+    const isAdmin = this.isSystemAdmin(actor);
+    const isBM = this.isBranchManager(actor);
 
-        data: {
-          working_location_id: request.new_working_location_id,
-          department_id: request.new_department_id,
-        },
-      });
+    if (request.current_level === 'BRANCH_MANAGER') {
+      if (!isBM && !isAdmin) {
+        throw new ForbiddenException('Only a Branch Manager can approve this at this level.');
+      }
 
-      const approved = await tx.transfer_requests.update({
+      const updated = await this.prisma.transfer_requests.update({
         where: { id: request.id },
-
         data: {
-          status: APPROVAL_STATUS.APPROVED,
-          approved_by: BigInt(actor.userId),
-          approved_at: new Date(),
+          current_level: 'ADMIN',
+          history: (request.history as any[] || []).concat([{
+            level: 'BRANCH_MANAGER',
+            action: 'APPROVED',
+            by: actor.userId,
+            at: new Date().toISOString()
+          }]),
         },
       });
 
-      return approved;
-    });
+      await this.notificationsService.notifyAdmins({
+        senderId: actor.userId,
+        title: 'Transfer Request Awaiting Admin Approval',
+        message: 'A transfer request has been approved by the Branch Manager and requires final admin approval.',
+        type: 'TRANSFER_REQUEST',
+        referenceId: request.uuid,
+        metadata: { level: 'ADMIN' },
+      });
 
-    return this.serializeTransferRequest(updated);
+      return this.serializeTransferRequest(updated);
+    }
+
+    if (request.current_level === 'ADMIN') {
+      if (!isAdmin) {
+        throw new ForbiddenException('Only an Admin can finalize this transfer.');
+      }
+
+      const updated = await this.prisma.$transaction(async (tx) => {
+        await tx.users.update({
+          where: { id: request.user_id! },
+          data: {
+            working_location_id: request.new_working_location_id,
+            department_id: request.new_department_id,
+          },
+        });
+
+        const approved = await tx.transfer_requests.update({
+          where: { id: request.id },
+          data: {
+            status: APPROVAL_STATUS.APPROVED,
+            approved_by: BigInt(actor.userId),
+            approved_at: new Date(),
+            current_level: 'FINALIZED',
+            history: (request.history as any[] || []).concat([{
+              level: 'ADMIN',
+              action: 'APPROVED',
+              by: actor.userId,
+              at: new Date().toISOString()
+            }]),
+          },
+        });
+
+        return approved;
+      });
+
+      // Notify the requestor
+      await this.notificationsService.create({
+        userId: request.requested_by,
+        senderId: actor.userId,
+        title: 'Transfer Request Finalized',
+        message: 'Your transfer request has been fully approved and finalized.',
+        type: 'TRANSFER_APPROVED',
+        referenceId: request.uuid,
+      });
+
+      return this.serializeTransferRequest(updated);
+    }
+
+    throw new BadRequestException('Invalid transfer request level.');
   }
 
   async rejectTransfer(
@@ -567,7 +728,25 @@ export class UsersService {
         rejection_reason: dto.rejection_reason,
         approved_by: BigInt(actor.userId),
         approved_at: new Date(),
+        current_level: 'REJECTED',
+        history: (request.history as any[] || []).concat([{
+          level: request.current_level,
+          action: 'REJECTED',
+          by: actor.userId,
+          at: new Date().toISOString(),
+          reason: dto.rejection_reason
+        }]),
       },
+    });
+
+    // Notify the requestor
+    await this.notificationsService.create({
+      userId: request.requested_by,
+      senderId: actor.userId,
+      title: 'Transfer Request Rejected',
+      message: `Your transfer request was rejected. Reason: ${dto.rejection_reason}`,
+      type: 'TRANSFER_REJECTED',
+      referenceId: request.uuid,
     });
 
     return this.serializeTransferRequest(rejected);

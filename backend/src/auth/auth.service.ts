@@ -73,9 +73,10 @@ export class AuthService {
         password_hash: await hashPassword(dto.password),
         department_id: departmentId,
         working_location_id: workingLocationId,
-        status: STATUS_USER.ACTIVE,
-        },
+        status: STATUS_USER.PENDING,
+      },
       select: {
+        id: true,
         uuid: true,
         first_name: true,
         last_name: true,
@@ -83,12 +84,25 @@ export class AuthService {
         phone_number: true,
         status: true,
         created_at: true,
+        working_location: { select: { name: true } },
+        department: { select: { name: true } },
+      },
+    });
+
+    // Create notification for admins
+    await this.prisma.notifications.create({
+      data: {
+        uuid: generateUUID(),
+        title: 'New User Registration',
+        message: `${user.first_name} ${user.last_name} has registered and is pending approval.`,
+        type: 'REGISTRATION_REQUEST',
+        reference_id: user.uuid,
       },
     });
 
     return {
       message:
-        'User registered. You can sign in, but system activities require permissions from an administrator.',
+        'Registration successful. Administrators will approve your registration and grant permission to you to operate on the system. Come back after 72hrs if not yet then contact this email {admin@regpay.local}. Thank you for registering on the system.',
       user,
     };
   }
@@ -124,6 +138,12 @@ export class AuthService {
       );
     }
 
+    if (user.status === STATUS_USER.REJECTED) {
+      throw new UnauthorizedException(
+        'Your registration was rejected. Contact an administrator if you believe this is an error.',
+      );
+    }
+
     const payload = await this.buildPayload(user.id);
     const tokens = await this.createTokenPair(payload);
 
@@ -148,9 +168,14 @@ export class AuthService {
 
     const roles = user.roles.map((r) => r.role.name);
     const isAdmin = roles.includes('ADMIN') || roles.includes('SUPER_ADMIN');
-    const redirectUrl = isAdmin ? `/admin/dashboard` : `/user/dashboard/${user.uuid}`;
+    
+    let redirectUrl = isAdmin ? `/admin/dashboard` : `/user/dashboard/${user.uuid}`;
+    
+    if (user.status === STATUS_USER.PENDING) {
+      redirectUrl = `/auth/pending/${user.uuid}`;
+    }
 
-    return { ...tokens, redirectUrl, uuid: user.uuid };
+    return { ...tokens, redirectUrl, uuid: user.uuid, status: user.status };
   }
 
   async forgotPassword(emailOrPhone: string) {

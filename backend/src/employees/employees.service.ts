@@ -27,9 +27,14 @@ import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { SuspendEmployeeDto } from './dto/suspend-employee.dto';
 import { TransferEmployeeDto } from './dto/transfer-employee.dto';
 
+import { NotificationsService } from '../notifications/notifications.service';
+
 @Injectable()
 export class EmployeesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationsService: NotificationsService,
+  ) {}
 
   async create(dto: CreateEmployeeDto, actor?: CurrentUserType) {
     const workingLocationId = dto.working_location_id
@@ -282,8 +287,37 @@ export class EmployeesService {
         new_department_id: departmentId,
         reason: dto.reason,
         requested_by: BigInt(actor.userId),
+        current_level: 'BRANCH_MANAGER',
       },
     });
+
+    // Notify Branch Manager
+    if (employee.working_location_id) {
+      await this.notificationsService.notifyBranchManager(
+        employee.working_location_id,
+        {
+          senderId: actor.userId,
+          title: 'Employee Transfer Request',
+          message: `A transfer request has been initiated for employee ${employee.first_name} ${employee.last_name}.`,
+          type: 'TRANSFER_REQUEST',
+          referenceId: request.uuid,
+          metadata: { level: 'BRANCH_MANAGER' },
+        },
+      );
+    } else {
+      await this.notificationsService.notifyAdmins({
+        senderId: actor.userId,
+        title: 'Employee Transfer Request',
+        message: `A transfer request has been initiated for employee ${employee.first_name} ${employee.last_name}.`,
+        type: 'TRANSFER_REQUEST',
+        referenceId: request.uuid,
+        metadata: { level: 'ADMIN' },
+      });
+      await this.prisma.transfer_requests.update({
+        where: { id: request.id },
+        data: { current_level: 'ADMIN' },
+      });
+    }
 
     return this.serializeTransferRequest(request);
   }
@@ -295,93 +329,109 @@ export class EmployeesService {
       throw new BadRequestException('Transfer request has no employee.');
     }
 
-    const employee = await this.prisma.employees.findUniqueOrThrow({
-      where: {
-        id: request.employee_id,
-      },
-    });
+    const isAdmin = this.isSystemAdmin(actor);
+    const isBM = actor.roles.includes('BRANCH_MANAGER');
 
-    const categoryId = employee.employment_category_id;
+    if (request.current_level === 'BRANCH_MANAGER') {
+      if (!isBM && !isAdmin) {
+        throw new ForbiddenException('Only a Branch Manager can approve this at this level.');
+      }
 
-    if (!categoryId) {
-      throw new BadRequestException('Employee has no employment category.');
+      const updated = await this.prisma.transfer_requests.update({
+        where: { id: request.id },
+        data: {
+          current_level: 'ADMIN',
+          history: (request.history as any[] || []).concat([{
+            level: 'BRANCH_MANAGER',
+            action: 'APPROVED',
+            by: actor.userId,
+            at: new Date().toISOString()
+          }]),
+        },
+      });
+
+      await this.notificationsService.notifyAdmins({
+        senderId: actor.userId,
+        title: 'Employee Transfer Request Awaiting Admin Approval',
+        message: 'An employee transfer request has been approved by the Branch Manager and requires final admin approval.',
+        type: 'TRANSFER_REQUEST',
+        referenceId: request.uuid,
+        metadata: { level: 'ADMIN' },
+      });
+
+      return this.serializeTransferRequest(updated);
     }
 
-    const updated = await this.prisma.$transaction(async (tx) => {
-      const transferred = await tx.employees.update({
-        where: {
-          id: request.employee_id!,
-        },
-        data: {
-          working_location_id: request.new_working_location_id,
-          department_id: request.new_department_id,
-        },
-        include: this.employeeIncludes(),
+    if (request.current_level === 'ADMIN') {
+      if (!isAdmin) {
+        throw new ForbiddenException('Only an Admin can finalize this transfer.');
+      }
+
+      const employee = await this.prisma.employees.findUniqueOrThrow({
+        where: { id: request.employee_id },
       });
 
-      await tx.employee_history.create({
-        data: {
-          uuid: generateUUID(),
-          employee_id: employee.id,
-          action_type: ACTION_TYPE.TRANSFER,
-          old_department_id: employee.department_id,
-          new_department_id: request.new_department_id,
-          old_location_id: employee.working_location_id,
-          new_location_id: request.new_working_location_id,
-          old_employment_category_id: employee.employment_category_id,
-          new_employment_category_id: categoryId,
-          status: STATUS_ACTIVE_INACTIVE.ACTIVE,
-          reason: request.reason,
-          changed_by: BigInt(actor.userId),
-          approved_by: BigInt(actor.userId),
-        },
-      });
-
-      await tx.audit_logs.create({
-        data: {
-          user_id: BigInt(actor.userId),
-          employee_id: employee.id,
-          entity_table: 'employees',
-          entity_id: employee.id,
-          module_name: 'EMPLOYEES',
-          activity_type: ACTIVITY_TYPE.UPDATE,
-          activity_description: 'Transferred employee.',
-          action: AUDIT_ACTION.APPROVED,
-          old_values: {
-            working_location_id:
-              employee.working_location_id?.toString() ?? null,
-            department_id: employee.department_id?.toString() ?? null,
-            employment_category_id:
-              employee.employment_category_id?.toString() ?? null,
+      const updated = await this.prisma.$transaction(async (tx) => {
+        const transferred = await tx.employees.update({
+          where: { id: request.employee_id! },
+          data: {
+            working_location_id: request.new_working_location_id,
+            department_id: request.new_department_id,
           },
-          new_values: {
-            working_location_id: request.new_working_location_id.toString(),
-            department_id: request.new_department_id?.toString() ?? null,
-            employment_category_id: categoryId.toString(),
+          include: this.employeeIncludes(),
+        });
+
+        await tx.employee_history.create({
+          data: {
+            uuid: generateUUID(),
+            employee_id: employee.id,
+            action_type: ACTION_TYPE.TRANSFER,
+            old_department_id: employee.department_id,
+            new_department_id: request.new_department_id,
+            old_location_id: employee.working_location_id,
+            new_location_id: request.new_working_location_id,
+            old_employment_category_id: employee.employment_category_id,
+            new_employment_category_id: employee.employment_category_id,
+            status: STATUS_ACTIVE_INACTIVE.ACTIVE,
+            reason: request.reason,
+            changed_by: BigInt(actor.userId),
+            approved_by: BigInt(actor.userId),
           },
-          changed_fields: [
-            'working_location_id',
-            'department_id',
-            'employment_category_id',
-          ],
-        },
+        });
+
+        await tx.transfer_requests.update({
+          where: { id: request.id },
+          data: {
+            status: APPROVAL_STATUS.APPROVED,
+            approved_by: BigInt(actor.userId),
+            approved_at: new Date(),
+            current_level: 'FINALIZED',
+            history: (request.history as any[] || []).concat([{
+              level: 'ADMIN',
+              action: 'APPROVED',
+              by: actor.userId,
+              at: new Date().toISOString()
+            }]),
+          },
+        });
+
+        return transferred;
       });
 
-      await tx.transfer_requests.update({
-        where: {
-          id: request.id,
-        },
-        data: {
-          status: APPROVAL_STATUS.APPROVED,
-          approved_by: BigInt(actor.userId),
-          approved_at: new Date(),
-        },
+      // Notify the requestor
+      await this.notificationsService.create({
+        userId: request.requested_by,
+        senderId: actor.userId,
+        title: 'Employee Transfer Request Finalized',
+        message: `Your transfer request for ${employee.first_name} ${employee.last_name} has been fully approved.`,
+        type: 'TRANSFER_APPROVED',
+        referenceId: request.uuid,
       });
 
-      return transferred;
-    });
+      return this.serializeEmployee(updated);
+    }
 
-    return this.serializeEmployee(updated);
+    throw new BadRequestException('Invalid transfer request level.');
   }
 
   async rejectTransfer(
@@ -400,7 +450,25 @@ export class EmployeesService {
         rejection_reason: dto.rejection_reason,
         approved_by: BigInt(actor.userId),
         approved_at: new Date(),
+        current_level: 'REJECTED',
+        history: (request.history as any[] || []).concat([{
+          level: request.current_level,
+          action: 'REJECTED',
+          by: actor.userId,
+          at: new Date().toISOString(),
+          reason: dto.rejection_reason
+        }]),
       },
+    });
+
+    // Notify the requestor
+    await this.notificationsService.create({
+      userId: request.requested_by,
+      senderId: actor.userId,
+      title: 'Employee Transfer Request Rejected',
+      message: `Your transfer request was rejected. Reason: ${dto.rejection_reason}`,
+      type: 'TRANSFER_REJECTED',
+      referenceId: request.uuid,
     });
 
     return this.serializeTransferRequest(rejected);
