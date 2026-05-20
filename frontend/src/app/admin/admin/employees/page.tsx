@@ -64,6 +64,7 @@ export default function EmployeeDirectoryPage() {
   
   const [locations, setLocations] = useState<any[]>([]);
   const [departments, setDepartments] = useState<any[]>([]);
+  const [filteredDepartments, setFilteredDepartments] = useState<any[]>([]);
   
   const [newEmployee, setNewEmployee] = useState({
     first_name: '',
@@ -77,6 +78,19 @@ export default function EmployeeDirectoryPage() {
   });
 
   const { toast } = useToast();
+
+  const handleLocationChange = async (locationUuid: string) => {
+    setNewEmployee(prev => ({ ...prev, working_location_id: locationUuid, department_id: '' }));
+    setFilteredDepartments([]);
+    if (locationUuid) {
+      try {
+        const data = await getDepartments(locationUuid);
+        setFilteredDepartments(data.departments || []);
+      } catch (error) {
+        console.error('Failed to fetch departments:', error);
+      }
+    }
+  };
 
   const loadEmployees = async () => {
     try {
@@ -140,8 +154,18 @@ export default function EmployeeDirectoryPage() {
   };
 
   const handleCreate = async () => {
+    if (!newEmployee.first_name || !newEmployee.last_name || !newEmployee.national_id) {
+      toast({ variant: "destructive", title: "Missing Information", description: "Names and National ID are mandatory." });
+      return;
+    }
+
     try {
-      await createEmployee(newEmployee);
+      const submissionData = {
+        ...newEmployee,
+        phone_number: newEmployee.phone_number ? `+250${newEmployee.phone_number}` : undefined,
+        email: newEmployee.email || undefined,
+      };
+      await createEmployee(submissionData);
       await loadEmployees();
       toast({ title: "Employee Created", description: "New employee has been added to the system." });
       setIsAddingEmployee(false);
@@ -155,6 +179,7 @@ export default function EmployeeDirectoryPage() {
         working_location_id: '',
         department_id: '',
       });
+      setFilteredDepartments([]);
     } catch (error: any) {
       toast({
         variant: "destructive",
@@ -347,7 +372,7 @@ export default function EmployeeDirectoryPage() {
               </div>
             </div>
             <div className="space-y-2">
-              <Label>Email</Label>
+              <Label>Email (Optional)</Label>
               <Input 
                 type="email"
                 placeholder="jean@reg.rw"
@@ -357,11 +382,15 @@ export default function EmployeeDirectoryPage() {
             </div>
             <div className="space-y-2">
               <Label>Phone Number</Label>
-              <Input 
-                placeholder="+250 788 000 000"
-                value={newEmployee.phone_number}
-                onChange={e => setNewEmployee(p => ({...p, phone_number: e.target.value}))}
-              />
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 font-medium">+250</span>
+                <Input 
+                  placeholder="788 000 000"
+                  value={newEmployee.phone_number}
+                  onChange={e => setNewEmployee(p => ({...p, phone_number: e.target.value}))}
+                  className="pl-14"
+                />
+              </div>
             </div>
             <div className="space-y-2">
               <Label>National ID</Label>
@@ -376,7 +405,7 @@ export default function EmployeeDirectoryPage() {
               <select 
                 className="w-full h-10 px-3 rounded-md border border-input bg-background"
                 value={newEmployee.working_location_id}
-                onChange={e => setNewEmployee(p => ({...p, working_location_id: e.target.value}))}
+                onChange={e => handleLocationChange(e.target.value)}
               >
                 <option value="">Select Location</option>
                 {locations.map(l => <option key={l.uuid} value={l.uuid}>{l.name}</option>)}
@@ -388,9 +417,10 @@ export default function EmployeeDirectoryPage() {
                 className="w-full h-10 px-3 rounded-md border border-input bg-background"
                 value={newEmployee.department_id}
                 onChange={e => setNewEmployee(p => ({...p, department_id: e.target.value}))}
+                disabled={!newEmployee.working_location_id}
               >
-                <option value="">Select Department</option>
-                {departments.map(d => <option key={d.uuid} value={d.uuid}>{d.name}</option>)}
+                <option value="">{newEmployee.working_location_id ? "Select Department" : "Select Location First"}</option>
+                {filteredDepartments.map(d => <option key={d.uuid} value={d.uuid}>{d.name}</option>)}
               </select>
             </div>
           </div>

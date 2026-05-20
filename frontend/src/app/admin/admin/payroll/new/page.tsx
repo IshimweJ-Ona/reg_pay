@@ -27,12 +27,28 @@ export default function NewPayrollBatchPage() {
   const now = new Date();
   const [employees, setEmployees] = useState<any[]>([]);
   const [locations, setLocations] = useState<any[]>([]);
+  const [departments, setDepartments] = useState<any[]>([]);
   const [workingLocationId, setWorkingLocationId] = useState('');
+  const [selectedDepartmentId, setSelectedDepartmentId] = useState('all');
   const [paymentDate, setPaymentDate] = useState(now.toISOString().slice(0, 10));
   const [payrollMonth, setPayrollMonth] = useState(now.getMonth() + 1);
   const [payrollYear, setPayrollYear] = useState(now.getFullYear());
   const [selectedEmployees, setSelectedEmployees] = useState<string[]>([]);
   const [adjustments, setAdjustments] = useState<Record<string, { overtime: number, bonus: number, deductions: number }>>({});
+
+  const handleLocationChange = async (locationUuid: string) => {
+    setWorkingLocationId(locationUuid);
+    setSelectedDepartmentId('all');
+    setDepartments([]);
+    if (locationUuid) {
+      try {
+        const data = await getDepartments(locationUuid);
+        setDepartments(data.departments || []);
+      } catch (error) {
+        console.error('Failed to fetch departments:', error);
+      }
+    }
+  };
 
   useEffect(() => {
     Promise.all([
@@ -43,10 +59,21 @@ export default function NewPayrollBatchPage() {
       const locs = locationData.working_locations || [];
       setEmployees(emps);
       setLocations(locs);
-      setWorkingLocationId(locs[0]?.uuid ?? '');
+      if (locs[0]) {
+        setWorkingLocationId(locs[0].uuid);
+        handleLocationChange(locs[0].uuid);
+      }
       setSelectedEmployees(emps.map((employee: any) => employee.uuid));
     });
   }, []);
+
+  const filteredEmployees = useMemo(() => {
+    return employees.filter(emp => {
+      const locationMatch = !workingLocationId || emp.working_location?.uuid === workingLocationId;
+      const departmentMatch = selectedDepartmentId === 'all' || emp.department?.uuid === selectedDepartmentId;
+      return locationMatch && departmentMatch;
+    });
+  }, [employees, workingLocationId, selectedDepartmentId]);
 
   const toggleEmployee = (id: string) => {
     setSelectedEmployees(prev => 

@@ -24,8 +24,8 @@ const loginSchema = z.object({
 const registerSchema = z.object({
   first_name: z.string().min(2, "First name is required"),
   last_name: z.string().min(2, "Last name is required"),
-  email: z.string().email("Invalid email address"),
-  phone_number: z.string().regex(/^[0-9]{9}$/, "Phone number must be 9 digits (e.g. 788000000)"),
+  email: z.string().regex(/^[a-zA-Z0-9._%+-]+@(gmail\.com|reg\.com)$/, "Email must be @gmail.com or @reg.com"),
+  phone_number: z.string().regex(/^7[2389][0-9]{7}$/, "Invalid Rwanda number (e.g. 788000000)"),
   gender: z.enum(['MALE', 'FEMALE']),
   working_location_id: z.string().optional(),
   department_id: z.string().optional(),
