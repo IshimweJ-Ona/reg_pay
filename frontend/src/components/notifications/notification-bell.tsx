@@ -186,10 +186,10 @@ export function NotificationBell({ type }: { type: 'admin' | 'user' }) {
                         
                         {!n.is_read && n.reference_id && (
                           <div className="mt-3 flex gap-2 pt-2 border-t border-slate-100">
-                            <Button size="sm" className="h-7 flex-1 px-2 text-[10px] bg-emerald-600 hover:bg-emerald-700" onClick={() => handleApprove(n.uuid, n.reference_id!)}>
+                            <Button size="sm" className="h-7 flex-1 px-2 text-[10px] bg-emerald-600 hover:bg-emerald-700" onClick={() => handleApproveRegistration(n.uuid, n.reference_id!)}>
                               <Check className="h-3 w-3 mr-1" /> Approve
                             </Button>
-                            <Button size="sm" variant="outline" className="h-7 flex-1 px-2 text-[10px] text-destructive hover:bg-destructive/5" onClick={() => handleDeny(n.uuid, n.reference_id!)}>
+                            <Button size="sm" variant="outline" className="h-7 flex-1 px-2 text-[10px] text-destructive hover:bg-destructive/5" onClick={() => handleDenyRegistration(n.uuid, n.reference_id!)}>
                               Deny
                             </Button>
                           </div>

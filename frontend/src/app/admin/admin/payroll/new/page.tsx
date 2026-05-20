@@ -35,11 +35,16 @@ export default function NewPayrollBatchPage() {
   const [adjustments, setAdjustments] = useState<Record<string, { overtime: number, bonus: number, deductions: number }>>({});
 
   useEffect(() => {
-    Promise.all([getEmployees().catch(() => []), getWorkingLocations().catch(() => [])]).then(([employeeItems, locationItems]) => {
-      setEmployees(employeeItems);
-      setLocations(locationItems);
-      setWorkingLocationId(locationItems[0]?.uuid ?? '');
-      setSelectedEmployees(employeeItems.map((employee: any) => employee.uuid));
+    Promise.all([
+      getEmployees().catch(() => ({ employees: [] })), 
+      getWorkingLocations().catch(() => ({ working_locations: [] }))
+    ]).then(([employeeData, locationData]) => {
+      const emps = employeeData.employees || [];
+      const locs = locationData.working_locations || [];
+      setEmployees(emps);
+      setLocations(locs);
+      setWorkingLocationId(locs[0]?.uuid ?? '');
+      setSelectedEmployees(emps.map((employee: any) => employee.uuid));
     });
   }, []);
 

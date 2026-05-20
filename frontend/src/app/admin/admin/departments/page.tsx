@@ -35,7 +35,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
-import { getDepartments, createDepartment, updateDepartment, getWorkingLocations } from '@/api/working_locations';
+import { getDepartments, createDepartment, updateDepartment, getWorkingLocations, deleteDepartment } from '@/api/working_locations';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 export default function DepartmentsManagementPage() {
@@ -108,11 +108,23 @@ export default function DepartmentsManagementPage() {
     }
   };
 
-  const handleArchive = () => {
-    // In a real app, call deleteDepartment API
-    setDepartments(departments.filter(d => d.id !== archiveId));
-    toast({ variant: "destructive", title: "Department Archived", description: "The unit has been removed from active view." });
-    setArchiveId(null);
+  const handleArchive = async () => {
+    if (!archiveId) return;
+    try {
+      const dept = departments.find(d => d.id === archiveId);
+      if (dept) {
+        await deleteDepartment(dept.uuid);
+        toast({ variant: "destructive", title: "Department Archived", description: "The unit has been removed from active view." });
+        loadData();
+      }
+      setArchiveId(null);
+    } catch (error: any) {
+      toast({
+        variant: "destructive",
+        title: "Archive failed",
+        description: error?.response?.data?.message ?? "Ensure no active employees remain in this unit.",
+      });
+    }
   };
 
   return (

@@ -8,12 +8,14 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   AreaChart, Area
 } from 'recharts';
+import { useRouter } from 'next/navigation';
 import { getEmployees } from '@/api/employees';
 import { getPayrollBatches } from '@/api/payroll';
 import { getPendingUsers } from '@/api/users';
 import { getDepartments } from '@/api/working_locations';
 
 export default function AdminDashboard() {
+  const router = useRouter();
   const [employees, setEmployees] = useState<any[]>([]);
   const [payrollBatches, setPayrollBatches] = useState<any[]>([]);
   const [pendingUsers, setPendingUsers] = useState<any[]>([]);
@@ -21,15 +23,15 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     Promise.all([
-      getEmployees().catch(() => []),
+      getEmployees().catch(() => ({ employees: [] })),
       getPayrollBatches().catch(() => []),
-      getPendingUsers().catch(() => []),
-      getDepartments().catch(() => []),
-    ]).then(([employeeItems, batchItems, pendingItems, departmentItems]) => {
-      setEmployees(employeeItems);
+      getPendingUsers().catch(() => ({ pending_users: [] })),
+      getDepartments().catch(() => ({ departments: [] })),
+    ]).then(([employeeData, batchItems, pendingData, departmentData]) => {
+      setEmployees(employeeData.employees || []);
       setPayrollBatches(batchItems);
-      setPendingUsers(pendingItems);
-      setDepartments(departmentItems);
+      setPendingUsers(pendingData.pending_users || []);
+      setDepartments(departmentData.departments || []);
     });
   }, []);
 
@@ -135,7 +137,11 @@ export default function AdminDashboard() {
           <CardContent>
             <div className="space-y-4">
               {pendingUsers.slice(0, 3).map((pendingUser) => (
-                <div key={pendingUser.uuid} className="flex items-center gap-4 p-4 rounded-xl border border-dashed border-muted-foreground/20 hover:border-primary/50 transition-colors group">
+                <div 
+                  key={pendingUser.uuid} 
+                  className="flex items-center gap-4 p-4 rounded-xl border border-dashed border-muted-foreground/20 hover:border-primary/50 transition-colors group cursor-pointer"
+                  onClick={() => router.push('/admin/admin/users')}
+                >
                   <div className="h-10 w-10 rounded-full bg-secondary flex items-center justify-center font-bold text-muted-foreground group-hover:bg-primary/10 group-hover:text-primary transition-colors">
                     {pendingUser.first_name?.charAt(0) ?? 'U'}
                   </div>

@@ -111,8 +111,9 @@ export default function LoginPage() {
 
   const onRegisterSubmit = async (values: z.infer<typeof registerSchema>) => {
     try {
+      const { confirmPassword, ...data } = values;
       const submissionData = {
-        ...values,
+        ...data,
         phone_number: `+250${values.phone_number}`
       };
       await register(submissionData);

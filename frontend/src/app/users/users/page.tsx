@@ -101,7 +101,7 @@ export default function UserDashboard() {
                   <CardContent className="space-y-4">
                     <div className="flex flex-col gap-2">
                       <PermissionGate permission="payroll.create">
-                        <Link href="/users/payroll" className="w-full">
+                        <Link href="/users/users/payroll" className="w-full">
                           <Button className="w-full justify-between h-11 bg-slate-900 hover:bg-slate-800 rounded-xl" size="sm">
                             <span className="flex items-center gap-2"><Plus className="h-4 w-4" /> Generate New Batch</span>
                             <ChevronRight className="h-4 w-4 opacity-50" />
@@ -109,7 +109,7 @@ export default function UserDashboard() {
                         </Link>
                       </PermissionGate>
                       <PermissionGate permission="payroll.read">
-                        <Link href="/users/payroll" className="w-full">
+                        <Link href="/users/users/payroll" className="w-full">
                           <Button variant="outline" className="w-full justify-between h-11 rounded-xl border-dashed" size="sm">
                             <span>View Disbursement History</span>
                             <FileText className="h-4 w-4 opacity-50" />
@@ -121,38 +121,8 @@ export default function UserDashboard() {
                 </Card>
               )}
 
-              {/* Employees Section */}
-              {(user?.permissions.some(p => p.startsWith('employees.')) || user?.permissions.includes('payroll.create')) && (
-                <Card className="border-none shadow-sm hover:shadow-xl transition-all duration-300 overflow-hidden group">
-                  <div className="h-1.5 bg-accent w-full" />
-                  <CardHeader>
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="h-12 w-12 rounded-2xl bg-accent/10 flex items-center justify-center text-accent group-hover:bg-accent group-hover:text-white transition-colors duration-300 shadow-sm">
-                        <Users className="h-6 w-6" />
-                      </div>
-                      <Badge variant="secondary" className="font-bold">PERSONNEL</Badge>
-                    </div>
-                    <CardTitle>Employee Assets</CardTitle>
-                    <CardDescription>Onboard corporate personnel, manage profiles, and track professional identity.</CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="flex flex-col gap-2">
-                      <Link href="/admin/employees" className="w-full">
-                        <Button className="w-full justify-between h-11 bg-slate-900 hover:bg-slate-800 rounded-xl" size="sm">
-                          <span className="flex items-center gap-2"><Plus className="h-4 w-4" /> Provision New Asset</span>
-                          <ChevronRight className="h-4 w-4 opacity-50" />
-                        </Button>
-                      </Link>
-                      <Link href="/admin/employees" className="w-full">
-                        <Button variant="outline" className="w-full justify-between h-11 rounded-xl border-dashed" size="sm">
-                          <span>Browse Personnel Directory</span>
-                          <Users className="h-4 w-4 opacity-50" />
-                        </Button>
-                      </Link>
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
+              {/* Employees Section - Hidden from regular users as they don't have a specific page yet */}
+              {/* If they have permission, they might need to go to admin but they are guarded. So we hide it for now to avoid broken experience */}
 
               {/* Attendance Section */}
               {(user?.permissions.some(p => p.startsWith('attendance.'))) && (
@@ -170,7 +140,7 @@ export default function UserDashboard() {
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <div className="flex flex-col gap-2">
-                      <Link href="/users/attendance" className="w-full">
+                      <Link href="/users/users/attendance" className="w-full">
                         <Button className="w-full justify-between h-11 bg-slate-900 hover:bg-slate-800 rounded-xl" size="sm">
                           <span className="flex items-center gap-2"><Activity className="h-4 w-4" /> Enter Daily Log</span>
                           <ChevronRight className="h-4 w-4 opacity-50" />
@@ -181,44 +151,19 @@ export default function UserDashboard() {
                 </Card>
               )}
 
-              {/* Financial Section */}
-              {(user?.permissions.some(p => p.startsWith('payment-structures.'))) && (
-                <Card className="border-none shadow-sm hover:shadow-xl transition-all duration-300 overflow-hidden group">
-                  <div className="h-1.5 bg-blue-500 w-full" />
-                  <CardHeader>
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="h-12 w-12 rounded-2xl bg-blue-500/10 flex items-center justify-center text-blue-600 group-hover:bg-blue-500 group-hover:text-white transition-colors duration-300 shadow-sm">
-                        <CreditCard className="h-6 w-6" />
-                      </div>
-                      <Badge variant="secondary" className="font-bold">FINANCE</Badge>
-                    </div>
-                    <CardTitle>Payment Rails</CardTitle>
-                    <CardDescription>Configure Swift protocols and mobile money interconnects.</CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="flex flex-col gap-2">
-                      <Link href="/admin/payments" className="w-full">
-                        <Button className="w-full justify-between h-11 bg-slate-900 hover:bg-slate-800 rounded-xl" size="sm">
-                          <span className="flex items-center gap-2"><Settings className="h-4 w-4" /> Manage Infrastructure</span>
-                          <ChevronRight className="h-4 w-4 opacity-50" />
-                        </Button>
-                      </Link>
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
+              {/* Financial Section - Hidden from regular users for now */}
             </div>
           </section>
 
           {/* Fallback for No Specific Permissions */}
-          {!user?.permissions.length && (
+          {(!user?.permissions.some(p => p.startsWith('payroll.') || p.startsWith('attendance.'))) && (
             <div className="bg-white border-2 border-dashed rounded-3xl p-12 text-center space-y-4">
               <div className="h-16 w-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4 border shadow-inner">
                 <ShieldAlert className="h-8 w-8 text-slate-300" />
               </div>
               <h3 className="text-xl font-bold text-slate-800">No Functional Permissions Assigned</h3>
               <p className="text-muted-foreground max-w-sm mx-auto">Your identity has been verified, but no operational roles have been assigned yet. Please contact your department head.</p>
-              <Link href="/users/profile">
+              <Link href="/users/users/profile">
                 <Button variant="outline" className="rounded-xl px-8 h-11 mt-4">Complete Profile Setup</Button>
               </Link>
             </div>
@@ -267,14 +212,14 @@ export default function UserDashboard() {
                      <Building2 className="h-5 w-5 text-muted-foreground" />
                      <span className="text-sm font-medium">Department</span>
                    </div>
-                   <span className="text-sm font-bold text-primary">Engineering</span>
+                   <span className="text-sm font-bold text-primary">{user?.department || 'Unassigned'}</span>
                 </div>
                 <div className="flex items-center justify-between">
                    <div className="flex items-center gap-3">
                      <MapPin className="h-5 w-5 text-muted-foreground" />
                      <span className="text-sm font-medium">Location</span>
                    </div>
-                   <span className="text-sm font-bold text-primary">REG HQ (Kigali)</span>
+                   <span className="text-sm font-bold text-primary">{user?.location || 'Unassigned'}</span>
                 </div>
               </CardContent>
            </Card>

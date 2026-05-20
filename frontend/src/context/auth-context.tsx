@@ -14,7 +14,8 @@ import {
 import { User, UserRole } from '@/types/auth';
 
 type RegisterInput = {
-  fullName: string;
+  first_name: string;
+  last_name: string;
   email: string;
   phone_number: string;
   password: string;
@@ -105,31 +106,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const login = async (email: string, password: string) => {
-    const tokens = await loginRequest({ identifier: email, password });
-    saveTokens(tokens);
-    const nextUser = mapJwtUser(tokens.access_token);
+    const response = await loginRequest({ identifier: email, password });
+    saveTokens(response);
+    const nextUser = mapJwtUser(response.access_token);
     setUser(nextUser);
     
-    if (nextUser?.status === 'PENDING') {
-      router.push(`/auth/pending/${nextUser.uuid}`);
-      return;
-    }
-
-    router.push(isAdminRole(nextUser?.role) ? '/admin/admin' : '/users/users');
+    router.push(response.redirectUrl);
   };
 
   const register = async (input: RegisterInput) => {
-    const [firstName, ...rest] = input.fullName.trim().split(/\s+/);
-    await registerUser({
-      first_name: firstName,
-      last_name: rest.join(' ') || firstName,
-      email: input.email,
-      phone_number: input.phone_number,
-      password: input.password,
-      gender: input.gender,
-      working_location_id: input.working_location_id,
-      department_id: input.department_id,
-    });
+    await registerUser(input);
   };
 
   const logout = async () => {

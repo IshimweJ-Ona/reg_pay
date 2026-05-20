@@ -89,7 +89,8 @@ export default function UsersManagementPage() {
         getRoles(),
         getWorkingLocations()
       ]);
-      setUsers(usersData.map(mapApiUser));
+      const userList = usersData.users || usersData;
+      setUsers(userList.map(mapApiUser));
       setRoles(rolesData);
       setLocations(locsData.working_locations || locsData);
     } catch (error: any) {
@@ -215,7 +216,8 @@ export default function UsersManagementPage() {
   const filteredUsers = users.filter(u => 
     (u.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
      u.email.toLowerCase().includes(searchTerm.toLowerCase())) &&
-    u.id !== currentUser?.id
+    u.id !== currentUser?.id &&
+    !u.roles?.some(role => ['ADMIN', 'SUPER_ADMIN'].includes(role))
   );
 
   return (

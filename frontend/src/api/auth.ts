@@ -26,6 +26,12 @@ export interface TokenPair {
     expires_in: string;
 }
 
+export interface LoginResponse extends TokenPair {
+    redirectUrl: string;
+    uuid: string;
+    status: string;
+}
+
 export interface JwtUser {
     sub: string;
     uuid?: string;
@@ -42,8 +48,8 @@ export interface JwtUser {
     iat?: number;
 }
 
-export const login = async (payload: LoginPayload): Promise<TokenPair> => {
-    const response = await api.post<TokenPair>("/auth/login", payload);
+export const login = async (payload: LoginPayload): Promise<LoginResponse> => {
+    const response = await api.post<LoginResponse>("/auth/login", payload);
     return response.data;
 };
 

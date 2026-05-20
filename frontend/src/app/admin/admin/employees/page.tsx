@@ -38,7 +38,8 @@ import {
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { Employee } from '@/types/employee';
-import { getEmployees, suspendEmployee } from '@/api/employees';
+import { getEmployees, suspendEmployee, createEmployee, updateEmployee } from '@/api/employees';
+import { getWorkingLocations, getDepartments } from '@/api/working_locations';
 
 function mapApiEmployee(item: any): Employee {
   return {
@@ -58,13 +59,30 @@ export default function EmployeeDirectoryPage() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
+  const [isAddingEmployee, setIsAddingEmployee] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  
+  const [locations, setLocations] = useState<any[]>([]);
+  const [departments, setDepartments] = useState<any[]>([]);
+  
+  const [newEmployee, setNewEmployee] = useState({
+    first_name: '',
+    last_name: '',
+    email: '',
+    phone_number: '',
+    national_id: '',
+    gender: 'MALE' as any,
+    working_location_id: '',
+    department_id: '',
+  });
+
   const { toast } = useToast();
 
   const loadEmployees = async () => {
     try {
       const response = await getEmployees();
-      setEmployees(response.map(mapApiEmployee));
+      const employeeList = response.employees || response;
+      setEmployees(employeeList.map(mapApiEmployee));
     } catch (error: any) {
       toast({
         variant: "destructive",
@@ -74,8 +92,22 @@ export default function EmployeeDirectoryPage() {
     }
   };
 
+  const loadMetadata = async () => {
+    try {
+      const [locsData, depsData] = await Promise.all([
+        getWorkingLocations(),
+        getDepartments()
+      ]);
+      setLocations(locsData.working_locations || []);
+      setDepartments(depsData.departments || []);
+    } catch (error) {
+      console.error('Failed to load metadata', error);
+    }
+  };
+
   useEffect(() => {
     loadEmployees();
+    loadMetadata();
   }, []);
 
   const getStatusBadge = (status: Employee['status']) => {
@@ -87,11 +119,49 @@ export default function EmployeeDirectoryPage() {
     }
   };
 
-  const handleUpdate = () => {
+  const handleUpdate = async () => {
     if (!editingEmployee) return;
-    setEmployees(employees.map(e => e.id === editingEmployee.id ? editingEmployee : e));
-    toast({ title: "Employee Updated", description: "Record has been successfully synchronized." });
-    setEditingEmployee(null);
+    try {
+      await updateEmployee(editingEmployee.id, {
+        first_name: editingEmployee.fullName.split(' ')[0],
+        last_name: editingEmployee.fullName.split(' ').slice(1).join(' '),
+        email: editingEmployee.email,
+      });
+      await loadEmployees();
+      toast({ title: "Employee Updated", description: "Record has been successfully synchronized." });
+      setEditingEmployee(null);
+    } catch (error: any) {
+      toast({
+        variant: "destructive",
+        title: "Update failed",
+        description: error?.response?.data?.message || "Could not update employee.",
+      });
+    }
+  };
+
+  const handleCreate = async () => {
+    try {
+      await createEmployee(newEmployee);
+      await loadEmployees();
+      toast({ title: "Employee Created", description: "New employee has been added to the system." });
+      setIsAddingEmployee(false);
+      setNewEmployee({
+        first_name: '',
+        last_name: '',
+        email: '',
+        phone_number: '',
+        national_id: '',
+        gender: 'MALE',
+        working_location_id: '',
+        department_id: '',
+      });
+    } catch (error: any) {
+      toast({
+        variant: "destructive",
+        title: "Creation failed",
+        description: error?.response?.data?.message || "Could not create employee.",
+      });
+    }
   };
 
   const handleDelete = async () => {
@@ -122,8 +192,11 @@ export default function EmployeeDirectoryPage() {
           <h1 className="text-3xl font-headline font-bold">Employee Assets</h1>
           <p className="text-muted-foreground">Comprehensive database of all registered corporate personnel.</p>
         </div>
-        <Button className="h-11 px-6 shadow-lg shadow-primary/20">
-          <UserPlus className="mr-2 h-4 w-4" /> Onboard Employee
+        <Button 
+          className="h-11 px-6 shadow-lg shadow-primary/20"
+          onClick={() => setIsAddingEmployee(true)}
+        >
+          <UserPlus className="mr-2 h-4 w-4" /> Create Employee
         </Button>
       </div>
 
@@ -217,6 +290,7 @@ export default function EmployeeDirectoryPage() {
         </Table>
       </div>
 
+      {/* Edit Employee Sheet */}
       <Sheet open={!!editingEmployee} onOpenChange={() => setEditingEmployee(null)}>
         <SheetContent className="sm:max-w-md">
           <SheetHeader>
@@ -232,14 +306,6 @@ export default function EmployeeDirectoryPage() {
               />
             </div>
             <div className="space-y-2">
-              <Label>Base Salary (USD)</Label>
-              <Input 
-                type="number" 
-                value={editingEmployee?.salary || ''} 
-                onChange={(e) => setEditingEmployee(prev => prev ? {...prev, salary: parseInt(e.target.value) || 0} : null)}
-              />
-            </div>
-            <div className="space-y-2">
               <Label>Corporate Email</Label>
               <Input 
                 value={editingEmployee?.email || ''} 
@@ -250,6 +316,87 @@ export default function EmployeeDirectoryPage() {
           <div className="flex gap-3">
             <Button variant="outline" className="flex-1" onClick={() => setEditingEmployee(null)}>Cancel</Button>
             <Button className="flex-[2]" onClick={handleUpdate}>Update Profile</Button>
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      {/* Create Employee Sheet */}
+      <Sheet open={isAddingEmployee} onOpenChange={setIsAddingEmployee}>
+        <SheetContent className="sm:max-w-md overflow-y-auto">
+          <SheetHeader>
+            <SheetTitle>Create New Employee</SheetTitle>
+            <SheetDescription>Register a new member of the REG Rwanda energy group.</SheetDescription>
+          </SheetHeader>
+          <div className="space-y-4 py-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label>First Name</Label>
+                <Input 
+                  placeholder="Jean"
+                  value={newEmployee.first_name}
+                  onChange={e => setNewEmployee(p => ({...p, first_name: e.target.value}))}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Last Name</Label>
+                <Input 
+                  placeholder="Nshimiyimana"
+                  value={newEmployee.last_name}
+                  onChange={e => setNewEmployee(p => ({...p, last_name: e.target.value}))}
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Email</Label>
+              <Input 
+                type="email"
+                placeholder="jean@reg.rw"
+                value={newEmployee.email}
+                onChange={e => setNewEmployee(p => ({...p, email: e.target.value}))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Phone Number</Label>
+              <Input 
+                placeholder="+250 788 000 000"
+                value={newEmployee.phone_number}
+                onChange={e => setNewEmployee(p => ({...p, phone_number: e.target.value}))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>National ID</Label>
+              <Input 
+                placeholder="1199..."
+                value={newEmployee.national_id}
+                onChange={e => setNewEmployee(p => ({...p, national_id: e.target.value}))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Location</Label>
+              <select 
+                className="w-full h-10 px-3 rounded-md border border-input bg-background"
+                value={newEmployee.working_location_id}
+                onChange={e => setNewEmployee(p => ({...p, working_location_id: e.target.value}))}
+              >
+                <option value="">Select Location</option>
+                {locations.map(l => <option key={l.uuid} value={l.uuid}>{l.name}</option>)}
+              </select>
+            </div>
+            <div className="space-y-2">
+              <Label>Department</Label>
+              <select 
+                className="w-full h-10 px-3 rounded-md border border-input bg-background"
+                value={newEmployee.department_id}
+                onChange={e => setNewEmployee(p => ({...p, department_id: e.target.value}))}
+              >
+                <option value="">Select Department</option>
+                {departments.map(d => <option key={d.uuid} value={d.uuid}>{d.name}</option>)}
+              </select>
+            </div>
+          </div>
+          <div className="flex gap-3 pt-4">
+            <Button variant="outline" className="flex-1" onClick={() => setIsAddingEmployee(false)}>Cancel</Button>
+            <Button className="flex-[2]" onClick={handleCreate}>Create Employee</Button>
           </div>
         </SheetContent>
       </Sheet>

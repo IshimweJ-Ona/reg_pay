@@ -1,16 +1,84 @@
 
 "use client";
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
-import { ShieldCheck, Bell, Globe, Mail, Save, Database } from 'lucide-react';
+import { ShieldCheck, Bell, Globe, Mail, Save, Database, Loader2 } from 'lucide-react';
+import { getSystemConfigs, updateBatchSystemConfigs } from '@/api/system-config';
+import { useToast } from '@/hooks/use-toast';
 
 export default function SystemSettingsPage() {
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [configs, setConfigs] = useState<Record<string, string>>({
+    currency: 'USD',
+    timezone: 'GMT+2 (Kigali)',
+    multiCurrency: 'true',
+    twoFactorAuth: 'true',
+    sessionTermination: 'true',
+    auditLongevity: '7'
+  });
+  const { toast } = useToast();
+
+  useEffect(() => {
+    loadConfigs();
+  }, []);
+
+  const loadConfigs = async () => {
+    try {
+      const data = await getSystemConfigs();
+      const configMap: Record<string, string> = {};
+      data.forEach(c => {
+        configMap[c.key] = c.value;
+      });
+      setConfigs(prev => ({ ...prev, ...configMap }));
+    } catch (error) {
+      console.error('Failed to load configs', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const batch = Object.entries(configs).map(([key, value]) => ({
+        key,
+        value: String(value)
+      }));
+      await updateBatchSystemConfigs(batch);
+      toast({
+        title: "Settings Saved",
+        description: "System configuration has been updated successfully.",
+      });
+    } catch (error: any) {
+      toast({
+        variant: "destructive",
+        title: "Save Failed",
+        description: error?.response?.data?.message || "Could not save settings.",
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const updateVal = (key: string, value: string) => {
+    setConfigs(prev => ({ ...prev, [key]: value }));
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-4xl space-y-8">
       <div>
@@ -30,11 +98,17 @@ export default function SystemSettingsPage() {
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>System Currency</Label>
-                <Input defaultValue="USD" />
+                <Input 
+                  value={configs.currency} 
+                  onChange={(e) => updateVal('currency', e.target.value)}
+                />
               </div>
               <div className="space-y-2">
                 <Label>Audit Time Zone</Label>
-                <Input defaultValue="GMT+2 (Kigali)" />
+                <Input 
+                  value={configs.timezone}
+                  onChange={(e) => updateVal('timezone', e.target.value)}
+                />
               </div>
             </div>
             <div className="flex items-center justify-between">
@@ -42,7 +116,10 @@ export default function SystemSettingsPage() {
                 <Label>Multi-Currency Support</Label>
                 <p className="text-xs text-muted-foreground">Allow departments to pay in local currencies.</p>
               </div>
-              <Switch defaultChecked />
+              <Switch 
+                checked={configs.multiCurrency === 'true'} 
+                onCheckedChange={(val) => updateVal('multiCurrency', String(val))}
+              />
             </div>
           </CardContent>
         </Card>
@@ -60,7 +137,10 @@ export default function SystemSettingsPage() {
                 <Label>Two-Factor Authentication (2FA)</Label>
                 <p className="text-xs text-muted-foreground">Require 2FA for all users with payroll.approve permissions.</p>
               </div>
-              <Switch defaultChecked />
+              <Switch 
+                checked={configs.twoFactorAuth === 'true'}
+                onCheckedChange={(val) => updateVal('twoFactorAuth', String(val))}
+              />
             </div>
             <Separator />
             <div className="flex items-center justify-between">
@@ -68,7 +148,10 @@ export default function SystemSettingsPage() {
                 <Label>Automated Session Termination</Label>
                 <p className="text-xs text-muted-foreground">Lock administrative screens after 15 minutes of inactivity.</p>
               </div>
-              <Switch defaultChecked />
+              <Switch 
+                checked={configs.sessionTermination === 'true'}
+                onCheckedChange={(val) => updateVal('sessionTermination', String(val))}
+              />
             </div>
           </CardContent>
         </Card>
@@ -83,18 +166,28 @@ export default function SystemSettingsPage() {
           <CardContent className="space-y-4">
             <div className="space-y-2">
               <Label>Audit Trail Longevity (Years)</Label>
-              <Input type="number" defaultValue="7" />
+              <Input 
+                type="number" 
+                value={configs.auditLongevity}
+                onChange={(e) => updateVal('auditLongevity', e.target.value)}
+              />
             </div>
           </CardContent>
         </Card>
 
         <div className="flex justify-end gap-3 pt-4">
-          <Button variant="outline">Discard Changes</Button>
-          <Button className="h-11 px-8 shadow-lg shadow-primary/20">
-            <Save className="mr-2 h-4 w-4" /> Commit Global Config
+          <Button variant="outline" onClick={loadConfigs}>Discard Changes</Button>
+          <Button 
+            className="h-11 px-8 shadow-lg shadow-primary/20" 
+            onClick={handleSave}
+            disabled={saving}
+          >
+            {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+            Save updates
           </Button>
         </div>
       </div>
     </div>
   );
 }
+
