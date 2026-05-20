@@ -15,6 +15,8 @@ export interface User {
   avatar?: string;
   department?: string;
   location?: string;
+  department_id?: string;
+  location_id?: string;
   createdAt: string;
 }
 

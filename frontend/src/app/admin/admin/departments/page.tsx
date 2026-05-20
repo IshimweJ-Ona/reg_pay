@@ -35,33 +35,81 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
-import { getDepartments } from '@/api/working_locations';
+import { getDepartments, createDepartment, updateDepartment, getWorkingLocations } from '@/api/working_locations';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 export default function DepartmentsManagementPage() {
   const [departments, setDepartments] = useState<any[]>([]);
+  const [workingLocations, setWorkingLocations] = useState<any[]>([]);
   const [editingDep, setEditingDep] = useState<any | null>(null);
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [newDep, setNewDep] = useState({ name: '', code: '', working_location_id: '', description: '' });
+  const [searchQuery, setSearchQuery] = useState('');
   const [archiveId, setArchiveId] = useState<string | null>(null);
   const { toast } = useToast();
 
-  useEffect(() => {
-    getDepartments()
-      .then((items) => setDepartments(items))
-      .catch((error) => {
-        toast({
-          variant: "destructive",
-          title: "Departments failed to load",
-          description: error?.response?.data?.message ?? "Please check your backend connection.",
-        });
+  const loadData = async () => {
+    try {
+      const deps = await getDepartments();
+      setDepartments(deps.departments || deps);
+      const locs = await getWorkingLocations();
+      setWorkingLocations(locs.working_locations || locs);
+    } catch (error: any) {
+      toast({
+        variant: "destructive",
+        title: "Failed to load data",
+        description: error?.response?.data?.message ?? "Please check your connection.",
       });
+    }
+  };
+
+  useEffect(() => {
+    loadData();
   }, [toast]);
 
-  const handleUpdate = () => {
-    setDepartments(departments.map(d => d.id === editingDep.id ? editingDep : d));
-    toast({ title: "Department Updated", description: "Metadata has been synchronized." });
-    setEditingDep(null);
+  const filteredDepartments = departments.filter(dept => 
+    dept.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+    dept.code.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const handleCreate = async () => {
+    try {
+      await createDepartment(newDep);
+      toast({ title: "Department Created", description: "The new functional unit is now active." });
+      setIsCreateModalOpen(false);
+      setNewDep({ name: '', code: '', working_location_id: '', description: '' });
+      loadData();
+    } catch (error: any) {
+      toast({
+        variant: "destructive",
+        title: "Creation failed",
+        description: error?.response?.data?.message ?? "Check for duplicate codes or missing location.",
+      });
+    }
+  };
+
+  const handleUpdate = async () => {
+    try {
+      await updateDepartment(editingDep.uuid, {
+        name: editingDep.name,
+        code: editingDep.code,
+        working_location_id: editingDep.working_location_id,
+        description: editingDep.description
+      });
+      toast({ title: "Department Updated", description: "Metadata has been synchronized." });
+      setEditingDep(null);
+      loadData();
+    } catch (error: any) {
+      toast({
+        variant: "destructive",
+        title: "Update failed",
+        description: error?.response?.data?.message ?? "Please check your input.",
+      });
+    }
   };
 
   const handleArchive = () => {
+    // In a real app, call deleteDepartment API
     setDepartments(departments.filter(d => d.id !== archiveId));
     toast({ variant: "destructive", title: "Department Archived", description: "The unit has been removed from active view." });
     setArchiveId(null);
@@ -74,7 +122,7 @@ export default function DepartmentsManagementPage() {
           <h1 className="text-3xl font-headline font-bold">Department Directory</h1>
           <p className="text-muted-foreground">Define functional units and hierarchies within the organization.</p>
         </div>
-        <Button className="h-11 px-6 shadow-lg shadow-primary/20">
+        <Button className="h-11 px-6 shadow-lg shadow-primary/20" onClick={() => setIsCreateModalOpen(true)}>
           <Plus className="mr-2 h-4 w-4" /> Create Department
         </Button>
       </div>
@@ -84,23 +132,24 @@ export default function DepartmentsManagementPage() {
         <Input 
           placeholder="Filter by code or name..." 
           className="pl-10 h-11 border-none bg-white shadow-sm"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
         />
       </div>
 
-      <div className="bg-white rounded-2xl border shadow-sm overflow-hidden">
+      <div className="bg-white rounded-2xl border shadow-sm overflow-hidden overflow-x-auto">
         <Table>
           <TableHeader className="bg-secondary/50">
             <TableRow>
               <TableHead className="font-bold">Department</TableHead>
               <TableHead className="font-bold">Code</TableHead>
-              <TableHead className="font-bold">Head of Dept</TableHead>
               <TableHead className="font-bold">Personnel</TableHead>
               <TableHead className="font-bold">Primary Location</TableHead>
               <TableHead className="w-[80px]"></TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {departments.map((dept) => (
+            {filteredDepartments.map((dept) => (
               <TableRow key={dept.id} className="hover:bg-secondary/10 transition-colors">
                 <TableCell>
                   <div className="flex items-center gap-3">
@@ -111,13 +160,12 @@ export default function DepartmentsManagementPage() {
                   </div>
                 </TableCell>
                 <TableCell><Badge variant="secondary">{dept.code}</Badge></TableCell>
-                <TableCell className="font-medium">{dept.manager?.name ?? 'Unassigned'}</TableCell>
                 <TableCell>
                   <div className="flex items-center gap-1.5 font-bold">
                     <Users className="h-4 w-4 text-primary" /> {dept._count?.users ?? 0}
                   </div>
                 </TableCell>
-                <TableCell className="text-sm text-muted-foreground">{dept.working_location?.name ?? dept.working_location_id}</TableCell>
+                <TableCell className="text-sm text-muted-foreground">{dept.working_location?.name ?? 'Unknown Location'}</TableCell>
                 <TableCell>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
@@ -142,6 +190,58 @@ export default function DepartmentsManagementPage() {
         </Table>
       </div>
 
+      <Dialog open={isCreateModalOpen} onOpenChange={setIsCreateModalOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create New Department</DialogTitle>
+            <DialogDescription>Add a new functional unit to the organization.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Department Name</Label>
+              <Input 
+                placeholder="e.g. Human Resources"
+                value={newDep.name} 
+                onChange={(e) => setNewDep({...newDep, name: e.target.value})}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Department Code</Label>
+              <Input 
+                placeholder="e.g. HR-001"
+                value={newDep.code} 
+                onChange={(e) => setNewDep({...newDep, code: e.target.value})}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Working Location</Label>
+              <Select onValueChange={(v) => setNewDep({...newDep, working_location_id: v})} value={newDep.working_location_id}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select location" />
+                </SelectTrigger>
+                <SelectContent>
+                  {workingLocations.map((loc) => (
+                    <SelectItem key={loc.uuid} value={loc.uuid}>{loc.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Description</Label>
+              <Input 
+                placeholder="Optional description"
+                value={newDep.description} 
+                onChange={(e) => setNewDep({...newDep, description: e.target.value})}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsCreateModalOpen(false)}>Cancel</Button>
+            <Button onClick={handleCreate}>Create</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={!!editingDep} onOpenChange={() => setEditingDep(null)}>
         <DialogContent>
           <DialogHeader>
@@ -157,11 +257,24 @@ export default function DepartmentsManagementPage() {
               />
             </div>
             <div className="space-y-2">
-              <Label>Unit Manager</Label>
+              <Label>Department Code</Label>
               <Input 
-                value={editingDep?.manager || ''} 
-                onChange={(e) => setEditingDep({...editingDep, manager: e.target.value})}
+                value={editingDep?.code || ''} 
+                onChange={(e) => setEditingDep({...editingDep, code: e.target.value})}
               />
+            </div>
+            <div className="space-y-2">
+              <Label>Working Location</Label>
+              <Select onValueChange={(v) => setEditingDep({...editingDep, working_location_id: v})} value={editingDep?.working_location?.uuid || editingDep?.working_location_id}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select location" />
+                </SelectTrigger>
+                <SelectContent>
+                  {workingLocations.map((loc) => (
+                    <SelectItem key={loc.uuid} value={loc.uuid}>{loc.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
           <DialogFooter>

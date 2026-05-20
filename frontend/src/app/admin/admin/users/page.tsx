@@ -1,4 +1,3 @@
-
 "use client";
 
 import React, { useEffect, useState } from 'react';
@@ -10,8 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { 
   Search, Filter, MoreVertical, CheckCircle, 
-  Ban, UserPlus, Shield, User as UserIcon,
-  Mail, Calendar, Fingerprint, Briefcase, Edit, Trash2
+  Ban, UserPlus, Shield, Fingerprint, Calendar, Edit, Trash2
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -47,6 +45,9 @@ import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/hooks/use-toast';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { approveUser, getUsers, rejectUser, suspendUser } from '@/api/users';
+import { getWorkingLocations, getDepartments } from '@/api/working_locations';
+import { getRoles } from '@/api/roles';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 function mapApiUser(apiUser: any): User {
   const role = apiUser.roles?.[0]?.name ?? 'USER';
@@ -57,10 +58,12 @@ function mapApiUser(apiUser: any): User {
     email: apiUser.email,
     role: role as User['role'],
     roles: apiUser.roles?.map((item: any) => item.name) ?? [role],
-    status: apiUser.status === 'ACTIVE' ? 'APPROVED' : apiUser.status === 'SUSPENDED' ? 'SUSPENDED' : 'PENDING',
+    status: apiUser.status === 'ACTIVE' ? 'APPROVED' : apiUser.status === 'SUSPENDED' ? 'SUSPENDED' : apiUser.status === 'REJECTED' ? 'REJECTED' : 'PENDING',
     permissions: apiUser.permissions?.map((item: any) => item.permission_key).filter(Boolean) ?? [],
     department: apiUser.department?.name,
     location: apiUser.working_location?.name,
+    department_id: apiUser.department?.uuid,
+    location_id: apiUser.working_location?.uuid,
     createdAt: apiUser.created_at,
   };
 }
@@ -68,6 +71,9 @@ function mapApiUser(apiUser: any): User {
 export default function UsersManagementPage() {
   const { user: currentUser, updateUserPermissions } = useAuth();
   const [users, setUsers] = useState<User[]>([]);
+  const [roles, setRoles] = useState<any[]>([]);
+  const [locations, setLocations] = useState<any[]>([]);
+  const [departments, setDepartments] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [isSheetOpen, setIsSheetOpen] = useState(false);
@@ -76,22 +82,77 @@ export default function UsersManagementPage() {
   
   const { toast } = useToast();
 
-  const loadUsers = async () => {
+  const loadData = async () => {
     try {
-      const response = await getUsers();
-      setUsers(response.map(mapApiUser));
+      const [usersData, rolesData, locsData] = await Promise.all([
+        getUsers(),
+        getRoles(),
+        getWorkingLocations()
+      ]);
+      setUsers(usersData.map(mapApiUser));
+      setRoles(rolesData);
+      setLocations(locsData.working_locations || locsData);
     } catch (error: any) {
       toast({
         variant: "destructive",
-        title: "Users failed to load",
-        description: error?.response?.data?.message ?? "Please check your backend connection.",
+        title: "Failed to load data",
+        description: error?.response?.data?.message ?? "Please check your connection.",
       });
     }
   };
 
   useEffect(() => {
-    loadUsers();
+    loadData();
   }, []);
+
+  const handleLocationChange = async (locationUuid: string) => {
+    if (!selectedUser) return;
+    setSelectedUser({ ...selectedUser, location_id: locationUuid, department_id: '' });
+    setDepartments([]);
+    if (locationUuid) {
+      try {
+        const data = await getDepartments(locationUuid);
+        setDepartments(data.departments || data);
+      } catch (error) {
+        console.error('Failed to fetch departments:', error);
+      }
+    }
+  };
+
+  const handleSheetOpen = async (user: User) => {
+    setSelectedUser(user);
+    setIsSheetOpen(true);
+    if (user.location_id) {
+      try {
+        const data = await getDepartments(user.location_id);
+        setDepartments(data.departments || data);
+      } catch (error) {
+        console.error('Failed to fetch departments:', error);
+      }
+    } else {
+      setDepartments([]);
+    }
+  };
+
+  const handleUpdateUser = async (updatedUser: User) => {
+    try {
+      await approveUser(updatedUser.id, {
+        working_location_id: updatedUser.location_id,
+        department_id: updatedUser.department_id,
+        role_ids: roles.filter(r => updatedUser.roles?.includes(r.name)).map(r => r.uuid)
+      });
+      
+      toast({ title: "Identity Updated", description: "The user's corporate profile has been synchronized." });
+      setIsSheetOpen(false);
+      loadData();
+    } catch (error: any) {
+      toast({
+        variant: "destructive",
+        title: "Update failed",
+        description: error?.response?.data?.message ?? "Please try again.",
+      });
+    }
+  };
 
   const getStatusBadge = (status: UserStatus) => {
     switch (status) {
@@ -106,7 +167,7 @@ export default function UsersManagementPage() {
     try {
       if (newStatus === 'APPROVED') await approveUser(userId, {});
       if (newStatus === 'SUSPENDED') await suspendUser(userId);
-      await loadUsers();
+      await loadData();
       toast({ title: "Status Updated", description: `User status changed to ${newStatus}.` });
     } catch (error: any) {
       toast({
@@ -117,17 +178,11 @@ export default function UsersManagementPage() {
     }
   };
 
-  const handleUpdateUser = (updatedUser: User) => {
-    setUsers(users.map(u => u.id === updatedUser.id ? updatedUser : u));
-    toast({ title: "Identity Updated", description: "The user's corporate profile has been synchronized." });
-    setIsSheetOpen(false);
-  };
-
   const handleDeleteUser = async () => {
     if (userToDelete) {
       try {
         await rejectUser(userToDelete, "Soft deleted from user management.");
-        await loadUsers();
+        await loadData();
         toast({
           variant: "destructive",
           title: "User Decommissioned",
@@ -154,7 +209,6 @@ export default function UsersManagementPage() {
     
     const updatedUser = { ...selectedUser, permissions: newPerms };
     setSelectedUser(updatedUser);
-    setUsers(users.map(u => u.id === selectedUser.id ? updatedUser : u));
     updateUserPermissions(selectedUser.id, newPerms);
   };
 
@@ -191,7 +245,7 @@ export default function UsersManagementPage() {
         </Button>
       </div>
 
-      <div className="bg-white rounded-2xl border shadow-sm overflow-hidden">
+      <div className="bg-white rounded-2xl border shadow-sm overflow-hidden overflow-x-auto">
         <Table>
           <TableHeader className="bg-secondary/50">
             <TableRow>
@@ -231,7 +285,7 @@ export default function UsersManagementPage() {
                       <Button variant="ghost" size="icon"><MoreVertical className="h-4 w-4" /></Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end" className="w-56">
-                      <DropdownMenuItem onClick={() => { setSelectedUser(user); setIsSheetOpen(true); }}>
+                      <DropdownMenuItem onClick={() => handleSheetOpen(user)}>
                         <Edit className="mr-2 h-4 w-4 text-primary" /> Edit & Manage
                       </DropdownMenuItem>
                       <DropdownMenuItem onClick={() => handleStatusChange(user.id, 'APPROVED')}>
@@ -283,6 +337,52 @@ export default function UsersManagementPage() {
                     value={selectedUser?.email || ''} 
                     onChange={(e) => setSelectedUser(prev => prev ? {...prev, email: e.target.value} : null)}
                   />
+                </div>
+                <div className="space-y-2">
+                  <Label>Role Assignment</Label>
+                  <Select 
+                    onValueChange={(v) => setSelectedUser(prev => prev ? {...prev, role: v as any, roles: [v]} : null)} 
+                    value={selectedUser?.role}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select primary role" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {roles.map((r) => (
+                        <SelectItem key={r.uuid} value={r.name}>{r.name.replace('_', ' ')}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Working Location</Label>
+                  <Select onValueChange={handleLocationChange} value={selectedUser?.location_id}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select location" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {locations.map((loc) => (
+                        <SelectItem key={loc.uuid} value={loc.uuid}>{loc.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Department</Label>
+                  <Select 
+                    onValueChange={(v) => setSelectedUser(prev => prev ? {...prev, department_id: v} : null)} 
+                    value={selectedUser?.department_id}
+                    disabled={!selectedUser?.location_id}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder={selectedUser?.location_id ? "Select department" : "Select location first"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {departments.map((dept) => (
+                        <SelectItem key={dept.uuid} value={dept.uuid}>{dept.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="grid grid-cols-2 gap-4 pt-2">
                   <div className="flex items-center gap-2 text-xs text-muted-foreground">

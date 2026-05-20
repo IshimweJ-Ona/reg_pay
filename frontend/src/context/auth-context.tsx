@@ -51,7 +51,7 @@ function mapJwtUser(token: string): User | null {
     email: payload.email,
     role: primaryRole,
     roles: payload.roles ?? [primaryRole],
-    status: payload.status === 'ACTIVE' ? 'APPROVED' : payload.status === 'SUSPENDED' ? 'SUSPENDED' : 'PENDING',
+    status: (payload.status === 'ACTIVE' ? 'APPROVED' : payload.status) as any,
     permissions: payload.permissions ?? [],
     department: payload.department_id ?? undefined,
     location: payload.working_location_id ?? undefined,
@@ -86,7 +86,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             email: profileUser.email,
             role: (profileUser.roles?.[0] ?? tokenUser?.role ?? 'USER') as UserRole,
             roles: profileUser.roles ?? tokenUser?.roles ?? ['USER'],
-            status: profileUser.status === 'ACTIVE' ? 'APPROVED' : profileUser.status === 'SUSPENDED' ? 'SUSPENDED' : 'PENDING',
+            status: (profileUser.status === 'ACTIVE' ? 'APPROVED' : profileUser.status) as any,
             permissions: profileUser.permissions?.map((permission: any) => permission.key) ?? tokenUser?.permissions ?? [],
             department: profileUser.department?.name,
             location: profileUser.working_location?.name,
@@ -109,6 +109,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     saveTokens(tokens);
     const nextUser = mapJwtUser(tokens.access_token);
     setUser(nextUser);
+    
+    if (nextUser?.status === 'PENDING') {
+      router.push(`/auth/pending/${nextUser.uuid}`);
+      return;
+    }
+
     router.push(isAdminRole(nextUser?.role) ? '/admin/admin' : '/users/users');
   };
 

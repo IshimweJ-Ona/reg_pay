@@ -26,29 +26,76 @@ import {
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { getWorkingLocations } from '@/api/working_locations';
+import { getWorkingLocations, createWorkingLocation, updateWorkingLocation } from '@/api/working_locations';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 export default function LocationsManagementPage() {
   const [locations, setLocations] = useState<any[]>([]);
   const [editingLoc, setEditingLoc] = useState<any | null>(null);
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [newLoc, setNewLoc] = useState({ name: '', type: 'BRANCH' as const, address: '' });
+  const [searchQuery, setSearchQuery] = useState('');
   const { toast } = useToast();
 
-  useEffect(() => {
-    getWorkingLocations()
-      .then((items) => setLocations(items))
-      .catch((error) => {
-        toast({
-          variant: "destructive",
-          title: "Locations failed to load",
-          description: error?.response?.data?.message ?? "Please check your backend connection.",
-        });
+  const loadLocations = async () => {
+    try {
+      const items = await getWorkingLocations();
+      setLocations(items.working_locations || items);
+    } catch (error: any) {
+      toast({
+        variant: "destructive",
+        title: "Locations failed to load",
+        description: error?.response?.data?.message ?? "Please check your backend connection.",
       });
+    }
+  };
+
+  useEffect(() => {
+    loadNotifications();
+    loadLocations();
   }, [toast]);
 
-  const handleUpdate = () => {
-    setLocations(locations.map(l => l.id === editingLoc.id ? editingLoc : l));
-    toast({ title: "Location Updated", description: "Node parameters have been synchronized." });
-    setEditingLoc(null);
+  // Dummy function just to satisfy the interval added in previous turn if I were to copy paste, but I don't need it here.
+  const loadNotifications = () => {};
+
+  const filteredLocations = locations.filter(loc => 
+    loc.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+    loc.address.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const handleCreate = async () => {
+    try {
+      await createWorkingLocation(newLoc);
+      toast({ title: "Location Provisioned", description: "The new organizational node is now active." });
+      setIsCreateModalOpen(false);
+      setNewLoc({ name: '', type: 'BRANCH', address: '' });
+      loadLocations();
+    } catch (error: any) {
+      toast({
+        variant: "destructive",
+        title: "Creation failed",
+        description: error?.response?.data?.message ?? "Check for duplicate names or invalid data.",
+      });
+    }
+  };
+
+  const handleUpdate = async () => {
+    try {
+      await updateWorkingLocation(editingLoc.uuid, {
+        name: editingLoc.name,
+        type: editingLoc.type,
+        address: editingLoc.address
+      });
+      toast({ title: "Location Updated", description: "Node parameters have been synchronized." });
+      setEditingLoc(null);
+      loadLocations();
+    } catch (error: any) {
+      toast({
+        variant: "destructive",
+        title: "Update failed",
+        description: error?.response?.data?.message ?? "Please check your input.",
+      });
+    }
   };
 
   return (
@@ -58,7 +105,7 @@ export default function LocationsManagementPage() {
           <h1 className="text-3xl font-headline font-bold">Organizational Nodes</h1>
           <p className="text-muted-foreground">Manage physical and virtual working locations across the group.</p>
         </div>
-        <Button className="h-11 px-6 shadow-lg shadow-primary/20">
+        <Button className="h-11 px-6 shadow-lg shadow-primary/20" onClick={() => setIsCreateModalOpen(true)}>
           <Plus className="mr-2 h-4 w-4" /> Provision Location
         </Button>
       </div>
@@ -68,10 +115,12 @@ export default function LocationsManagementPage() {
         <Input 
           placeholder="Search locations by name or address..." 
           className="pl-10 h-11 border-none bg-white shadow-sm"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
         />
       </div>
 
-      <div className="bg-white rounded-2xl border shadow-sm overflow-hidden">
+      <div className="bg-white rounded-2xl border shadow-sm overflow-hidden overflow-x-auto">
         <Table>
           <TableHeader className="bg-secondary/50">
             <TableRow>
@@ -83,7 +132,7 @@ export default function LocationsManagementPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {locations.map((loc) => (
+            {filteredLocations.map((loc) => (
               <TableRow key={loc.id} className="hover:bg-secondary/10 transition-colors">
                 <TableCell>
                   <div className="flex items-center gap-3">
@@ -142,6 +191,49 @@ export default function LocationsManagementPage() {
         </Table>
       </div>
 
+      <Dialog open={isCreateModalOpen} onOpenChange={setIsCreateModalOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Provision New Location</DialogTitle>
+            <DialogDescription>Define a new organizational node in the system.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Location Name</Label>
+              <Input 
+                placeholder="e.g. Kigali Branch"
+                value={newLoc.name} 
+                onChange={(e) => setNewLoc({...newLoc, name: e.target.value})}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Classification</Label>
+              <Select onValueChange={(v: any) => setNewLoc({...newLoc, type: v})} value={newLoc.type}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="HQ">Headquarters (HQ)</SelectItem>
+                  <SelectItem value="BRANCH">Branch Office</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Address/Region</Label>
+              <Input 
+                placeholder="Street address, City"
+                value={newLoc.address} 
+                onChange={(e) => setNewLoc({...newLoc, address: e.target.value})}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsCreateModalOpen(false)}>Cancel</Button>
+            <Button onClick={handleCreate}>Provision</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={!!editingLoc} onOpenChange={() => setEditingLoc(null)}>
         <DialogContent>
           <DialogHeader>
@@ -155,6 +247,18 @@ export default function LocationsManagementPage() {
                 value={editingLoc?.name || ''} 
                 onChange={(e) => setEditingLoc({...editingLoc, name: e.target.value})}
               />
+            </div>
+            <div className="space-y-2">
+              <Label>Classification</Label>
+              <Select onValueChange={(v: any) => setEditingLoc({...editingLoc, type: v})} value={editingLoc?.type}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="HQ">Headquarters (HQ)</SelectItem>
+                  <SelectItem value="BRANCH">Branch Office</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-2">
               <Label>Address/Region</Label>
