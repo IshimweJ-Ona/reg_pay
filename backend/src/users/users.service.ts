@@ -3,7 +3,10 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  Inject,
 } from '@nestjs/common';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import * as cacheManager from 'cache-manager';
 import {
   ACTIVITY_TYPE,
   AUDIT_ACTION,
@@ -35,6 +38,7 @@ export class UsersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
+    @Inject(CACHE_MANAGER) private cacheManager: cacheManager.Cache,
   ) {}
 
   async createUser(data: RegisterDto, actor?: CurrentUserType) {
@@ -158,6 +162,9 @@ export class UsersService {
       });
     });
 
+    await this.cacheManager.del('users:all');
+    await this.cacheManager.del('users:pending');
+
     return {
       message: 'Registration submitted successfully. Awaiting admin approval.',
       user: this.serializeUser(user),
@@ -169,6 +176,10 @@ export class UsersService {
     filters: { q?: string; status?: string } = {},
   ) {
     const q = normalizeSearch(filters.q);
+    const cacheKey = `users:all:${actor.userId}:${filters.status ?? ''}:${q ?? ''}`;
+
+    const cached = await this.cacheManager.get(cacheKey);
+    if (cached) return cached as any;
 
     const users = await this.prisma.users.findMany({
       where: {
@@ -216,11 +227,19 @@ export class UsersService {
       },
     });
 
-    return users.map((user) => this.serializeUser(user));
+    const result = {
+      users: users.map((user) => this.serializeUser(user)),
+    };
+    await this.cacheManager.set(cacheKey, result, 30000);
+    return result;
   }
 
   async findPendingApproval(qInput?: string) {
     const q = normalizeSearch(qInput);
+    const cacheKey = `users:pending:${q ?? ''}`;
+
+    const cached = await this.cacheManager.get(cacheKey);
+    if (cached) return cached as any;
 
     const users = await this.prisma.users.findMany({
       where: {
@@ -262,7 +281,11 @@ export class UsersService {
       },
     });
 
-    return users.map((user) => this.serializeUser(user));
+    const result = {
+      pending_users: users.map((user) => this.serializeUser(user)),
+    };
+    await this.cacheManager.set(cacheKey, result, 30000);
+    return result;
   }
 
   async approveUser(uuid: string, dto: ApproveUserDto, actor: CurrentUserType) {
@@ -1105,17 +1128,31 @@ export class UsersService {
   }
 
   private userScopeWhere(actor: CurrentUserType) {
+    const baseWhere: any = {
+      roles: {
+        none: {
+          role: {
+            name: {
+              in: ['SUPER_ADMIN', 'ADMIN'],
+            },
+          },
+        },
+      },
+    };
+
     if (this.isSystemAdmin(actor)) {
-      return {};
+      return baseWhere;
     }
 
     if (this.isBranchManager(actor) && actor.working_location_id) {
       return {
+        ...baseWhere,
         working_location_id: BigInt(actor.working_location_id),
       };
     }
 
     return {
+      ...baseWhere,
       id: BigInt(actor.userId),
     };
   }

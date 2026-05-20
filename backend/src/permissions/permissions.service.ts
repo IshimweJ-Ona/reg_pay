@@ -3,7 +3,10 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  Inject,
 } from '@nestjs/common';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import * as cacheManager from 'cache-manager';
 import { ACTIVITY_TYPE, AUDIT_ACTION } from '@prisma/client';
 import type { CurrentUserType } from '../auth/types/current-user.type';
 import { generateUUID } from '../common/utils/uuid.util';
@@ -14,7 +17,10 @@ import { CreatePermissionDto } from './dto/create-permission.dto';
 
 @Injectable()
 export class PermissionsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Inject(CACHE_MANAGER) private cacheManager: cacheManager.Cache,
+  ) {}
 
   async create(dto: CreatePermissionDto, actor: CurrentUserType) {
     const existing = await this.prisma.permissions.findFirst({
@@ -58,17 +64,26 @@ export class PermissionsService {
       return created;
     });
 
+    await this.cacheManager.del('permissions:all');
+
     return this.serializePermission(permission);
   }
 
   async findAll() {
+    const cacheKey = 'permissions:all';
+    const cached = await this.cacheManager.get(cacheKey);
+    if (cached) return cached as any;
+
     const permissions = await this.prisma.permissions.findMany({
       orderBy: [{ module_name: 'asc' }, { permission_key: 'asc' }],
     });
 
-    return permissions.map((permission) =>
+    const result = permissions.map((permission) =>
       this.serializePermission(permission),
     );
+
+    await this.cacheManager.set(cacheKey, result, 600000); // 10 minutes cache
+    return result;
   }
 
   async assignToRole(dto: AssignPermissionDto, actor: CurrentUserType) {

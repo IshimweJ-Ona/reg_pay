@@ -17,6 +17,7 @@ import { TimeRecordsModule } from './time-records/time-records.module';
 import { PaymentStructuresModule } from './payment-structures/payment-structures.module';
 import { PayrollModule } from './payroll/payroll.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { SystemConfigModule } from './system-config/system-config.module';
 
 import { SecurityMiddleware } from './common/security/security.middleware';
 
@@ -53,6 +54,8 @@ import { SecurityMiddleware } from './common/security/security.middleware';
     PermissionsModule,
 
     NotificationsModule,
+
+    SystemConfigModule,
   ],
 
   controllers: [AppController],

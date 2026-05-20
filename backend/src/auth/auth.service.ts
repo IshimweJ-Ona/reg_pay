@@ -167,9 +167,19 @@ export class AuthService {
     await this.writeLoginAudit(user.id, context.ipAddress, true);
 
     const roles = user.roles.map((r) => r.role.name);
-    const isAdmin = roles.includes('ADMIN') || roles.includes('SUPER_ADMIN');
+    const isAdmin = roles.some((role) =>
+      [
+        'SUPER_ADMIN',
+        'ADMIN',
+        'HR_ADMIN',
+        'HR_MANAGER',
+        'FINANCE',
+        'BRANCH_MANAGER',
+        'HQ_MANAGER',
+      ].includes(role),
+    );
     
-    let redirectUrl = isAdmin ? `/admin/dashboard` : `/user/dashboard/${user.uuid}`;
+    let redirectUrl = isAdmin ? `/admin/admin` : `/users/users`;
     
     if (user.status === STATUS_USER.PENDING) {
       redirectUrl = `/auth/pending/${user.uuid}`;

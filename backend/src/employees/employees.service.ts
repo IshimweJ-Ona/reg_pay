@@ -3,7 +3,10 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  Inject,
 } from '@nestjs/common';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import * as cacheManager from 'cache-manager';
 import {
   ACTION_TYPE,
   ACTIVITY_TYPE,
@@ -34,6 +37,7 @@ export class EmployeesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
+    @Inject(CACHE_MANAGER) private cacheManager: cacheManager.Cache,
   ) {}
 
   async create(dto: CreateEmployeeDto, actor?: CurrentUserType) {
@@ -107,11 +111,17 @@ export class EmployeesService {
       return created;
     });
 
+    await this.cacheManager.del('employees:all');
+
     return this.serializeEmployee(employee);
   }
 
   async findAll(actor: CurrentUserType, qInput?: string) {
     const q = normalizeSearch(qInput);
+    const cacheKey = `employees:all:${actor.userId}:${actor.working_location_id ?? ''}:${q ?? ''}`;
+
+    const cached = await this.cacheManager.get(cacheKey);
+    if (cached) return cached as any;
 
     const employees = await this.prisma.employees.findMany({
       where: {
@@ -155,7 +165,11 @@ export class EmployeesService {
       },
     });
 
-    return employees.map((employee) => this.serializeEmployee(employee));
+    const result = {
+      employees: employees.map((employee) => this.serializeEmployee(employee)),
+    };
+    await this.cacheManager.set(cacheKey, result, 30000); // 30 seconds cache
+    return result;
   }
 
   async findOne(uuid: string, actor: CurrentUserType) {

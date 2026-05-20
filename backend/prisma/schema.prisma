@@ -366,6 +366,8 @@ model Users {
   @@index([working_location_id], name: "idx_user_location")
   @@index([department_id], name: "idx_user_department")
   @@index([status], name: "idx_user_status")
+  @@index([first_name], name: "idx_user_first_name")
+  @@index([last_name], name: "idx_user_last_name")
 }
 
 /* =========================================================
@@ -568,6 +570,11 @@ model Employees {
   @@index([employment_category_id], name: "idx_employee_category")
   @@index([status], name: "idx_employee_status")
   @@index([created_by], name: "idx_employee_created_by")
+  @@index([first_name], name: "idx_employee_first_name")
+  @@index([last_name], name: "idx_employee_last_name")
+  @@index([email], name: "idx_employee_email")
+  @@index([phone_number], name: "idx_employee_phone")
+  @@index([national_id], name: "idx_employee_national_id")
 }
 
 /* =========================================================
@@ -1037,6 +1044,18 @@ model Audit_logs {
   @@index([entity_id], name: "idx_audit_entity_id")
   @@index([action], name: "idx_audit_action")
   @@index([created_at], name: "idx_audit_created")
+}
+
+model System_config {
+  id BigInt @id @default(autoincrement())
+  uuid String @unique @db.Char(36)
+
+  key String @unique @db.VarChar(100)
+  value String @db.Text
+  description String? @db.Text
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
 }
 
 model User_sessions {
