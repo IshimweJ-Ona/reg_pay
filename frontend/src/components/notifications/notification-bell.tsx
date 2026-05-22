@@ -3,6 +3,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { Bell, Check, Clock, AlertCircle } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import { 
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, 
   DropdownMenuTrigger, DropdownMenuLabel, DropdownMenuSeparator 
@@ -11,6 +12,7 @@ import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { approveUser, rejectUser, approveUserTransfer, rejectUserTransfer } from '@/api/users';
 import { getNotifications, getUnreadCount, markAsRead, markAllAsRead, Notification } from '@/api/notifications';
+import { approvePayrollBatch, rejectPayrollBatch } from '@/api/payroll';
 import { useToast } from '@/hooks/use-toast';
 import { Badge } from '../ui/badge';
 
@@ -18,6 +20,7 @@ export function NotificationBell({ type }: { type: 'admin' | 'user' }) {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const { toast } = useToast();
+  const router = useRouter();
 
   const loadNotifications = async () => {
     try {
@@ -97,6 +100,36 @@ export function NotificationBell({ type }: { type: 'admin' | 'user' }) {
     }
   };
 
+  const handleApprovePayroll = async (notificationUuid: string, batchUuid: string) => {
+    try {
+      await approvePayrollBatch(batchUuid, "Approved from notifications.");
+      await markAsRead(notificationUuid);
+      toast({ title: "Payroll approved", description: "The batch has moved to the next approval step." });
+      await loadNotifications();
+    } catch (error: any) {
+      toast({
+        variant: "destructive",
+        title: "Payroll approval failed",
+        description: error?.response?.data?.message ?? "Please try again.",
+      });
+    }
+  };
+
+  const handleRejectPayroll = async (notificationUuid: string, batchUuid: string) => {
+    try {
+      await rejectPayrollBatch(batchUuid, "Rejected from notifications.");
+      await markAsRead(notificationUuid);
+      toast({ variant: "destructive", title: "Payroll rejected", description: "The creator has been notified." });
+      await loadNotifications();
+    } catch (error: any) {
+      toast({
+        variant: "destructive",
+        title: "Payroll rejection failed",
+        description: error?.response?.data?.message ?? "Please try again.",
+      });
+    }
+  };
+
   const handleMarkAllRead = async () => {
     try {
       await markAllAsRead();
@@ -113,6 +146,14 @@ export function NotificationBell({ type }: { type: 'admin' | 'user' }) {
       await loadNotifications();
     } catch (error) {
       console.error('Failed to mark as read:', error);
+    }
+  };
+
+  const handleNotificationOpen = async (notification: Notification) => {
+    const redirect = (notification.metadata as any)?.redirect;
+    if (redirect) {
+      if (!notification.is_read) await markAsRead(notification.uuid);
+      router.push(redirect);
     }
   };
 
@@ -196,6 +237,17 @@ export function NotificationBell({ type }: { type: 'admin' | 'user' }) {
                         )}
                       </div>
                     )}
+
+                    {n.type === 'PAYROLL_APPROVAL_REQUEST' && !n.is_read && n.reference_id && (
+                      <div className="mt-2 flex gap-2">
+                        <Button size="sm" className="h-7 flex-1 px-2 text-[10px] bg-emerald-600 hover:bg-emerald-700" onClick={() => handleApprovePayroll(n.uuid, n.reference_id!)}>
+                          <Check className="h-3 w-3 mr-1" /> Approve
+                        </Button>
+                        <Button size="sm" variant="outline" className="h-7 flex-1 px-2 text-[10px] text-destructive hover:bg-destructive/5" onClick={() => handleRejectPayroll(n.uuid, n.reference_id!)}>
+                          Reject
+                        </Button>
+                      </div>
+                    )}
                     
                     <div className="flex items-center justify-between mt-1">
                       <span className="text-[9px] font-bold text-muted-foreground/60 uppercase tracking-widest">
@@ -204,6 +256,11 @@ export function NotificationBell({ type }: { type: 'admin' | 'user' }) {
                       {!n.is_read && (
                         <button onClick={() => handleMarkRead(n.uuid)} className="text-[9px] text-primary hover:underline font-bold">
                           Mark read
+                        </button>
+                      )}
+                      {(n.metadata as any)?.redirect && (
+                        <button onClick={() => handleNotificationOpen(n)} className="text-[9px] text-primary hover:underline font-bold">
+                          Open
                         </button>
                       )}
                     </div>

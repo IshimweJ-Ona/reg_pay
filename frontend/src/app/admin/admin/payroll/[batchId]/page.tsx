@@ -26,6 +26,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { approvePayrollBatch, getPayrollBatch, rejectPayrollBatch } from '@/api/payroll';
 
+const formatRwf = (value: number) => `RWF ${value.toLocaleString()}`;
+
 export default function PayrollBatchDetailsPage({ params }: { params: { batchId: string } }) {
   const router = useRouter();
   const { toast } = useToast();
@@ -110,7 +112,7 @@ export default function PayrollBatchDetailsPage({ params }: { params: { batchId:
             <DialogContent>
               <DialogHeader>
                 <DialogTitle>Final Authorization</DialogTitle>
-                <DialogDescription>You are authorizing the disbursement of ${Number(batch.total_amount).toLocaleString()} to {rows.length} employees.</DialogDescription>
+                <DialogDescription>You are authorizing the disbursement of {formatRwf(Number(batch.total_amount))} to {rows.length} employees.</DialogDescription>
               </DialogHeader>
               <Textarea placeholder="Optional comment..." value={comment} onChange={(e) => setComment(e.target.value)} />
               <DialogFooter>
@@ -126,7 +128,7 @@ export default function PayrollBatchDetailsPage({ params }: { params: { batchId:
         <Card className="border-none shadow-sm">
           <CardContent className="pt-6">
             <p className="text-xs font-bold text-muted-foreground uppercase">Net Disbursement</p>
-            <h3 className="text-2xl font-bold mt-1 text-primary">${Number(batch.total_amount).toLocaleString()}</h3>
+            <h3 className="text-2xl font-bold mt-1 text-primary">{formatRwf(Number(batch.total_amount))}</h3>
           </CardContent>
         </Card>
         <Card className="border-none shadow-sm">
@@ -182,10 +184,10 @@ export default function PayrollBatchDetailsPage({ params }: { params: { batchId:
                     <TableRow key={item.uuid} className="hover:bg-secondary/10 transition-colors">
                       <TableCell className="font-semibold">{`${item.employee?.first_name ?? ''} ${item.employee?.last_name ?? ''}`.trim()}</TableCell>
                       <TableCell className="text-sm text-muted-foreground">{item.employee?.department?.name ?? 'Employee'}</TableCell>
-                      <TableCell>${Number(item.transaction?.gross_amount ?? 0).toLocaleString()}</TableCell>
-                      <TableCell className="text-emerald-600">+$0</TableCell>
-                      <TableCell className="text-rose-600">-${Number(item.transaction?.total_deductions ?? 0).toLocaleString()}</TableCell>
-                      <TableCell className="text-right font-bold text-primary">${Number(item.transaction?.net_amount ?? 0).toLocaleString()}</TableCell>
+                      <TableCell>{formatRwf(Number(item.transaction?.base_amount ?? item.transaction?.gross_amount ?? 0))}</TableCell>
+                      <TableCell className="text-emerald-600">{formatRwf(Number(item.transaction?.allowance_amount ?? 0))}</TableCell>
+                      <TableCell className="text-rose-600">-{formatRwf(Number(item.transaction?.total_deductions ?? 0))}</TableCell>
+                      <TableCell className="text-right font-bold text-primary">{formatRwf(Number(item.transaction?.net_amount ?? 0))}</TableCell>
                       <TableCell>
                         <Badge variant="secondary" className="bg-amber-100 text-amber-700">{item.status}</Badge>
                       </TableCell>

@@ -16,7 +16,7 @@ export default function SystemSettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [configs, setConfigs] = useState<Record<string, string>>({
-    currency: 'USD',
+    currency: 'RWF',
     timezone: 'GMT+2 (Kigali)',
     multiCurrency: 'true',
     twoFactorAuth: 'true',

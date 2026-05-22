@@ -37,7 +37,20 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 function isAdminRole(role?: string) {
-  return ['SUPER_ADMIN', 'ADMIN', 'HR_ADMIN', 'HR_MANAGER', 'FINANCE', 'BRANCH_MANAGER', 'HQ_MANAGER'].includes(role ?? '');
+  return [
+    'SUPER_ADMIN',
+    'ADMIN',
+    'MANAGER',
+    'ON_MANAGER',
+    'ACCOUNTANT',
+    'HR',
+    'ATTENDANT',
+    'HR_ADMIN',
+    'HR_MANAGER',
+    'FINANCE',
+    'BRANCH_MANAGER',
+    'HQ_MANAGER',
+  ].includes(role ?? '');
 }
 
 function mapJwtUser(token: string): User | null {

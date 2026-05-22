@@ -25,6 +25,8 @@ import { PermissionGate } from '@/components/auth/permission-gate';
 import Link from 'next/link';
 import { getPayrollBatches } from '@/api/payroll';
 
+const formatRwf = (value: number) => `RWF ${value.toLocaleString()}`;
+
 function mapApiBatch(batch: any): PayrollBatch {
   return {
     id: batch.uuid,
@@ -52,7 +54,7 @@ export default function PayrollAdminPage() {
   const stats = [
     { name: 'Total Batches', value: String(batches.length), icon: FileText, color: 'text-blue-600' },
     { name: 'Pending Approval', value: String(batches.filter((batch) => batch.status === 'PENDING').length), icon: Eye, color: 'text-amber-600' },
-    { name: 'Total Amount', value: `$${batches.reduce((sum, batch) => sum + batch.totalAmount, 0).toLocaleString()}`, icon: Plus, color: 'text-primary' },
+    { name: 'Total Amount', value: formatRwf(batches.reduce((sum, batch) => sum + batch.totalAmount, 0)), icon: Plus, color: 'text-primary' },
     { name: 'Failed Transfers', value: '0', icon: XCircle, color: 'text-destructive' },
   ];
 
@@ -139,7 +141,7 @@ export default function PayrollAdminPage() {
                   </div>
                 </TableCell>
                 <TableCell>{batch.employeeCount}</TableCell>
-                <TableCell className="font-bold">${batch.totalAmount.toLocaleString()}</TableCell>
+                <TableCell className="font-bold">{formatRwf(batch.totalAmount)}</TableCell>
                 <TableCell><PayrollStatusBadge status={batch.status} /></TableCell>
                 <TableCell className="text-muted-foreground">{batch.createdAt}</TableCell>
                 <TableCell>

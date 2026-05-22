@@ -9,6 +9,8 @@ import { Button } from "@/components/ui/button";
 import { Download, FileText, TrendingUp, Wallet, ArrowUpRight } from 'lucide-react';
 import { useAuth } from '@/context/auth-context';
 
+const formatRwf = (value: number) => `RWF ${value.toLocaleString()}`;
+
 export default function UserPayrollPage() {
   const { user } = useAuth();
   const payslips = useMemo(() => [], []);
@@ -29,7 +31,7 @@ export default function UserPayrollPage() {
             <div className="flex justify-between items-start">
               <div className="space-y-1">
                 <p className="text-xs font-bold uppercase opacity-70">Latest Net Salary</p>
-                <h3 className="text-3xl font-bold">$0.00</h3>
+                <h3 className="text-3xl font-bold">{formatRwf(0)}</h3>
               </div>
               <div className="bg-white/20 p-2 rounded-lg">
                 <Wallet className="h-6 w-6" />
@@ -47,7 +49,7 @@ export default function UserPayrollPage() {
             <div className="flex justify-between items-start">
               <div className="space-y-1">
                 <p className="text-xs font-bold uppercase text-muted-foreground">Annual Earnings</p>
-                <h3 className="text-2xl font-bold">$0.00</h3>
+                <h3 className="text-2xl font-bold">{formatRwf(0)}</h3>
               </div>
               <div className="bg-emerald-100 p-2 rounded-lg">
                 <TrendingUp className="h-6 w-6 text-emerald-600" />
@@ -61,7 +63,7 @@ export default function UserPayrollPage() {
             <div className="flex justify-between items-start">
               <div className="space-y-1">
                 <p className="text-xs font-bold uppercase text-muted-foreground">Total Taxes Paid</p>
-                <h3 className="text-2xl font-bold">$0.00</h3>
+                <h3 className="text-2xl font-bold">{formatRwf(0)}</h3>
               </div>
               <div className="bg-amber-100 p-2 rounded-lg">
                 <FileText className="h-6 w-6 text-amber-600" />
@@ -92,8 +94,8 @@ export default function UserPayrollPage() {
               {payslips.map((slip: any) => (
                 <TableRow key={slip.id} className="hover:bg-secondary/10 transition-colors cursor-pointer group">
                   <TableCell className="font-bold">{slip.period}</TableCell>
-                  <TableCell className="font-mono text-sm">${slip.netPay.toLocaleString()}</TableCell>
-                  <TableCell className="text-rose-600 font-mono text-xs">-${slip.tax}</TableCell>
+                  <TableCell className="font-mono text-sm">{formatRwf(slip.netPay)}</TableCell>
+                  <TableCell className="text-rose-600 font-mono text-xs">-{formatRwf(Number(slip.tax))}</TableCell>
                   <TableCell className="text-muted-foreground text-xs">{slip.date}</TableCell>
                   <TableCell>
                     <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/20">{slip.status}</Badge>

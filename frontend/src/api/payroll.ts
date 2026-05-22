@@ -6,6 +6,9 @@ export interface CreatePayrollBatchPayload {
     payroll_year: number;
     payment_date: string;
     payment_method: "BANK" | "CASH" | "MOMO";
+    start_date?: string;
+    end_date?: string;
+    work_days?: number;
 }
 
 export const createPayrollBatch = async (payload: Partial<CreatePayrollBatchPayload> | any) => {

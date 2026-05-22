@@ -2,12 +2,20 @@ import api from "./axios";
 
 export interface CreatePaymentStructurePayload {
     employee_id: string;
-    payroll_frequency: "DAILY" | "MONTHLY";
+    payroll_frequency: "DAILY" | "MONTHLY" | "CUSTOM";
     basic_salary: string;
     daily_rate: string;
     overtime_rate: string;
     tax_percentage: string;
+    custom_work_days?: number;
     effective_from: string;
+}
+
+export interface CreateAllowancePayload {
+    employee_id: string;
+    title: string;
+    amount: string;
+    description?: string;
 }
 
 export type UpdatePaymentStructurePayload = Partial<
@@ -61,6 +69,11 @@ export const getActivePaymentStructureByEmployee = async (employeeId: string) =>
 
 export const getPaymentStructures = async (): Promise<any> => {
     return [];
+};
+
+export const getPaymentCategories = async () => {
+    const response = await api.get("/payment-structures/payment-categories");
+    return response.data;
 };
 
 export const deletePaymentStructure = async (
@@ -121,5 +134,20 @@ export const deleteEmployeeDeduction = async (uuid: string) => {
     const response = await api.patch(
         `/payment-structures/employee-deductions/${uuid}/delete`,
     );
+    return response.data;
+};
+
+export const createAllowance = async (payload: CreateAllowancePayload) => {
+    const response = await api.post("/payment-structures/allowances", payload);
+    return response.data;
+};
+
+export const getAllowances = async (employeeId: string) => {
+    const response = await api.get(`/payment-structures/allowances/employee/${employeeId}`);
+    return response.data;
+};
+
+export const deactivateAllowance = async (uuid: string) => {
+    const response = await api.patch(`/payment-structures/allowances/${uuid}/deactivate`);
     return response.data;
 };

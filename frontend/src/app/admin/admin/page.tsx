@@ -14,6 +14,8 @@ import { getPayrollBatches } from '@/api/payroll';
 import { getPendingUsers } from '@/api/users';
 import { getDepartments } from '@/api/working_locations';
 
+const formatRwf = (value: number) => `RWF ${value.toLocaleString()}`;
+
 export default function AdminDashboard() {
   const router = useRouter();
   const [employees, setEmployees] = useState<any[]>([]);
@@ -54,7 +56,7 @@ export default function AdminDashboard() {
   const stats = [
     { name: 'Total Employees', value: employees.length.toLocaleString(), icon: Users, color: 'text-blue-600', bg: 'bg-blue-100' },
     { name: 'Pending Approvals', value: pendingUsers.length.toLocaleString(), icon: FileCheck, color: 'text-amber-600', bg: 'bg-amber-100' },
-    { name: 'Active Payroll', value: `$${payrollBatches.reduce((sum, batch) => sum + Number(batch.total_amount ?? 0), 0).toLocaleString()}`, icon: DollarSign, color: 'text-primary', bg: 'bg-primary/10' },
+    { name: 'Active Payroll', value: formatRwf(payrollBatches.reduce((sum, batch) => sum + Number(batch.total_amount ?? 0), 0)), icon: DollarSign, color: 'text-primary', bg: 'bg-primary/10' },
     { name: 'System Status', value: 'Optimal', icon: Activity, color: 'text-emerald-600', bg: 'bg-emerald-100' },
   ];
 

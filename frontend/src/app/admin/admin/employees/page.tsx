@@ -40,6 +40,10 @@ import { useToast } from '@/hooks/use-toast';
 import { Employee } from '@/types/employee';
 import { getEmployees, suspendEmployee, createEmployee, updateEmployee } from '@/api/employees';
 import { getWorkingLocations, getDepartments } from '@/api/working_locations';
+import { createAllowance, createPaymentStructure, getPaymentCategories } from '@/api/payment-structures';
+import { useAuth } from '@/context/auth-context';
+
+const formatRwf = (value: number) => `RWF ${value.toLocaleString()}`;
 
 function mapApiEmployee(item: any): Employee {
   return {
@@ -56,6 +60,7 @@ function mapApiEmployee(item: any): Employee {
 }
 
 export default function EmployeeDirectoryPage() {
+  const { user } = useAuth();
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
@@ -65,6 +70,7 @@ export default function EmployeeDirectoryPage() {
   const [locations, setLocations] = useState<any[]>([]);
   const [departments, setDepartments] = useState<any[]>([]);
   const [filteredDepartments, setFilteredDepartments] = useState<any[]>([]);
+  const [paymentCategories, setPaymentCategories] = useState<any[]>([]);
   
   const [newEmployee, setNewEmployee] = useState({
     first_name: '',
@@ -75,6 +81,14 @@ export default function EmployeeDirectoryPage() {
     gender: 'MALE' as any,
     working_location_id: '',
     department_id: '',
+    employment_category_id: '',
+    basic_salary: '',
+    daily_rate: '',
+    tax_percentage: '0',
+    custom_work_days: '',
+    allowance_title: '',
+    allowance_amount: '',
+    allowance_description: '',
   });
 
   const { toast } = useToast();
@@ -114,6 +128,8 @@ export default function EmployeeDirectoryPage() {
       ]);
       setLocations(locsData.working_locations || []);
       setDepartments(depsData.departments || []);
+      setFilteredDepartments(depsData.departments || []);
+      setPaymentCategories(await getPaymentCategories().catch(() => []));
     } catch (error) {
       console.error('Failed to load metadata', error);
     }
@@ -160,12 +176,55 @@ export default function EmployeeDirectoryPage() {
     }
 
     try {
+      const selectedCategory = paymentCategories.find(
+        (category) =>
+          category.id === newEmployee.employment_category_id ||
+          category.uuid === newEmployee.employment_category_id,
+      );
+      const selectedFrequency = selectedCategory?.payroll_frequency;
+      const isLocationScopedManager =
+        user?.roles?.some((role) =>
+          ['MANAGER', 'ON_MANAGER', 'BRANCH_MANAGER'].includes(role),
+        ) && !user?.roles?.some((role) => ['SUPER_ADMIN', 'ADMIN'].includes(role));
+      const canAssignAllowance =
+        selectedFrequency === 'MONTHLY' ||
+        (selectedFrequency === 'CUSTOM' &&
+          Number(newEmployee.custom_work_days) > 21);
       const submissionData = {
-        ...newEmployee,
-        phone_number: newEmployee.phone_number ? `+250${newEmployee.phone_number}` : undefined,
+        first_name: newEmployee.first_name,
+        last_name: newEmployee.last_name,
         email: newEmployee.email || undefined,
+        phone_number: newEmployee.phone_number ? `+250${newEmployee.phone_number}` : undefined,
+        national_id: newEmployee.national_id,
+        gender: newEmployee.gender,
+        department_id: newEmployee.department_id || undefined,
+        employment_category_id: newEmployee.employment_category_id || undefined,
+        ...(isLocationScopedManager ? {} : { working_location_id: newEmployee.working_location_id || undefined }),
       };
-      await createEmployee(submissionData);
+      const created = await createEmployee(submissionData);
+      const createdEmployee = created?.employee ?? created;
+
+      if (createdEmployee?.id && selectedFrequency) {
+        await createPaymentStructure({
+          employee_id: createdEmployee.id,
+          payroll_frequency: selectedFrequency,
+          basic_salary: newEmployee.basic_salary || '0',
+          daily_rate: newEmployee.daily_rate || '0',
+          overtime_rate: '0',
+          tax_percentage: newEmployee.tax_percentage || '0',
+          custom_work_days: newEmployee.custom_work_days ? Number(newEmployee.custom_work_days) : undefined,
+          effective_from: new Date().toISOString().slice(0, 10),
+        });
+
+        if (canAssignAllowance && newEmployee.allowance_title && newEmployee.allowance_amount) {
+          await createAllowance({
+            employee_id: createdEmployee.id,
+            title: newEmployee.allowance_title,
+            amount: newEmployee.allowance_amount,
+            description: newEmployee.allowance_description || undefined,
+          });
+        }
+      }
       await loadEmployees();
       toast({ title: "Employee Created", description: "New employee has been added to the system." });
       setIsAddingEmployee(false);
@@ -178,6 +237,14 @@ export default function EmployeeDirectoryPage() {
         gender: 'MALE',
         working_location_id: '',
         department_id: '',
+        employment_category_id: '',
+        basic_salary: '',
+        daily_rate: '',
+        tax_percentage: '0',
+        custom_work_days: '',
+        allowance_title: '',
+        allowance_amount: '',
+        allowance_description: '',
       });
       setFilteredDepartments([]);
     } catch (error: any) {
@@ -209,6 +276,19 @@ export default function EmployeeDirectoryPage() {
     e.fullName.toLowerCase().includes(searchTerm.toLowerCase()) ||
     e.employeeId.toLowerCase().includes(searchTerm.toLowerCase())
   );
+  const selectedCategory = paymentCategories.find(
+    (category) =>
+      category.id === newEmployee.employment_category_id ||
+      category.uuid === newEmployee.employment_category_id,
+  );
+  const selectedFrequency = selectedCategory?.payroll_frequency;
+  const canAssignAllowance =
+    selectedFrequency === 'MONTHLY' ||
+    (selectedFrequency === 'CUSTOM' && Number(newEmployee.custom_work_days) > 21);
+  const isLocationScopedManager =
+    user?.roles?.some((role) =>
+      ['MANAGER', 'ON_MANAGER', 'BRANCH_MANAGER'].includes(role),
+    ) && !user?.roles?.some((role) => ['SUPER_ADMIN', 'ADMIN'].includes(role));
 
   return (
     <div className="space-y-6">
@@ -278,7 +358,7 @@ export default function EmployeeDirectoryPage() {
                 </TableCell>
                 <TableCell>
                   <div className="flex items-center gap-1.5 font-bold">
-                    <CreditCard className="h-4 w-4 text-emerald-600" /> ${emp.salary.toLocaleString()}
+                    <CreditCard className="h-4 w-4 text-emerald-600" /> {formatRwf(emp.salary)}
                   </div>
                 </TableCell>
                 <TableCell>
@@ -400,29 +480,114 @@ export default function EmployeeDirectoryPage() {
                 onChange={e => setNewEmployee(p => ({...p, national_id: e.target.value}))}
               />
             </div>
-            <div className="space-y-2">
-              <Label>Location</Label>
-              <select 
-                className="w-full h-10 px-3 rounded-md border border-input bg-background"
-                value={newEmployee.working_location_id}
-                onChange={e => handleLocationChange(e.target.value)}
-              >
-                <option value="">Select Location</option>
-                {locations.map(l => <option key={l.uuid} value={l.uuid}>{l.name}</option>)}
-              </select>
-            </div>
+            {!isLocationScopedManager && (
+              <div className="space-y-2">
+                <Label>Location</Label>
+                <select 
+                  className="w-full h-10 px-3 rounded-md border border-input bg-background"
+                  value={newEmployee.working_location_id}
+                  onChange={e => handleLocationChange(e.target.value)}
+                >
+                  <option value="">Select Location</option>
+                  {locations.map(l => <option key={l.uuid} value={l.uuid}>{l.name}</option>)}
+                </select>
+              </div>
+            )}
             <div className="space-y-2">
               <Label>Department</Label>
               <select 
                 className="w-full h-10 px-3 rounded-md border border-input bg-background"
                 value={newEmployee.department_id}
                 onChange={e => setNewEmployee(p => ({...p, department_id: e.target.value}))}
-                disabled={!newEmployee.working_location_id}
+                disabled={!isLocationScopedManager && !newEmployee.working_location_id}
               >
-                <option value="">{newEmployee.working_location_id ? "Select Department" : "Select Location First"}</option>
+                <option value="">{isLocationScopedManager || newEmployee.working_location_id ? "Select Department" : "Select Location First"}</option>
                 {filteredDepartments.map(d => <option key={d.uuid} value={d.uuid}>{d.name}</option>)}
               </select>
             </div>
+            <div className="space-y-2">
+              <Label>Payment Category</Label>
+              <select
+                className="w-full h-10 px-3 rounded-md border border-input bg-background"
+                value={newEmployee.employment_category_id}
+                onChange={e => setNewEmployee(p => ({ ...p, employment_category_id: e.target.value }))}
+              >
+                <option value="">Select Payment Category</option>
+                {paymentCategories.map(category => (
+                  <option key={category.id} value={category.id}>
+                    {category.name} ({category.payroll_frequency})
+                  </option>
+                ))}
+              </select>
+            </div>
+            {selectedFrequency && (
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label>{selectedFrequency === 'MONTHLY' ? 'Monthly Salary' : 'Base Salary'}</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    value={newEmployee.basic_salary}
+                    onChange={e => setNewEmployee(p => ({ ...p, basic_salary: e.target.value }))}
+                    placeholder="0"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Daily Rate</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    value={newEmployee.daily_rate}
+                    onChange={e => setNewEmployee(p => ({ ...p, daily_rate: e.target.value }))}
+                    placeholder="0"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Tax %</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    value={newEmployee.tax_percentage}
+                    onChange={e => setNewEmployee(p => ({ ...p, tax_percentage: e.target.value }))}
+                    placeholder="0"
+                  />
+                </div>
+                {selectedFrequency === 'CUSTOM' && (
+                  <div className="space-y-2">
+                    <Label>Custom Work Days</Label>
+                    <Input
+                      type="number"
+                      min="1"
+                      value={newEmployee.custom_work_days}
+                      onChange={e => setNewEmployee(p => ({ ...p, custom_work_days: e.target.value }))}
+                      placeholder="21"
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+            {canAssignAllowance && (
+              <div className="space-y-3 rounded-md border p-3">
+                <Label>Allowance</Label>
+                <Input
+                  placeholder="Allowance title"
+                  value={newEmployee.allowance_title}
+                  onChange={e => setNewEmployee(p => ({ ...p, allowance_title: e.target.value }))}
+                />
+                <Input
+                  type="number"
+                  min="0"
+                  placeholder="Amount"
+                  value={newEmployee.allowance_amount}
+                  onChange={e => setNewEmployee(p => ({ ...p, allowance_amount: e.target.value }))}
+                />
+                <Input
+                  placeholder="Description"
+                  value={newEmployee.allowance_description}
+                  onChange={e => setNewEmployee(p => ({ ...p, allowance_description: e.target.value }))}
+                />
+              </div>
+            )}
           </div>
           <div className="flex gap-3 pt-4">
             <Button variant="outline" className="flex-1" onClick={() => setIsAddingEmployee(false)}>Cancel</Button>
