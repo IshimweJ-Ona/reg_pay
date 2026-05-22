@@ -63,10 +63,7 @@ export class UsersService {
     const roleIds =
       data.role_ids?.map((roleId) => this.toBigInt(roleId, 'role_id')) ?? [];
 
-    const permissionIds =
-      data.permission_ids?.map((permissionId) =>
-        this.toBigInt(permissionId, 'permission_id'),
-      ) ?? [];
+    const permissionIds: bigint[] = [];
 
     if (workingLocationId) {
       await this.ensureWorkingLocationExists(workingLocationId);
@@ -305,10 +302,7 @@ export class UsersService {
       this.toBigInt(roleId, 'role_id'),
     ) ?? [await this.getDefaultRoleId()];
 
-    const permissionIds =
-      dto.permission_ids?.map((permissionId) =>
-        this.toBigInt(permissionId, 'permission_id'),
-      ) ?? [];
+    const permissionIds: bigint[] = [];
 
     await this.ensureWorkingLocationExists(workingLocationId);
     await this.ensureDepartmentExists(departmentId, workingLocationId);
@@ -327,7 +321,9 @@ export class UsersService {
       where: { id: { in: roleIds } },
       select: { name: true },
     });
-    const isBranchManagerRole = roles.some((r) => r.name === 'BRANCH_MANAGER');
+    const isBranchManagerRole = roles.some((r) =>
+      ['BRANCH_MANAGER', 'MANAGER', 'ON_MANAGER'].includes(r.name),
+    );
 
     if (isBranchManagerRole) {
       await this.ensureOnlyOneBranchManager(workingLocationId, user.id);
@@ -1037,7 +1033,11 @@ export class UsersService {
 
       roles: {
         include: {
-          role: true,
+          role: {
+            include: {
+              role_permissions: { include: { permission: true } },
+            },
+          },
         },
       },
 
@@ -1065,12 +1065,7 @@ export class UsersService {
         name: userRole.role?.name,
       })),
 
-      permissions: user.user_permissions?.map((userPermission) => ({
-        id: userPermission.id.toString(),
-        permission_id: userPermission.permission_id.toString(),
-        permission_key: userPermission.permission?.permission_key,
-        name: userPermission.permission?.name,
-      })),
+      permissions: this.serializeEffectivePermissions(user),
 
       working_location: user.working_location
         ? {
@@ -1090,6 +1085,36 @@ export class UsersService {
           }
         : undefined,
     };
+  }
+
+  private serializeEffectivePermissions(user: Record<string, any>) {
+    const permissionMap = new Map<string, Record<string, any>>();
+
+    for (const userRole of user.roles ?? []) {
+      for (const rolePermission of userRole.role?.role_permissions ?? []) {
+        const permission = rolePermission.permission;
+        permissionMap.set(permission.permission_key, {
+          permission_id: permission.id.toString(),
+          permission_key: permission.permission_key,
+          name: permission.name,
+          module_name: permission.module_name,
+          source: 'role',
+        });
+      }
+    }
+
+    for (const userPermission of user.user_permissions ?? []) {
+      permissionMap.set(userPermission.permission.permission_key, {
+        id: userPermission.id.toString(),
+        permission_id: userPermission.permission_id.toString(),
+        permission_key: userPermission.permission?.permission_key,
+        name: userPermission.permission?.name,
+        module_name: userPermission.permission?.module_name,
+        source: 'direct',
+      });
+    }
+
+    return Array.from(permissionMap.values());
   }
 
   private serializeTransferRequest(request: Record<string, any>) {
@@ -1124,7 +1149,9 @@ export class UsersService {
   }
 
   private isBranchManager(actor?: CurrentUserType) {
-    return !!actor?.roles?.includes('BRANCH_MANAGER');
+    return !!actor?.roles?.some((role) =>
+      ['BRANCH_MANAGER', 'MANAGER', 'ON_MANAGER'].includes(role),
+    );
   }
 
   private userScopeWhere(actor: CurrentUserType) {

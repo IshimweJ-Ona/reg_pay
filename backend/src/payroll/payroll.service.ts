@@ -22,6 +22,7 @@ import {
   requireUuidOrNumeric,
 } from '../common/utils/lookup.util';
 import { generateUUID } from '../common/utils/uuid.util';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ApprovePayrollItemDto } from './dto/approve-payroll-item.dto';
 import { CreatePayrollBatchDto } from './dto/create-payroll-batch.dto';
@@ -30,6 +31,14 @@ import { RejectPayrollItemDto } from './dto/reject-payroll-item.dto';
 type PayrollCalculation = {
   employeeId: bigint;
   paymentStructureId: bigint;
+  baseAmount: number;
+  allowanceAmount: number;
+  taxAmount: number;
+  attendanceDays: number;
+  payrollWorkDays: number | null;
+  payrollStartDate: Date;
+  payrollEndDate: Date;
+  metadata: Record<string, any>;
   grossAmount: number;
   totalDeductions: number;
   netAmount: number;
@@ -39,6 +48,7 @@ type PayrollCalculation = {
 export class PayrollService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly notificationsService: NotificationsService,
     @Inject(CACHE_MANAGER) private cacheManager: cacheManager.Cache,
   ) {}
 
@@ -67,9 +77,8 @@ export class PayrollService {
 
     for (const employee of employees) {
       const calculation = await this.calculateEmployeePayroll(
-        employee.id,
-        dto.payroll_month,
-        dto.payroll_year,
+        employee,
+        dto,
       );
 
       if (calculation) calculations.push(calculation);
@@ -85,6 +94,19 @@ export class PayrollService {
       (sum, item) => sum + item.netAmount,
       0,
     );
+    const totalGross = calculations.reduce(
+      (sum, item) => sum + item.grossAmount,
+      0,
+    );
+    const totalAllowances = calculations.reduce(
+      (sum, item) => sum + item.allowanceAmount,
+      0,
+    );
+    const totalDeductions = calculations.reduce(
+      (sum, item) => sum + item.totalDeductions,
+      0,
+    );
+    const totalTax = calculations.reduce((sum, item) => sum + item.taxAmount, 0);
     const batchCode = `PAY-${dto.payroll_year}-${dto.payroll_month
       .toString()
       .padStart(2, '0')}-${Date.now()}`;
@@ -99,6 +121,10 @@ export class PayrollService {
           payroll_year: dto.payroll_year,
           total_employees: calculations.length,
           total_amount: totalAmount,
+          total_gross: totalGross,
+          total_allowances: totalAllowances,
+          total_deductions: totalDeductions,
+          total_tax: totalTax,
           status: PAYMENT_BATCH_STATUS.PENDING,
           submitted_by: BigInt(actor.userId),
           submitted_at: new Date(),
@@ -114,6 +140,14 @@ export class PayrollService {
             payroll_month: dto.payroll_month,
             payroll_year: dto.payroll_year,
             gross_amount: calculation.grossAmount,
+            base_amount: calculation.baseAmount,
+            allowance_amount: calculation.allowanceAmount,
+            tax_amount: calculation.taxAmount,
+            attendance_days: calculation.attendanceDays,
+            payroll_work_days: calculation.payrollWorkDays,
+            payroll_start_date: calculation.payrollStartDate,
+            payroll_end_date: calculation.payrollEndDate,
+            calculation_metadata: calculation.metadata,
             total_deductions: calculation.totalDeductions,
             net_amount: calculation.netAmount,
             payment_date: new Date(dto.payment_date),
@@ -149,6 +183,10 @@ export class PayrollService {
             payroll_year: dto.payroll_year,
             total_employees: calculations.length,
             total_amount: totalAmount,
+            total_gross: totalGross,
+            total_allowances: totalAllowances,
+            total_deductions: totalDeductions,
+            total_tax: totalTax,
           },
         },
       });
@@ -161,6 +199,19 @@ export class PayrollService {
 
     // Invalidate payroll batches cache when a new batch is created
     await this.cacheManager.del('payroll:batches');
+
+    await this.notificationsService.notifyBranchManager(workingLocationId, {
+      senderId: actor.userId,
+      title: 'Payroll Batch Submitted',
+      message: `${batch.batch_code} is awaiting manager approval.`,
+      type: 'PAYROLL_APPROVAL_REQUEST',
+      referenceId: batch.uuid,
+      metadata: {
+        redirect: `/admin/admin/payroll/${batch.uuid}`,
+        level: 'MANAGER',
+        status: batch.status,
+      },
+    });
 
     return this.serializeBatch(batch);
   }
@@ -323,8 +374,9 @@ export class PayrollService {
     if (batch.status === PAYMENT_BATCH_STATUS.REJECTED) {
       throw new BadRequestException('Rejected batches cannot be approved.');
     }
+    this.ensureActorCanApproveBatch(actor, batch);
 
-    const finalStep = batch.working_location.type === 'HQ' ? 1 : 3;
+    const finalStep = batch.working_location.type === 'HQ' ? 1 : 2;
     const nextStep = batch.current_approval_step + 1;
     const isFinal = batch.current_approval_step >= finalStep;
 
@@ -344,7 +396,7 @@ export class PayrollService {
         data: {
           status: isFinal
             ? PAYMENT_BATCH_STATUS.APPROVED
-            : PAYMENT_BATCH_STATUS.IN_REVIEW,
+            : PAYMENT_BATCH_STATUS.MANAGER_APPROVED,
           current_approval_step: isFinal
             ? batch.current_approval_step
             : nextStep,
@@ -372,6 +424,34 @@ export class PayrollService {
 
       return updated;
     });
+
+    if (approved.status === PAYMENT_BATCH_STATUS.MANAGER_APPROVED) {
+      await this.notificationsService.notifyAdmins({
+        senderId: actor.userId,
+        title: 'Payroll Batch Awaiting Admin Approval',
+        message: `${approved.batch_code} was approved by the manager and needs final admin approval.`,
+        type: 'PAYROLL_APPROVAL_REQUEST',
+        referenceId: approved.uuid,
+        metadata: {
+          redirect: `/admin/admin/payroll/${approved.uuid}`,
+          level: 'ADMIN',
+          status: approved.status,
+        },
+      });
+    } else if (approved.status === PAYMENT_BATCH_STATUS.APPROVED) {
+      await this.notificationsService.create({
+        userId: approved.submitted_by,
+        senderId: actor.userId,
+        title: 'Payroll Batch Finalized',
+        message: `${approved.batch_code} has been fully approved.`,
+        type: 'PAYROLL_APPROVED',
+        referenceId: approved.uuid,
+        metadata: {
+          redirect: `/admin/admin/payroll/${approved.uuid}`,
+          status: approved.status,
+        },
+      });
+    }
 
     return this.serializeBatch(approved);
   }
@@ -441,6 +521,19 @@ export class PayrollService {
       return updated;
     });
 
+    await this.notificationsService.create({
+      userId: rejected.submitted_by,
+      senderId: actor.userId,
+      title: 'Payroll Batch Rejected',
+      message: `${rejected.batch_code} was rejected. Reason: ${dto.rejection_reason}`,
+      type: 'PAYROLL_REJECTED',
+      referenceId: rejected.uuid,
+      metadata: {
+        redirect: `/admin/admin/payroll/${rejected.uuid}`,
+        reason: dto.rejection_reason,
+      },
+    });
+
     return this.serializeBatch(rejected);
   }
 
@@ -459,16 +552,28 @@ export class PayrollService {
   }
 
   private async calculateEmployeePayroll(
-    employeeId: bigint,
-    month: number,
-    year: number,
+    employee: {
+      id: bigint;
+      hire_date?: Date | null;
+    },
+    dto: CreatePayrollBatchDto,
   ): Promise<PayrollCalculation | null> {
-    const periodStart = new Date(Date.UTC(year, month - 1, 1));
-    const periodEnd = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
+    const month = dto.payroll_month;
+    const year = dto.payroll_year;
+    const periodStart = dto.start_date
+      ? this.startOfDay(new Date(dto.start_date))
+      : new Date(Date.UTC(year, month - 1, 1));
+    const periodEnd = dto.end_date
+      ? this.endOfDay(new Date(dto.end_date))
+      : new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
+
+    if (periodEnd < periodStart) {
+      throw new BadRequestException('Payroll end date must be after start date.');
+    }
 
     const paymentStructure = await this.prisma.payment_structures.findFirst({
       where: {
-        employee_id: employeeId,
+        employee_id: employee.id,
         effective_from: { lte: periodEnd },
         OR: [{ effective_to: null }, { effective_to: { gte: periodStart } }],
       },
@@ -479,7 +584,7 @@ export class PayrollService {
 
     const attendance = await this.prisma.time_records.findMany({
       where: {
-        employee_id: employeeId,
+        employee_id: employee.id,
         attendance_date: {
           gte: periodStart,
           lte: periodEnd,
@@ -495,19 +600,57 @@ export class PayrollService {
       0,
     );
 
-    const workingDaysInPeriod = Math.max(attendance.length, presentDays, 1);
-    const baseAmount =
-      paymentStructure.payroll_frequency === EMPLOYMENT_TYPE.MONTHLY
-        ? (Number(paymentStructure.basic_salary) / workingDaysInPeriod) *
-          presentDays
-        : Number(paymentStructure.daily_rate) * presentDays;
+    const requestedWorkDays =
+      dto.work_days ?? paymentStructure.custom_work_days ?? presentDays;
+    const daysAfterPayrollStart = employee.hire_date
+      ? this.diffCalendarDays(periodStart, employee.hire_date)
+      : 0;
+    const effectiveFrequency =
+      paymentStructure.payroll_frequency === EMPLOYMENT_TYPE.MONTHLY &&
+      daysAfterPayrollStart > 8
+        ? EMPLOYMENT_TYPE.DAILY
+        : paymentStructure.payroll_frequency;
+    const periodCalendarDays = Math.max(
+      1,
+      this.diffCalendarDays(periodStart, periodEnd) + 1,
+    );
+
+    let baseAmount = 0;
+
+    const effectiveDailyRate =
+      Number(paymentStructure.daily_rate) > 0
+        ? Number(paymentStructure.daily_rate)
+        : Number(paymentStructure.basic_salary) / periodCalendarDays;
+
+    if (effectiveFrequency === EMPLOYMENT_TYPE.MONTHLY) {
+      baseAmount = Number(paymentStructure.basic_salary);
+    } else if (effectiveFrequency === EMPLOYMENT_TYPE.CUSTOM) {
+      const customDays = Math.max(requestedWorkDays, 1);
+      baseAmount = effectiveDailyRate * customDays;
+    } else {
+      baseAmount = effectiveDailyRate * presentDays;
+    }
+
     const overtimeAmount =
       Number(paymentStructure.overtime_rate) * overtimeHours;
-    const grossAmount = baseAmount + overtimeAmount;
+    const allowanceEligible =
+      effectiveFrequency === EMPLOYMENT_TYPE.MONTHLY ||
+      (effectiveFrequency === EMPLOYMENT_TYPE.CUSTOM &&
+        (requestedWorkDays ?? 0) > 21);
+    const allowances = allowanceEligible
+      ? await this.prisma.allowances.findMany({
+          where: { employee_id: employee.id, is_active: true },
+        })
+      : [];
+    const allowanceAmount = allowances.reduce(
+      (sum, allowance) => sum + Number(allowance.amount),
+      0,
+    );
+    const grossAmount = baseAmount + overtimeAmount + allowanceAmount;
 
     const employeeDeductions = await this.prisma.employee_deductions.findMany({
       where: {
-        employee_id: employeeId,
+        employee_id: employee.id,
         is_active: true,
         start_date: { lte: periodEnd },
         OR: [{ end_date: null }, { end_date: { gte: periodStart } }],
@@ -526,16 +669,39 @@ export class PayrollService {
 
       return sum + Number(deduction.deduction_type.amount);
     }, 0);
-    const taxAmount =
-      paymentStructure.payroll_frequency === EMPLOYMENT_TYPE.MONTHLY
-        ? grossAmount * (Number(paymentStructure.tax_percentage) / 100)
-        : 0;
+    const taxExempt =
+      effectiveFrequency === EMPLOYMENT_TYPE.CUSTOM &&
+      (requestedWorkDays ?? 0) < 21;
+    const taxAmount = taxExempt
+      ? 0
+      : grossAmount * (Number(paymentStructure.tax_percentage) / 100);
     const totalDeductions = configuredDeductions + taxAmount;
     const netAmount = Math.max(0, grossAmount - totalDeductions);
 
     return {
-      employeeId,
+      employeeId: employee.id,
       paymentStructureId: paymentStructure.id,
+      baseAmount,
+      allowanceAmount,
+      taxAmount,
+      attendanceDays: presentDays,
+      payrollWorkDays:
+        effectiveFrequency === EMPLOYMENT_TYPE.CUSTOM ? requestedWorkDays : null,
+      payrollStartDate: periodStart,
+      payrollEndDate: periodEnd,
+      metadata: {
+        configured_frequency: paymentStructure.payroll_frequency,
+        effective_frequency: effectiveFrequency,
+        monthly_joiner_converted_to_daily:
+          paymentStructure.payroll_frequency === EMPLOYMENT_TYPE.MONTHLY &&
+          effectiveFrequency === EMPLOYMENT_TYPE.DAILY,
+        days_after_payroll_start: daysAfterPayrollStart,
+        period_calendar_days: periodCalendarDays,
+        overtime_hours: overtimeHours,
+        allowance_eligible: allowanceEligible,
+        allowance_titles: allowances.map((allowance) => allowance.title),
+        custom_tax_exempt: taxExempt,
+      },
       grossAmount,
       totalDeductions,
       netAmount,
@@ -600,6 +766,42 @@ export class PayrollService {
     );
   }
 
+  private ensureActorCanApproveBatch(
+    actor: CurrentUserType,
+    batch: {
+      working_location_id: bigint;
+      current_approval_step: number;
+      working_location: { type: string };
+    },
+  ) {
+    if (batch.working_location.type === 'HQ') {
+      if (this.isSystemAdmin(actor)) return;
+      throw new BadRequestException('Only admins can approve HQ payroll.');
+    }
+
+    if (batch.current_approval_step === 1) {
+      const isManager = actor.roles.some((role) =>
+        ['MANAGER', 'ON_MANAGER', 'BRANCH_MANAGER'].includes(role),
+      );
+
+      if (
+        this.isSystemAdmin(actor) ||
+        (isManager &&
+          actor.working_location_id === batch.working_location_id.toString())
+      ) {
+        return;
+      }
+
+      throw new BadRequestException(
+        'Only the working-location manager can approve this payroll step.',
+      );
+    }
+
+    if (batch.current_approval_step >= 2 && this.isSystemAdmin(actor)) return;
+
+    throw new BadRequestException('Only admins can finalize payroll batches.');
+  }
+
   private async findItemByUuidOrThrow(uuid: string) {
     const item = await this.prisma.payment_batch_items.findUnique({
       where: { uuid },
@@ -642,6 +844,10 @@ export class PayrollService {
       submitted_by: batch.submitted_by.toString(),
       approved_by: batch.approved_by?.toString() ?? null,
       total_amount: batch.total_amount.toString(),
+      total_gross: batch.total_gross?.toString?.() ?? '0',
+      total_allowances: batch.total_allowances?.toString?.() ?? '0',
+      total_deductions: batch.total_deductions?.toString?.() ?? '0',
+      total_tax: batch.total_tax?.toString?.() ?? '0',
       working_location: batch.working_location
         ? {
             ...batch.working_location,
@@ -699,6 +905,10 @@ export class PayrollService {
               item.transaction.payment_structure_id.toString(),
             approved_by: item.transaction.approved_by?.toString() ?? null,
             gross_amount: item.transaction.gross_amount.toString(),
+            base_amount: item.transaction.base_amount?.toString?.() ?? '0',
+            allowance_amount:
+              item.transaction.allowance_amount?.toString?.() ?? '0',
+            tax_amount: item.transaction.tax_amount?.toString?.() ?? '0',
             total_deductions: item.transaction.total_deductions.toString(),
             net_amount: item.transaction.net_amount.toString(),
           }
@@ -712,5 +922,40 @@ export class PayrollService {
     }
 
     return BigInt(value);
+  }
+
+  private startOfDay(date: Date) {
+    return new Date(
+      Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
+    );
+  }
+
+  private endOfDay(date: Date) {
+    return new Date(
+      Date.UTC(
+        date.getUTCFullYear(),
+        date.getUTCMonth(),
+        date.getUTCDate(),
+        23,
+        59,
+        59,
+        999,
+      ),
+    );
+  }
+
+  private diffCalendarDays(start: Date, end: Date) {
+    const startUtc = Date.UTC(
+      start.getUTCFullYear(),
+      start.getUTCMonth(),
+      start.getUTCDate(),
+    );
+    const endUtc = Date.UTC(
+      end.getUTCFullYear(),
+      end.getUTCMonth(),
+      end.getUTCDate(),
+    );
+
+    return Math.floor((endUtc - startUtc) / 86_400_000);
   }
 }

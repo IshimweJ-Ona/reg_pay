@@ -4,6 +4,9 @@ import {
   IsDecimal,
   IsEnum,
   IsNotEmpty,
+  IsOptional,
+  IsInt,
+  Min,
   IsString,
 } from 'class-validator';
 
@@ -26,6 +29,11 @@ export class CreatePaymentStructureDto {
 
   @IsDecimal()
   tax_percentage: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  custom_work_days?: number;
 
   @IsDateString()
   effective_from: string;

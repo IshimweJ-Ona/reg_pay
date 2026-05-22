@@ -1,5 +1,12 @@
 import { EMPLOYMENT_TYPE } from '@prisma/client';
-import { IsDateString, IsDecimal, IsEnum, IsOptional } from 'class-validator';
+import {
+  IsDateString,
+  IsDecimal,
+  IsEnum,
+  IsInt,
+  IsOptional,
+  Min,
+} from 'class-validator';
 
 export class UpdatePaymentStructureDto {
   @IsOptional()
@@ -21,6 +28,11 @@ export class UpdatePaymentStructureDto {
   @IsOptional()
   @IsDecimal()
   tax_percentage?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  custom_work_days?: number;
 
   @IsOptional()
   @IsDateString()

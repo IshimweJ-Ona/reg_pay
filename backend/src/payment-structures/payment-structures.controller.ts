@@ -21,9 +21,10 @@ import { CreateDeductionTypeDto } from './dto/create-deduction-type.dto';
 import { UpdateDeductionTypeDto } from './dto/update-deduction-type.dto';
 import { CreateEmployeeDeductionDto } from './dto/create-employee-deduction.dto';
 import { UpdateEmployeeDeductionDto } from './dto/update-employee-deduction.dto';
+import { CreateAllowanceDto } from './dto/create-allowance.dto';
 
 @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
-@Roles('SUPER_ADMIN', 'ADMIN', 'HR_MANAGER', 'FINANCE')
+@Roles('SUPER_ADMIN', 'ADMIN', 'HR', 'HR_MANAGER', 'ACCOUNTANT', 'FINANCE')
 @Controller('payment-structures')
 export class PaymentStructuresController {
   constructor(
@@ -46,6 +47,12 @@ export class PaymentStructuresController {
     @CurrentUser() actor: CurrentUserType,
   ) {
     return this.paymentStructuresService.createDeductionType(dto, actor);
+  }
+
+  @Permissions('payment-structures.read')
+  @Get('payment-categories')
+  findPaymentCategories() {
+    return this.paymentStructuresService.findPaymentCategories();
   }
 
   @Permissions('payment-structures.read')
@@ -122,5 +129,29 @@ export class PaymentStructuresController {
     @CurrentUser() actor: CurrentUserType,
   ) {
     return this.paymentStructuresService.deleteEmployeeDeduction(uuid, actor);
+  }
+
+  @Permissions('payment-structures.create')
+  @Post('allowances')
+  createAllowance(
+    @Body() dto: CreateAllowanceDto,
+    @CurrentUser() actor: CurrentUserType,
+  ) {
+    return this.paymentStructuresService.createAllowance(dto, actor);
+  }
+
+  @Permissions('payment-structures.read')
+  @Get('allowances/employee/:employeeId')
+  findAllowances(@Param('employeeId') employeeId: string) {
+    return this.paymentStructuresService.findAllowances(employeeId);
+  }
+
+  @Permissions('payment-structures.update')
+  @Patch('allowances/:uuid/deactivate')
+  deactivateAllowance(
+    @Param('uuid') uuid: string,
+    @CurrentUser() actor: CurrentUserType,
+  ) {
+    return this.paymentStructuresService.deactivateAllowance(uuid, actor);
   }
 }

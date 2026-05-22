@@ -41,8 +41,16 @@ export class EmployeesService {
   ) {}
 
   async create(dto: CreateEmployeeDto, actor?: CurrentUserType) {
-    const workingLocationId = dto.working_location_id
-      ? await this.resolveWorkingLocationId(dto.working_location_id)
+    const managerScoped =
+      actor?.roles?.some((role) =>
+        ['BRANCH_MANAGER', 'MANAGER', 'ON_MANAGER'].includes(role),
+      ) && !this.isSystemAdmin(actor);
+    const effectiveWorkingLocationInput =
+      managerScoped && actor?.working_location_id
+        ? actor.working_location_id
+        : dto.working_location_id;
+    const workingLocationId = effectiveWorkingLocationInput
+      ? await this.resolveWorkingLocationId(effectiveWorkingLocationInput)
       : null;
 
     const departmentId = dto.department_id
@@ -344,7 +352,9 @@ export class EmployeesService {
     }
 
     const isAdmin = this.isSystemAdmin(actor);
-    const isBM = actor.roles.includes('BRANCH_MANAGER');
+    const isBM = actor.roles.some((role) =>
+      ['BRANCH_MANAGER', 'MANAGER', 'ON_MANAGER'].includes(role),
+    );
 
     if (request.current_level === 'BRANCH_MANAGER') {
       if (!isBM && !isAdmin) {

@@ -1,4 +1,11 @@
-import { PrismaClient, GENDER, STATUS_USER, WORKING_LOCATION_TYPE } from '@prisma/client';
+import {
+  PrismaClient,
+  EMPLOYMENT_TYPE,
+  GENDER,
+  STATUS_USER,
+  TAX_BEHAVIOUR,
+  WORKING_LOCATION_TYPE,
+} from '@prisma/client';
 import { hashPassword } from '../src/auth/utils/password.util';
 import { generateUUID } from '../src/common/utils/uuid.util';
 
@@ -37,7 +44,106 @@ const permissions = [
   ['Payroll Read', 'PAYROLL', 'payroll.read'],
   ['Payroll Manage', 'PAYROLL', 'payroll.manage'],
   ['Payroll Approve', 'PAYROLL', 'payroll.approve'],
+  ['Payroll Reports', 'PAYROLL', 'payroll.reports'],
+  ['Allowances Manage', 'PAYMENT_STRUCTURES', 'allowances.manage'],
+  ['Notifications Read', 'NOTIFICATIONS', 'notifications.read'],
+  ['Notifications Manage', 'NOTIFICATIONS', 'notifications.manage'],
 ] as const;
+
+const rolePermissionKeys: Record<string, string[]> = {
+  SUPER_ADMIN: permissions.map(([, , key]) => key),
+  ADMIN: permissions.map(([, , key]) => key),
+  MANAGER: [
+    'users.read',
+    'users.approve',
+    'users.update',
+    'employees.create',
+    'employees.read',
+    'employees.update',
+    'employees.suspend',
+    'attendance.create',
+    'attendance.read',
+    'attendance.update',
+    'attendance.approve',
+    'payroll.read',
+    'payroll.approve',
+    'notifications.read',
+    'notifications.manage',
+  ],
+  ON_MANAGER: [
+    'users.read',
+    'users.approve',
+    'users.update',
+    'employees.create',
+    'employees.read',
+    'employees.update',
+    'employees.suspend',
+    'attendance.create',
+    'attendance.read',
+    'attendance.update',
+    'attendance.approve',
+    'payroll.read',
+    'payroll.approve',
+    'notifications.read',
+    'notifications.manage',
+  ],
+  ACCOUNTANT: [
+    'employees.read',
+    'attendance.read',
+    'payment-structures.create',
+    'payment-structures.read',
+    'payment-structures.update',
+    'allowances.manage',
+    'payroll.create',
+    'payroll.read',
+    'payroll.manage',
+    'payroll.reports',
+    'notifications.read',
+  ],
+  HR: [
+    'employees.create',
+    'employees.read',
+    'employees.update',
+    'employees.suspend',
+    'payment-structures.create',
+    'payment-structures.read',
+    'payment-structures.update',
+    'notifications.read',
+  ],
+  ATTENDANT: [
+    'employees.read',
+    'attendance.create',
+    'attendance.read',
+    'attendance.update',
+    'notifications.read',
+  ],
+  BRANCH_MANAGER: [
+    'users.read',
+    'users.approve',
+    'users.update',
+    'employees.create',
+    'employees.read',
+    'employees.update',
+    'employees.suspend',
+    'attendance.create',
+    'attendance.read',
+    'attendance.update',
+    'attendance.approve',
+    'payroll.read',
+    'payroll.approve',
+  ],
+  FINANCE: [
+    'employees.read',
+    'attendance.read',
+    'payment-structures.create',
+    'payment-structures.read',
+    'payment-structures.update',
+    'payroll.create',
+    'payroll.read',
+    'payroll.manage',
+    'payroll.reports',
+  ],
+};
 
 async function main() {
   const hq = await prisma.working_locations.upsert({
@@ -51,29 +157,21 @@ async function main() {
     },
   });
 
-  const department = await prisma.departments.upsert({
-    where: { code: 'HQ-ADMIN' },
-    update: {},
-    create: {
-      uuid: generateUUID(),
-      code: 'HQ-ADMIN',
-      name: 'HQ Administration',
-      description: 'Initial administration department for system bootstrap.',
-      working_location_id: hq.id,
-    },
-  });
+  const department =
+    (await prisma.departments.findFirst({
+      where: { code: 'HQ-ADMIN', working_location_id: hq.id },
+    })) ??
+    (await prisma.departments.create({
+      data: {
+        uuid: generateUUID(),
+        code: 'HQ-ADMIN',
+        name: 'HQ Administration',
+        description: 'Initial administration department for system bootstrap.',
+        working_location_id: hq.id,
+      },
+    }));
 
-  const role = await prisma.roles.upsert({
-    where: { name: 'SUPER_ADMIN' },
-    update: {},
-    create: {
-      uuid: generateUUID(),
-      name: 'SUPER_ADMIN',
-      description: 'Full platform administrator.',
-      level_order: 1,
-    },
-  });
-
+  const permissionByKey = new Map<string, bigint>();
   for (const [name, moduleName, permissionKey] of permissions) {
     const permission = await prisma.permissions.upsert({
       where: { permission_key: permissionKey },
@@ -85,21 +183,87 @@ async function main() {
         permission_key: permissionKey,
       },
     });
+    permissionByKey.set(permissionKey, permission.id);
+  }
 
-    await prisma.role_permissions.upsert({
-      where: {
-        role_id_permission_id: {
-          role_id: role.id,
-          permission_id: permission.id,
-        },
+  const roles = new Map<string, bigint>();
+  let levelOrder = 1;
+  for (const [roleName, keys] of Object.entries(rolePermissionKeys)) {
+    const role = await prisma.roles.upsert({
+      where: { name: roleName },
+      update: {
+        description: roleName === 'SUPER_ADMIN'
+          ? 'Full platform administrator.'
+          : `${roleName.replace(/_/g, ' ')} role.`,
+        level_order: levelOrder,
       },
-      update: {},
       create: {
-        role_id: role.id,
-        permission_id: permission.id,
+        uuid: generateUUID(),
+        name: roleName,
+        description: roleName === 'SUPER_ADMIN'
+          ? 'Full platform administrator.'
+          : `${roleName.replace(/_/g, ' ')} role.`,
+        level_order: levelOrder,
       },
     });
+    roles.set(roleName, role.id);
+    levelOrder += 1;
+
+    for (const key of keys) {
+      const permissionId = permissionByKey.get(key);
+      if (!permissionId) continue;
+
+      await prisma.role_permissions.upsert({
+        where: {
+          role_id_permission_id: {
+            role_id: role.id,
+            permission_id: permissionId,
+          },
+        },
+        update: {},
+        create: {
+          role_id: role.id,
+          permission_id: permissionId,
+        },
+      });
+    }
   }
+
+  await prisma.employment_categories.upsert({
+    where: { name: 'Monthly' },
+    update: {},
+    create: {
+      uuid: generateUUID(),
+      name: 'Monthly',
+      payroll_frequency: EMPLOYMENT_TYPE.MONTHLY,
+      tax_behavior: TAX_BEHAVIOUR.STANDARD,
+      description: 'Standard monthly payroll category.',
+    },
+  });
+
+  await prisma.employment_categories.upsert({
+    where: { name: 'Daily' },
+    update: {},
+    create: {
+      uuid: generateUUID(),
+      name: 'Daily',
+      payroll_frequency: EMPLOYMENT_TYPE.DAILY,
+      tax_behavior: TAX_BEHAVIOUR.EXEMPT,
+      description: 'Attendance-based daily payroll category.',
+    },
+  });
+
+  await prisma.employment_categories.upsert({
+    where: { name: 'Custom' },
+    update: {},
+    create: {
+      uuid: generateUUID(),
+      name: 'Custom',
+      payroll_frequency: EMPLOYMENT_TYPE.CUSTOM,
+      tax_behavior: TAX_BEHAVIOUR.PERIODIC,
+      description: 'Custom contract payroll category.',
+    },
+  });
 
   const email = process.env.SEED_SUPER_ADMIN_EMAIL ?? 'admin@regpay.local';
   const phoneNumber = process.env.SEED_SUPER_ADMIN_PHONE ?? '+250788000000';
@@ -130,13 +294,13 @@ async function main() {
     where: {
       user_id_role_id: {
         user_id: user.id,
-        role_id: role.id,
+              role_id: roles.get('SUPER_ADMIN')!,
       },
     },
     update: {},
     create: {
       user_id: user.id,
-      role_id: role.id,
+      role_id: roles.get('SUPER_ADMIN')!,
     },
   });
 

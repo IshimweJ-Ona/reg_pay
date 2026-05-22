@@ -89,14 +89,26 @@ export class AuthService {
       },
     });
 
-    // Create notification for admins
+    const localApprover = workingLocationId
+      ? await this.prisma.branch_managers.findFirst({
+          where: { working_location_id: workingLocationId, is_active: true },
+          select: { user_id: true },
+        })
+      : null;
+
+    // Create notification for the local manager when available; otherwise HQ admins receive it.
     await this.prisma.notifications.create({
       data: {
         uuid: generateUUID(),
+        user_id: localApprover?.user_id ?? null,
         title: 'New User Registration',
         message: `${user.first_name} ${user.last_name} has registered and is pending approval.`,
         type: 'REGISTRATION_REQUEST',
         reference_id: user.uuid,
+        metadata: {
+          redirect: '/admin/admin/users',
+          level: localApprover ? 'MANAGER' : 'ADMIN',
+        },
       },
     });
 
@@ -171,6 +183,11 @@ export class AuthService {
       [
         'SUPER_ADMIN',
         'ADMIN',
+        'MANAGER',
+        'ON_MANAGER',
+        'ACCOUNTANT',
+        'HR',
+        'ATTENDANT',
         'HR_ADMIN',
         'HR_MANAGER',
         'FINANCE',
@@ -331,8 +348,16 @@ export class AuthService {
       include: {
         working_location: true,
         department: true,
-        roles: { include: { role: true } },
         user_permissions: { include: { permission: true, grantedBy: true } },
+        roles: {
+          include: {
+            role: {
+              include: {
+                role_permissions: { include: { permission: true } },
+              },
+            },
+          },
+        },
       },
     });
     const admins = await this.prisma.users.findMany({
@@ -386,20 +411,7 @@ export class AuthService {
             }
           : null,
         roles: user.roles.map((userRole) => userRole.role.name),
-        permissions: user.user_permissions.map((userPermission) => ({
-          uuid: userPermission.permission.uuid,
-          key: userPermission.permission.permission_key,
-          name: userPermission.permission.name,
-          module_name: userPermission.permission.module_name,
-          granted_at: userPermission.created_at,
-          granted_by: userPermission.grantedBy
-            ? {
-                uuid: userPermission.grantedBy.uuid,
-                email: userPermission.grantedBy.email,
-                phone_number: userPermission.grantedBy.phone_number,
-              }
-            : null,
-        })),
+        permissions: this.serializeEffectivePermissions(user),
       },
       admin_contacts: admins,
       activity_history: activityHistory.map((log) => ({
@@ -420,6 +432,45 @@ export class AuthService {
     const rbac = await this.loadUserRbac(userId);
 
     return buildJwtPayload(user, rbac.roles, rbac.permissions);
+  }
+
+  private serializeEffectivePermissions(user: Record<string, any>) {
+    const permissionMap = new Map<string, Record<string, any>>();
+
+    for (const userRole of user.roles ?? []) {
+      for (const rolePermission of userRole.role?.role_permissions ?? []) {
+        const permission = rolePermission.permission;
+        permissionMap.set(permission.permission_key, {
+          uuid: permission.uuid,
+          key: permission.permission_key,
+          name: permission.name,
+          module_name: permission.module_name,
+          source: 'role',
+          granted_at: userRole.created_at,
+          granted_by: null,
+        });
+      }
+    }
+
+    for (const userPermission of user.user_permissions ?? []) {
+      permissionMap.set(userPermission.permission.permission_key, {
+        uuid: userPermission.permission.uuid,
+        key: userPermission.permission.permission_key,
+        name: userPermission.permission.name,
+        module_name: userPermission.permission.module_name,
+        source: 'direct',
+        granted_at: userPermission.created_at,
+        granted_by: userPermission.grantedBy
+          ? {
+              uuid: userPermission.grantedBy.uuid,
+              email: userPermission.grantedBy.email,
+              phone_number: userPermission.grantedBy.phone_number,
+            }
+          : null,
+      });
+    }
+
+    return Array.from(permissionMap.values());
   }
 
   private async loadUserRbac(userId: bigint) {

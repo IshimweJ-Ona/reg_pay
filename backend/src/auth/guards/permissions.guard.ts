@@ -89,7 +89,9 @@ export class PermissionsGuard implements CanActivate {
     ]);
 
     if (
-      user?.roles?.includes('BRANCH_MANAGER') &&
+      user?.roles?.some((role) =>
+        ['BRANCH_MANAGER', 'MANAGER', 'ON_MANAGER'].includes(role),
+      ) &&
       requiredPermissions.some((permission) =>
         branchManagerPermissions.has(permission),
       )

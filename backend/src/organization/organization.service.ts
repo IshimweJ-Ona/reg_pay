@@ -61,6 +61,25 @@ export class OrganizationService {
         },
       });
 
+      const existingDepartments = await tx.departments.findMany({
+        where: { status: 'ACTIVE' },
+        distinct: ['code'],
+        select: { code: true, name: true, description: true },
+      });
+
+      if (existingDepartments.length) {
+        await tx.departments.createMany({
+          data: existingDepartments.map((department) => ({
+            uuid: generateUUID(),
+            working_location_id: created.id,
+            code: department.code,
+            name: department.name,
+            description: department.description,
+          })),
+          skipDuplicates: true,
+        });
+      }
+
       await tx.audit_logs.create({
         data: {
           user_id: BigInt(actor.userId),
@@ -129,48 +148,69 @@ export class OrganizationService {
   }
 
   async createDepartment(dto: CreateDepartmentDto, actor: CurrentUserType) {
-    const workingLocationId = await this.resolveWorkingLocationId(
-      dto.working_location_id,
-    );
-
-    const workingLocation = await this.prisma.working_locations.findFirst({
-      where: {
-        id: workingLocationId,
-        deleted_at: null,
-      },
-      select: { id: true },
-    });
-
-    if (!workingLocation) {
-      throw new NotFoundException('Working location not found.');
+    if (!actor.roles.some((role) => ['SUPER_ADMIN', 'ADMIN'].includes(role))) {
+      throw new BadRequestException(
+        'Only admins can create global departments.',
+      );
     }
 
-    this.ensureActorCanUseWorkingLocation(actor, workingLocationId);
+    const targetLocations = dto.working_location_id
+      ? [
+          await this.resolveWorkingLocationId(dto.working_location_id),
+        ]
+      : (
+          await this.prisma.working_locations.findMany({
+            where: { deleted_at: null },
+            select: { id: true },
+          })
+        ).map((location) => location.id);
 
-    const department = await this.prisma.$transaction(async (tx) => {
-      const created = await tx.departments.create({
-        data: {
+    if (!targetLocations.length) {
+      throw new BadRequestException(
+        'Create a working location before creating departments.',
+      );
+    }
+
+    const departments = await this.prisma.$transaction(async (tx) => {
+      await tx.departments.createMany({
+        data: targetLocations.map((workingLocationId) => ({
           uuid: generateUUID(),
           working_location_id: workingLocationId,
           code: dto.code,
           name: dto.name,
           description: dto.description,
-        },
+        })),
+        skipDuplicates: true,
       });
+
+      const created = await tx.departments.findMany({
+        where: {
+          code: dto.code,
+          working_location_id: { in: targetLocations },
+        },
+        include: { working_location: true },
+        orderBy: { working_location_id: 'asc' },
+      });
+
+      if (!created.length) {
+        throw new BadRequestException(
+          'Department already exists in the selected working locations.',
+        );
+      }
 
       await tx.audit_logs.create({
         data: {
           user_id: BigInt(actor.userId),
           entity_table: 'departments',
-          entity_id: created.id,
+          entity_id: created[0].id,
           module_name: 'ORGANIZATION',
           activity_type: ACTIVITY_TYPE.CREATE,
-          activity_description: 'Created department.',
+          activity_description: 'Created global department across working locations.',
           action: AUDIT_ACTION.CREATED,
           new_values: {
-            working_location_id: workingLocationId.toString(),
-            code: created.code,
-            name: created.name,
+            working_location_ids: targetLocations.map((id) => id.toString()),
+            code: dto.code,
+            name: dto.name,
           },
         },
       });
@@ -178,10 +218,13 @@ export class OrganizationService {
       return created;
     });
 
-    // Invalidate department cache for this specific location
-    await this.cacheManager.del(`departments_${workingLocationId}`);
+    await this.cacheManager.del('working_locations');
 
-    return this.serializeDepartment(department);
+    return {
+      departments: departments.map((department) =>
+        this.serializeDepartment(department),
+      ),
+    };
   }
 
   // Find departments for a working location with optional query filter and caching
@@ -460,7 +503,9 @@ export class OrganizationService {
     }
 
     if (
-      actor.roles.includes('BRANCH_MANAGER') &&
+      actor.roles.some((role) =>
+        ['BRANCH_MANAGER', 'MANAGER', 'ON_MANAGER'].includes(role),
+      ) &&
       actor.working_location_id === workingLocationId.toString()
     ) {
       return;

@@ -101,12 +101,33 @@ export class NotificationsService {
       },
     });
 
-    return notifications.map((n) => ({
-      ...n,
-      id: n.id.toString(),
-      user_id: n.user_id?.toString(),
-      sender_id: n.sender_id?.toString(),
-    }));
+    return Promise.all(
+      notifications.map(async (n) => {
+        const referenceUser =
+          n.type === 'REGISTRATION_REQUEST' && n.reference_id
+            ? await this.prisma.users.findUnique({
+                where: { uuid: n.reference_id },
+                select: {
+                  uuid: true,
+                  first_name: true,
+                  last_name: true,
+                  email: true,
+                  phone_number: true,
+                  working_location: { select: { name: true } },
+                  department: { select: { name: true } },
+                },
+              })
+            : null;
+
+        return {
+          ...n,
+          id: n.id.toString(),
+          user_id: n.user_id?.toString(),
+          sender_id: n.sender_id?.toString(),
+          user: referenceUser ?? n.user,
+        };
+      }),
+    );
   }
 
   async findUnreadCount() {

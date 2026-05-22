@@ -72,9 +72,9 @@ CREATE TABLE `Departments` (
     `updated_at` DATETIME(3) NOT NULL,
 
     UNIQUE INDEX `Departments_uuid_key`(`uuid`),
-    UNIQUE INDEX `Departments_code_key`(`code`),
-    UNIQUE INDEX `Departments_name_key`(`name`),
     INDEX `idx_department_location`(`working_location_id`),
+    UNIQUE INDEX `Departments_working_location_id_code_key`(`working_location_id`, `code`),
+    UNIQUE INDEX `Departments_working_location_id_name_key`(`working_location_id`, `name`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -123,6 +123,8 @@ CREATE TABLE `Users` (
     INDEX `idx_user_location`(`working_location_id`),
     INDEX `idx_user_department`(`department_id`),
     INDEX `idx_user_status`(`status`),
+    INDEX `idx_user_first_name`(`first_name`),
+    INDEX `idx_user_last_name`(`last_name`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -210,7 +212,7 @@ CREATE TABLE `Employment_categories` (
     `id` BIGINT NOT NULL AUTO_INCREMENT,
     `uuid` CHAR(36) NOT NULL,
     `name` VARCHAR(100) NOT NULL,
-    `payroll_frequency` ENUM('DAILY', 'MONTHLY') NOT NULL,
+    `payroll_frequency` ENUM('DAILY', 'MONTHLY', 'CUSTOM') NOT NULL,
     `tax_behavior` ENUM('STANDARD', 'PERIODIC', 'EXEMPT') NOT NULL,
     `description` TEXT NULL,
     `status` ENUM('ACTIVE', 'INACTIVE') NOT NULL DEFAULT 'ACTIVE',
@@ -251,6 +253,11 @@ CREATE TABLE `Employees` (
     INDEX `idx_employee_category`(`employment_category_id`),
     INDEX `idx_employee_status`(`status`),
     INDEX `idx_employee_created_by`(`created_by`),
+    INDEX `idx_employee_first_name`(`first_name`),
+    INDEX `idx_employee_last_name`(`last_name`),
+    INDEX `idx_employee_email`(`email`),
+    INDEX `idx_employee_phone`(`phone_number`),
+    INDEX `idx_employee_national_id`(`national_id`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -297,10 +304,11 @@ CREATE TABLE `Payment_structures` (
     `id` BIGINT NOT NULL AUTO_INCREMENT,
     `uuid` CHAR(36) NOT NULL,
     `employee_id` BIGINT NOT NULL,
-    `payroll_frequency` ENUM('DAILY', 'MONTHLY') NOT NULL,
+    `payroll_frequency` ENUM('DAILY', 'MONTHLY', 'CUSTOM') NOT NULL,
     `basic_salary` DECIMAL(18, 2) NOT NULL DEFAULT 0.00,
     `daily_rate` DECIMAL(18, 2) NOT NULL DEFAULT 0.00,
     `overtime_rate` DECIMAL(18, 2) NOT NULL DEFAULT 0.00,
+    `custom_work_days` INTEGER NULL,
     `tax_percentage` DECIMAL(5, 2) NOT NULL DEFAULT 0.00,
     `effective_from` DATE NOT NULL,
     `effective_to` DATETIME(3) NULL,
@@ -309,6 +317,24 @@ CREATE TABLE `Payment_structures` (
 
     UNIQUE INDEX `Payment_structures_uuid_key`(`uuid`),
     INDEX `idx_payment_structure_employee`(`employee_id`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `Allowances` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `uuid` CHAR(36) NOT NULL,
+    `employee_id` BIGINT NOT NULL,
+    `title` VARCHAR(100) NOT NULL,
+    `amount` DECIMAL(18, 2) NOT NULL DEFAULT 0.00,
+    `description` TEXT NULL,
+    `is_active` BOOLEAN NOT NULL DEFAULT true,
+    `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `updated_at` DATETIME(3) NOT NULL,
+
+    UNIQUE INDEX `Allowances_uuid_key`(`uuid`),
+    INDEX `idx_allowance_employee`(`employee_id`),
+    INDEX `idx_allowance_active`(`is_active`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -375,6 +401,14 @@ CREATE TABLE `Transactions` (
     `payroll_month` INTEGER NOT NULL,
     `payroll_year` INTEGER NOT NULL,
     `gross_amount` DECIMAL(18, 2) NOT NULL DEFAULT 0.00,
+    `base_amount` DECIMAL(18, 2) NOT NULL DEFAULT 0.00,
+    `allowance_amount` DECIMAL(18, 2) NOT NULL DEFAULT 0.00,
+    `tax_amount` DECIMAL(18, 2) NOT NULL DEFAULT 0.00,
+    `attendance_days` INTEGER NOT NULL DEFAULT 0,
+    `payroll_work_days` INTEGER NULL,
+    `payroll_start_date` DATE NULL,
+    `payroll_end_date` DATE NULL,
+    `calculation_metadata` JSON NULL,
     `total_deductions` DECIMAL(18, 2) NOT NULL DEFAULT 0.00,
     `net_amount` DECIMAL(18, 2) NOT NULL DEFAULT 0.00,
     `payment_date` DATE NOT NULL,
@@ -401,7 +435,11 @@ CREATE TABLE `Payment_batches` (
     `payroll_year` INTEGER NOT NULL,
     `total_employees` INTEGER NOT NULL DEFAULT 0,
     `total_amount` DECIMAL(18, 2) NOT NULL DEFAULT 0.00,
-    `status` ENUM('PENDING', 'IN_REVIEW', 'APPROVED', 'REJECTED') NOT NULL,
+    `total_gross` DECIMAL(18, 2) NOT NULL DEFAULT 0.00,
+    `total_allowances` DECIMAL(18, 2) NOT NULL DEFAULT 0.00,
+    `total_deductions` DECIMAL(18, 2) NOT NULL DEFAULT 0.00,
+    `total_tax` DECIMAL(18, 2) NOT NULL DEFAULT 0.00,
+    `status` ENUM('PENDING', 'IN_REVIEW', 'MANAGER_APPROVED', 'APPROVED', 'REJECTED') NOT NULL,
     `current_approval_step` INTEGER NOT NULL DEFAULT 1,
     `rejected_reason` TEXT NULL,
     `submitted_by` BIGINT NOT NULL,
@@ -441,7 +479,7 @@ CREATE TABLE `Payment_batch_items` (
     `payment_batch_id` BIGINT NOT NULL,
     `employee_id` BIGINT NOT NULL,
     `transaction_id` BIGINT NOT NULL,
-    `status` ENUM('PENDING', 'IN_REVIEW', 'APPROVED', 'REJECTED') NOT NULL,
+    `status` ENUM('PENDING', 'IN_REVIEW', 'MANAGER_APPROVED', 'APPROVED', 'REJECTED') NOT NULL,
     `rejection_reason` TEXT NULL,
     `approved_by` BIGINT NULL,
     `approved_at` DATETIME(3) NULL,
@@ -715,6 +753,9 @@ ALTER TABLE `Employee_history` ADD CONSTRAINT `Employee_history_approved_by_fkey
 
 -- AddForeignKey
 ALTER TABLE `Payment_structures` ADD CONSTRAINT `Payment_structures_employee_id_fkey` FOREIGN KEY (`employee_id`) REFERENCES `Employees`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `Allowances` ADD CONSTRAINT `Allowances_employee_id_fkey` FOREIGN KEY (`employee_id`) REFERENCES `Employees`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE `Employee_deductions` ADD CONSTRAINT `Employee_deductions_employee_id_fkey` FOREIGN KEY (`employee_id`) REFERENCES `Employees`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;

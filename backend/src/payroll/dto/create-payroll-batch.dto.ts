@@ -4,6 +4,7 @@ import {
   IsEnum,
   IsInt,
   IsNotEmpty,
+  IsOptional,
   IsString,
   Max,
   Min,
@@ -28,4 +29,17 @@ export class CreatePayrollBatchDto {
 
   @IsEnum(PAYMENT_METHOD)
   payment_method: PAYMENT_METHOD;
+
+  @IsOptional()
+  @IsDateString()
+  start_date?: string;
+
+  @IsOptional()
+  @IsDateString()
+  end_date?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  work_days?: number;
 }

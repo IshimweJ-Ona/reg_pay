@@ -1,9 +1,9 @@
 import { IsNotEmpty, IsOptional, IsString } from 'class-validator';
 
 export class CreateDepartmentDto {
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  working_location_id: string;
+  working_location_id?: string;
 
   @IsString()
   @IsNotEmpty()
