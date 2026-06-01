@@ -36,6 +36,9 @@ export class OrganizationService {
     dto: CreateWorkingLocationDto,
     actor: CurrentUserType,
   ) {
+    if (!actor.roles.includes('SUPER_ADMIN')) {
+      throw new BadRequestException('Only SUPER_ADMIN can create working locations.');
+    }
     if (dto.type === WORKING_LOCATION_TYPE.HQ) {
       const existingHq = await this.prisma.working_locations.findFirst({
         where: {
@@ -147,23 +150,78 @@ export class OrganizationService {
     return result;
   }
 
+  async updateWorkingLocation(
+    uuid: string,
+    dto: CreateWorkingLocationDto,
+    actor: CurrentUserType,
+  ) {
+    if (!actor.roles.includes('SUPER_ADMIN')) {
+      throw new BadRequestException('Only a system administrator can update branches.');
+    }
+
+    const current = await this.prisma.working_locations.findFirst({
+      where: { uuid, deleted_at: null },
+    });
+
+    if (!current) {
+      throw new NotFoundException('Branch not found.');
+    }
+
+    if (dto.type === WORKING_LOCATION_TYPE.HQ && current.type !== WORKING_LOCATION_TYPE.HQ) {
+      const existingHq = await this.prisma.working_locations.findFirst({
+        where: { type: WORKING_LOCATION_TYPE.HQ, deleted_at: null },
+        select: { id: true },
+      });
+
+      if (existingHq) {
+        throw new BadRequestException('Only one headquarters branch can exist.');
+      }
+    }
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const saved = await tx.working_locations.update({
+        where: { id: current.id },
+        data: {
+          name: dto.name,
+          type: dto.type,
+          address: dto.address,
+          updated_by: BigInt(actor.userId),
+        },
+      });
+
+      await tx.audit_logs.create({
+        data: {
+          user_id: BigInt(actor.userId),
+          entity_table: 'working_locations',
+          entity_id: saved.id,
+          module_name: 'ORGANIZATION',
+          activity_type: ACTIVITY_TYPE.UPDATE,
+          activity_description: 'Updated branch details.',
+          action: AUDIT_ACTION.UPDATED,
+          new_values: { name: saved.name, type: saved.type, address: saved.address },
+        },
+      });
+
+      return saved;
+    });
+
+    await this.cacheManager.del('working_locations');
+    return this.serializeWorkingLocation(updated);
+  }
+
   async createDepartment(dto: CreateDepartmentDto, actor: CurrentUserType) {
-    if (!actor.roles.some((role) => ['SUPER_ADMIN', 'ADMIN'].includes(role))) {
+    if (!actor.roles.includes('SUPER_ADMIN')) {
       throw new BadRequestException(
-        'Only admins can create global departments.',
+        'Only SUPER_ADMIN can create global departments.',
       );
     }
 
-    const targetLocations = dto.working_location_id
-      ? [
-          await this.resolveWorkingLocationId(dto.working_location_id),
-        ]
-      : (
-          await this.prisma.working_locations.findMany({
-            where: { deleted_at: null },
-            select: { id: true },
-          })
-        ).map((location) => location.id);
+    const targetLocations = (
+      await this.prisma.working_locations.findMany({
+        where: { deleted_at: null },
+        select: { id: true },
+      })
+    ).map((location) => location.id);
 
     if (!targetLocations.length) {
       throw new BadRequestException(
@@ -194,7 +252,7 @@ export class OrganizationService {
 
       if (!created.length) {
         throw new BadRequestException(
-          'Department already exists in the selected working locations.',
+          'Department already exists in all working locations.',
         );
       }
 
@@ -205,10 +263,9 @@ export class OrganizationService {
           entity_id: created[0].id,
           module_name: 'ORGANIZATION',
           activity_type: ACTIVITY_TYPE.CREATE,
-          activity_description: 'Created global department across working locations.',
+          activity_description: 'Created global department across all working locations.',
           action: AUDIT_ACTION.CREATED,
           new_values: {
-            working_location_ids: targetLocations.map((id) => id.toString()),
             code: dto.code,
             name: dto.name,
           },
@@ -276,11 +333,62 @@ export class OrganizationService {
     return result;
   }
 
+  async updateDepartment(
+    uuid: string,
+    dto: CreateDepartmentDto,
+    actor: CurrentUserType,
+  ) {
+    if (!actor.roles.includes('SUPER_ADMIN')) {
+      throw new BadRequestException('Only a system administrator can update departments.');
+    }
+
+    const current = await this.prisma.departments.findUnique({
+      where: { uuid },
+    });
+
+    if (!current) {
+      throw new NotFoundException('Department not found.');
+    }
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      await tx.departments.updateMany({
+        where: { code: current.code, status: 'ACTIVE' },
+        data: { name: dto.name, code: dto.code, description: dto.description },
+      });
+
+      const saved = await tx.departments.findUniqueOrThrow({
+        where: { id: current.id },
+        include: { working_location: true },
+      });
+
+      await tx.audit_logs.create({
+        data: {
+          user_id: BigInt(actor.userId),
+          entity_table: 'departments',
+          entity_id: saved.id,
+          module_name: 'ORGANIZATION',
+          activity_type: ACTIVITY_TYPE.UPDATE,
+          activity_description: 'Updated department details.',
+          action: AUDIT_ACTION.UPDATED,
+          new_values: { code: saved.code, name: saved.name },
+        },
+      });
+
+      return saved;
+    });
+
+    await this.cacheManager.del('working_locations');
+    return this.serializeDepartment(updated);
+  }
+
   async assignBranchManager(
     workingLocationUuid: string,
     dto: AssignManagerDto,
     actor: CurrentUserType,
   ) {
+    if (!actor.roles.includes('SUPER_ADMIN')) {
+      throw new BadRequestException('Only SUPER_ADMIN can assign branch managers.');
+    }
     const userId = await this.resolveUserId(dto.user_id);
 
     const branch = await this.prisma.working_locations.findFirst({
@@ -547,7 +655,7 @@ export class OrganizationService {
 
   private toBigInt(value: string, fieldName: string): bigint {
     if (!/^\d+$/.test(value)) {
-      throw new BadRequestException(`${fieldName} must be a numeric id.`);
+      throw new BadRequestException(`Please choose a valid ${fieldName.replace('_', ' ')}.`);
     }
 
     return BigInt(value);

@@ -44,9 +44,12 @@ model Notifications {
   id BigInt @id @default(autoincrement())
   uuid String @unique @db.Char(36)
 
-  user_id BigInt? // Recipient (null for all admins)
+  user_id BigInt? // Recipient (null for all admins or role-based)
   sender_id BigInt? // Who triggered the notification
   
+  target_role String? @db.VarChar(50) // Role that should see this
+  target_department_id BigInt? // Department that should see this
+
   title String @db.VarChar(150)
   message String @db.Text
   
@@ -326,6 +329,8 @@ model Users {
 
   roles User_roles[]
   user_permissions User_permissions[]
+  permission_overrides User_permission_overrides[]
+  permission_overrides_changed User_permission_overrides[] @relation("PermissionOverrideChangedBy")
   permissions_granted User_permissions[] @relation("PermissionGrantedBy")
   user_departments User_departments[]
 
@@ -372,6 +377,7 @@ model Users {
   @@index([status], name: "idx_user_status")
   @@index([first_name], name: "idx_user_first_name")
   @@index([last_name], name: "idx_user_last_name")
+  @@index([uuid], name: "idx_user_uuid")
 }
 
 /* =========================================================
@@ -415,6 +421,7 @@ model Roles {
   workflow_steps Approval_workflow_steps[]
 
   @@index([level_order], name: "idx_role_level")
+  @@index([uuid], name: "idx_role_uuid")
 }
 
 /* =========================================================
@@ -452,6 +459,7 @@ model Permissions {
 
   role_permissions Role_permissions[]
   user_permissions User_permissions[]
+  user_permission_overrides User_permission_overrides[]
 
   @@index([module_name], name: "idx_permission_module")
 }
@@ -492,6 +500,35 @@ model User_permissions {
   @@unique([user_id, permission_id])
   @@index([user_id], name: "idx_user_permission_user")
   @@index([permission_id], name: "idx_user_permission_permission")
+}
+
+/* =========================================================
+   USER PERMISSION OVERRIDES
+========================================================= */
+
+model User_permission_overrides {
+  id BigInt @id @default(autoincrement())
+  uuid String @unique @db.Char(36)
+
+  user_id BigInt
+  permission_id BigInt
+
+  is_allowed Boolean @default(true)
+
+  changed_by BigInt?
+  reason String? @db.Text
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  user Users @relation(fields: [user_id], references: [id])
+  permission Permissions @relation(fields: [permission_id], references: [id])
+  changedBy Users? @relation("PermissionOverrideChangedBy", fields: [changed_by], references: [id])
+
+  @@unique([user_id, permission_id])
+  @@index([user_id], name: "idx_user_permission_override_user")
+  @@index([permission_id], name: "idx_user_permission_override_permission")
+  @@index([is_allowed], name: "idx_user_permission_override_allowed")
 }
 
 /* =========================================================
@@ -580,6 +617,8 @@ model Employees {
   @@index([email], name: "idx_employee_email")
   @@index([phone_number], name: "idx_employee_phone")
   @@index([national_id], name: "idx_employee_national_id")
+  @@index([deleted_at], name: "idx_employee_deleted_at")
+  @@index([uuid], name: "idx_employee_uuid")
 }
 
 /* =========================================================
@@ -788,7 +827,7 @@ model Time_records {
 
   approvedBy Users? @relation("TimeRecordApprovedBy", fields: [approved_by], references: [id])
 
-  @@index([employee_id, attendance_date], name: "idx_time_employee_date")
+  @@unique([employee_id, attendance_date], name: "employee_id_attendance_date")
 }
 
 /* =========================================================

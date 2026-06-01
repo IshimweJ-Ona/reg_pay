@@ -154,4 +154,14 @@ export class PaymentStructuresController {
   ) {
     return this.paymentStructuresService.deactivateAllowance(uuid, actor);
   }
+
+  @Permissions('payment-structures.update')
+  @Patch('allowances/:uuid')
+  updateAllowance(
+    @Param('uuid') uuid: string,
+    @Body() dto: Partial<CreateAllowanceDto>,
+    @CurrentUser() actor: CurrentUserType,
+  ) {
+    return this.paymentStructuresService.updateAllowance(uuid, dto, actor);
+  }
 }

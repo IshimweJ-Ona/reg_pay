@@ -27,7 +27,7 @@ export class PaymentStructuresService {
 
   private toBigInt(value: string, fieldName: string): bigint {
     if (!/^\d+$/.test(value)) {
-      throw new BadRequestException(`${fieldName} must be a numeric id.`);
+      throw new BadRequestException(`Please choose a valid ${fieldName.replace('_', ' ')}.`);
     }
     return BigInt(value);
   }
@@ -227,15 +227,26 @@ export class PaymentStructuresService {
       throw new BadRequestException('Deduction type already exists.');
     }
 
-    const created = await this.prisma.deduction_types.create({
-      data: {
-        uuid: generateUUID(),
-        name: dto.name,
-        deduction_mode: dto.deduction_mode,
-        amount: dto.amount ?? '0',
-        percentage_value: dto.percentage_value ?? '0',
-        is_mandatory: dto.is_mandatory ?? false,
-      },
+    const created = await this.prisma.$transaction(async (tx) => {
+      const deductionType = await tx.deduction_types.create({
+        data: {
+          uuid: generateUUID(),
+          name: dto.name,
+          deduction_mode: dto.deduction_mode,
+          amount: dto.amount ?? '0',
+          percentage_value: dto.percentage_value ?? '0',
+          is_mandatory: dto.is_mandatory ?? false,
+        },
+      });
+
+      if (deductionType.is_mandatory) {
+        await this.applyMandatoryDeductionTypeFromNextMonth(
+          tx,
+          deductionType.id,
+        );
+      }
+
+      return deductionType;
     });
 
     return this.serializeDeductionType(created);
@@ -262,12 +273,60 @@ export class PaymentStructuresService {
       throw new NotFoundException('Deduction type not found.');
     }
 
-    const updated = await this.prisma.deduction_types.update({
-      where: { id: existing.id },
-      data: dto,
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const deductionType = await tx.deduction_types.update({
+        where: { id: existing.id },
+        data: dto,
+      });
+
+      if (dto.is_mandatory === true && !existing.is_mandatory) {
+        await this.applyMandatoryDeductionTypeFromNextMonth(
+          tx,
+          deductionType.id,
+        );
+      }
+
+      return deductionType;
     });
 
     return this.serializeDeductionType(updated);
+  }
+
+  private async applyMandatoryDeductionTypeFromNextMonth(
+    tx: any,
+    deductionTypeId: bigint,
+  ) {
+    const now = new Date();
+    const startDate = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1),
+    );
+    const employees = await tx.employees.findMany({
+      where: { status: 'ACTIVE', deleted_at: null },
+      select: { id: true },
+    });
+
+    for (const employee of employees) {
+      const existing = await tx.employee_deductions.findFirst({
+        where: {
+          employee_id: employee.id,
+          deduction_type_id: deductionTypeId,
+          is_active: true,
+        },
+        select: { id: true },
+      });
+
+      if (existing) continue;
+
+      await tx.employee_deductions.create({
+        data: {
+          uuid: generateUUID(),
+          employee_id: employee.id,
+          deduction_type_id: deductionTypeId,
+          start_date: startDate,
+          is_active: true,
+        },
+      });
+    }
   }
 
   /* =====================================================
@@ -378,6 +437,40 @@ export class PaymentStructuresService {
         module_name: 'PAYMENT_STRUCTURES',
         activity_type: ACTIVITY_TYPE.UPDATE,
         activity_description: 'Deactivated employee allowance.',
+        action: AUDIT_ACTION.UPDATED,
+      },
+    });
+
+    return this.serializeAllowance(updated);
+  }
+
+  async updateAllowance(uuid: string, dto: Partial<CreateAllowanceDto>, actor: CurrentUserType) {
+    const existing = await this.prisma.allowances.findUnique({
+      where: { uuid },
+    });
+
+    if (!existing) {
+      throw new NotFoundException('Allowance not found.');
+    }
+
+    const updated = await this.prisma.allowances.update({
+      where: { id: existing.id },
+      data: {
+        title: dto.title,
+        amount: dto.amount,
+        description: dto.description,
+      },
+    });
+
+    await this.prisma.audit_logs.create({
+      data: {
+        user_id: BigInt(actor.userId),
+        employee_id: existing.employee_id,
+        entity_table: 'allowances',
+        entity_id: existing.id,
+        module_name: 'PAYMENT_STRUCTURES',
+        activity_type: ACTIVITY_TYPE.UPDATE,
+        activity_description: 'Updated employee allowance.',
         action: AUDIT_ACTION.UPDATED,
       },
     });

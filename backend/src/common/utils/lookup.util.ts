@@ -10,6 +10,6 @@ export function normalizeSearch(value?: string) {
 
 export function requireUuidOrNumeric(value: string, fieldName: string) {
   if (!value || (!isNumericId(value) && value.length < 16)) {
-    throw new BadRequestException(`${fieldName} must be a uuid or numeric id.`);
+    throw new BadRequestException(`Please choose a valid ${fieldName.replace('_', ' ')}.`);
   }
 }

@@ -97,6 +97,9 @@ export class AuthService {
       : null;
 
     // Create notification for the local manager when available; otherwise HQ admins receive it.
+    // For registration, we don't know the manager's UUID yet easily here without a query, 
+    // but the notification bell in frontend can handle mapping relative paths.
+    // However, to be safe and consistent with the user's request:
     await this.prisma.notifications.create({
       data: {
         uuid: generateUUID(),
@@ -106,7 +109,7 @@ export class AuthService {
         type: 'REGISTRATION_REQUEST',
         reference_id: user.uuid,
         metadata: {
-          redirect: '/admin/admin/users',
+          redirect: 'users', // Use relative or tokenized paths
           level: localApprover ? 'MANAGER' : 'ADMIN',
         },
       },
@@ -179,24 +182,21 @@ export class AuthService {
     await this.writeLoginAudit(user.id, context.ipAddress, true);
 
     const roles = user.roles.map((r) => r.role.name);
-    const isAdmin = roles.some((role) =>
-      [
-        'SUPER_ADMIN',
-        'ADMIN',
-        'MANAGER',
-        'ON_MANAGER',
-        'ACCOUNTANT',
-        'HR',
-        'ATTENDANT',
-        'HR_ADMIN',
-        'HR_MANAGER',
-        'FINANCE',
-        'BRANCH_MANAGER',
-        'HQ_MANAGER',
-      ].includes(role),
-    );
     
-    let redirectUrl = isAdmin ? `/admin/admin` : `/users/users`;
+    let rolePath = 'users';
+    if (roles.includes('SUPER_ADMIN')) {
+      rolePath = 'super_admin';
+    } else if (roles.includes('BRANCH_MANAGER') || roles.includes('MANAGER') || roles.includes('ON_MANAGER')) {
+      rolePath = 'manager';
+    } else if (roles.includes('HR') || roles.includes('HR_MANAGER') || roles.includes('HR_ADMIN')) {
+      rolePath = 'hr';
+    } else if (roles.includes('ACCOUNTANT') || roles.includes('FINANCE')) {
+      rolePath = 'finance';
+    } else if (roles.includes('ATTENDANT')) {
+      rolePath = 'attendant';
+    }
+
+    let redirectUrl = `/${rolePath}/${user.uuid}`;
     
     if (user.status === STATUS_USER.PENDING) {
       redirectUrl = `/auth/pending/${user.uuid}`;
@@ -349,6 +349,7 @@ export class AuthService {
         working_location: true,
         department: true,
         user_permissions: { include: { permission: true, grantedBy: true } },
+        permission_overrides: { include: { permission: true } },
         roles: {
           include: {
             role: {
@@ -470,11 +471,30 @@ export class AuthService {
       });
     }
 
+    for (const override of user.permission_overrides ?? []) {
+      const permissionKey = override.permission?.permission_key;
+      if (!permissionKey) continue;
+
+      if (override.is_allowed) {
+        permissionMap.set(permissionKey, {
+          uuid: override.permission.uuid,
+          key: permissionKey,
+          name: override.permission.name,
+          module_name: override.permission.module_name,
+          source: 'override',
+          granted_at: override.updated_at,
+          granted_by: null,
+        });
+      } else {
+        permissionMap.delete(permissionKey);
+      }
+    }
+
     return Array.from(permissionMap.values());
   }
 
   private async loadUserRbac(userId: bigint) {
-    const [user, userRoles, userPermissions, activeBranchManager] =
+    const [user, userRoles, userPermissions, permissionOverrides, activeBranchManager] =
       await Promise.all([
         this.prisma.users.findUnique({ where: { id: userId } }),
         this.prisma.user_roles.findMany({
@@ -490,6 +510,10 @@ export class AuthService {
           },
         }),
         this.prisma.user_permissions.findMany({
+          where: { user_id: userId },
+          include: { permission: true },
+        }),
+        this.prisma.user_permission_overrides.findMany({
           where: { user_id: userId },
           include: { permission: true },
         }),
@@ -516,6 +540,13 @@ export class AuthService {
     }
     for (const userPermission of userPermissions) {
       permissions.add(userPermission.permission.permission_key);
+    }
+    for (const override of permissionOverrides) {
+      if (override.is_allowed) {
+        permissions.add(override.permission.permission_key);
+      } else {
+        permissions.delete(override.permission.permission_key);
+      }
     }
 
     return {

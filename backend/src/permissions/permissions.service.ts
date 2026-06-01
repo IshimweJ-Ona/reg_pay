@@ -355,7 +355,7 @@ export class PermissionsService {
 
   private toBigInt(value: string, fieldName: string): bigint {
     if (!/^\d+$/.test(value)) {
-      throw new BadRequestException(`${fieldName} must be a numeric id.`);
+      throw new BadRequestException(`Please choose a valid ${fieldName.replace('_', ' ')}.`);
     }
 
     return BigInt(value);

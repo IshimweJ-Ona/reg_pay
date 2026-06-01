@@ -25,7 +25,7 @@ export class OrganizationController {
   constructor(private readonly organizationService: OrganizationService) {}
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
-  @Roles('SUPER_ADMIN', 'ADMIN')
+  @Roles('SUPER_ADMIN')
   @Permissions('branches.manage')
   @Post('working-locations')
   createWorkingLocation(
@@ -41,7 +41,19 @@ export class OrganizationController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
-  @Roles('SUPER_ADMIN', 'ADMIN', 'BRANCH_MANAGER')
+  @Roles('SUPER_ADMIN')
+  @Permissions('branches.manage')
+  @Patch('working-locations/:uuid')
+  updateWorkingLocation(
+    @Param('uuid') uuid: string,
+    @Body() dto: CreateWorkingLocationDto,
+    @CurrentUser() actor: CurrentUserType,
+  ) {
+    return this.organizationService.updateWorkingLocation(uuid, dto, actor);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
+  @Roles('SUPER_ADMIN')
   @Permissions('departments.manage')
   @Post('departments')
   createDepartment(
@@ -60,7 +72,19 @@ export class OrganizationController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
-  @Roles('SUPER_ADMIN', 'ADMIN')
+  @Roles('SUPER_ADMIN')
+  @Permissions('departments.manage')
+  @Patch('departments/:uuid')
+  updateDepartment(
+    @Param('uuid') uuid: string,
+    @Body() dto: CreateDepartmentDto,
+    @CurrentUser() actor: CurrentUserType,
+  ) {
+    return this.organizationService.updateDepartment(uuid, dto, actor);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
+  @Roles('SUPER_ADMIN')
   @Permissions('branches.manage')
   @Patch('working-locations/:uuid/manager')
   assignBranchManager(

@@ -21,6 +21,7 @@ import { RegisterDto } from '../auth/dto/register.dto';
 import { ApproveUserDto } from './dto/approve-user.dto';
 import { AssignUserRolesDto } from './dto/assign-user-roles.dto';
 import { RejectUserDto } from './dto/reject-user.dto';
+import { UpdateUserPermissionOverrideDto } from './dto/update-user-permission-override.dto';
 import { UsersService } from './users.service';
 
 @Controller('users')
@@ -97,6 +98,24 @@ export class UsersController {
     @CurrentUser() actor: CurrentUserType,
   ) {
     return this.usersService.assignRoles(uuid, dto.role_ids, actor);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
+  @Roles('SUPER_ADMIN')
+  @Permissions('users.update')
+  @Patch(':uuid/permissions/:permission/override')
+  updatePermissionOverride(
+    @Param('uuid') uuid: string,
+    @Param('permission') permission: string,
+    @Body() dto: UpdateUserPermissionOverrideDto,
+    @CurrentUser() actor: CurrentUserType,
+  ) {
+    return this.usersService.updatePermissionOverride(
+      uuid,
+      permission,
+      dto,
+      actor,
+    );
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)

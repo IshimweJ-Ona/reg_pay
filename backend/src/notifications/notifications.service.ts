@@ -55,10 +55,9 @@ export class NotificationsService {
     }
   }
 
-  async findAll(userId?: string) {
+  private async getNotificationWhere(userId?: string) {
     const where: any = {};
     if (userId) {
-      // Show user-specific notifications OR global admin notifications if user is admin
       const user = await this.prisma.users.findUnique({
         where: { uuid: userId },
         include: { roles: { include: { role: true } } },
@@ -67,15 +66,29 @@ export class NotificationsService {
       const roles = user?.roles.map(r => r.role.name) || [];
       const isAdmin = roles.includes('ADMIN') || roles.includes('SUPER_ADMIN');
 
+      const orConditions: any[] = [
+        { user_id: user?.id },
+      ];
+
       if (isAdmin) {
-        where.OR = [
-          { user_id: user?.id },
-          { user_id: null }
-        ];
-      } else {
-        where.user_id = user?.id;
+        orConditions.push({ user_id: null });
       }
+
+      if (roles.length > 0) {
+        orConditions.push({ target_role: { in: roles } });
+      }
+
+      if (user?.department_id) {
+        orConditions.push({ target_department_id: user.department_id });
+      }
+
+      where.OR = orConditions;
     }
+    return where;
+  }
+
+  async findAll(userId?: string) {
+    const where = await this.getNotificationWhere(userId);
 
     const notifications = await this.prisma.notifications.findMany({
       where,
@@ -130,23 +143,32 @@ export class NotificationsService {
     );
   }
 
-  async findUnreadCount() {
+  async findUnreadCount(userUuid?: string) {
+    const baseWhere = await this.getNotificationWhere(userUuid);
+    const where = { ...baseWhere, is_read: false };
+
     return this.prisma.notifications.count({
-      where: { is_read: false },
+      where,
     });
   }
 
-  async markAsRead(uuid: string) {
-    await this.prisma.notifications.update({
-      where: { uuid },
+  async markAsRead(uuid: string, userUuid?: string) {
+    const baseWhere = await this.getNotificationWhere(userUuid);
+    const where = { ...baseWhere, uuid };
+
+    await this.prisma.notifications.updateMany({
+      where,
       data: { is_read: true },
     });
     return { message: 'Notification marked as read' };
   }
 
-  async markAllAsRead() {
+  async markAllAsRead(userUuid?: string) {
+    const baseWhere = await this.getNotificationWhere(userUuid);
+    const where = { ...baseWhere, is_read: false };
+
     await this.prisma.notifications.updateMany({
-      where: { is_read: false },
+      where,
       data: { is_read: true },
     });
     return { message: 'All notifications marked as read' };

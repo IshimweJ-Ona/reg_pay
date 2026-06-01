@@ -16,7 +16,7 @@ import { UpdateTimeRecordDto } from './dto/update-time-record.dto';
 @Injectable()
 export class TimeRecordsService {
   private readonly overtimeThresholdHours = Number(
-    process.env.OVERTIME_THRESHOLD_HOURS ?? 8,
+    process.env.OVERTIME_THRESHOLD_HOURS ?? 1,
   );
 
   constructor(private readonly prisma: PrismaService) {}
@@ -263,7 +263,7 @@ export class TimeRecordsService {
 
   private toBigInt(value: string, fieldName: string): bigint {
     if (!/^\d+$/.test(value)) {
-      throw new BadRequestException(`${fieldName} must be a numeric id.`);
+      throw new BadRequestException(`Please choose a valid ${fieldName.replace('_', ' ')}.`);
     }
 
     return BigInt(value);

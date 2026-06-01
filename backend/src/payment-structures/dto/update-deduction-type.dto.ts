@@ -21,6 +21,10 @@ export class UpdateDeductionTypeDto {
   amount?: string;
 
   @IsOptional()
+  @IsDecimal()
+  percentage_value?: string;
+
+  @IsOptional()
   @IsBoolean()
   is_mandatory?: boolean;
 }

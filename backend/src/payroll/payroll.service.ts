@@ -24,6 +24,7 @@ import {
 import { generateUUID } from '../common/utils/uuid.util';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { SystemConfigService } from '../system-config/system-config.service';
 import { ApprovePayrollItemDto } from './dto/approve-payroll-item.dto';
 import { CreatePayrollBatchDto } from './dto/create-payroll-batch.dto';
 import { RejectPayrollItemDto } from './dto/reject-payroll-item.dto';
@@ -49,6 +50,7 @@ export class PayrollService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
+    private readonly systemConfigService: SystemConfigService,
     @Inject(CACHE_MANAGER) private cacheManager: cacheManager.Cache,
   ) {}
 
@@ -207,7 +209,7 @@ export class PayrollService {
       type: 'PAYROLL_APPROVAL_REQUEST',
       referenceId: batch.uuid,
       metadata: {
-        redirect: `/admin/admin/payroll/${batch.uuid}`,
+        redirect: `payroll/${batch.uuid}`,
         level: 'MANAGER',
         status: batch.status,
       },
@@ -433,7 +435,7 @@ export class PayrollService {
         type: 'PAYROLL_APPROVAL_REQUEST',
         referenceId: approved.uuid,
         metadata: {
-          redirect: `/admin/admin/payroll/${approved.uuid}`,
+          redirect: `payroll/${approved.uuid}`,
           level: 'ADMIN',
           status: approved.status,
         },
@@ -447,7 +449,7 @@ export class PayrollService {
         type: 'PAYROLL_APPROVED',
         referenceId: approved.uuid,
         metadata: {
-          redirect: `/admin/admin/payroll/${approved.uuid}`,
+          redirect: `payroll/${approved.uuid}`,
           status: approved.status,
         },
       });
@@ -529,7 +531,7 @@ export class PayrollService {
       type: 'PAYROLL_REJECTED',
       referenceId: rejected.uuid,
       metadata: {
-        redirect: `/admin/admin/payroll/${rejected.uuid}`,
+        redirect: `payroll/${rejected.uuid}`,
         reason: dto.rejection_reason,
       },
     });
@@ -602,41 +604,47 @@ export class PayrollService {
 
     const requestedWorkDays =
       dto.work_days ?? paymentStructure.custom_work_days ?? presentDays;
-    const daysAfterPayrollStart = employee.hire_date
-      ? this.diffCalendarDays(periodStart, employee.hire_date)
-      : 0;
-    const effectiveFrequency =
-      paymentStructure.payroll_frequency === EMPLOYMENT_TYPE.MONTHLY &&
-      daysAfterPayrollStart > 8
-        ? EMPLOYMENT_TYPE.DAILY
-        : paymentStructure.payroll_frequency;
+    
+    // Determine days worked for eligibility
+    const daysWorked = paymentStructure.payroll_frequency === EMPLOYMENT_TYPE.MONTHLY 
+      ? presentDays 
+      : (paymentStructure.payroll_frequency === EMPLOYMENT_TYPE.CUSTOM ? requestedWorkDays : presentDays);
+    
+    const isOver21Days = daysWorked > 21;
+
     const periodCalendarDays = Math.max(
       1,
       this.diffCalendarDays(periodStart, periodEnd) + 1,
     );
 
     let baseAmount = 0;
-
     const effectiveDailyRate =
       Number(paymentStructure.daily_rate) > 0
         ? Number(paymentStructure.daily_rate)
         : Number(paymentStructure.basic_salary) / periodCalendarDays;
 
-    if (effectiveFrequency === EMPLOYMENT_TYPE.MONTHLY) {
-      baseAmount = Number(paymentStructure.basic_salary);
-    } else if (effectiveFrequency === EMPLOYMENT_TYPE.CUSTOM) {
-      const customDays = Math.max(requestedWorkDays, 1);
-      baseAmount = effectiveDailyRate * customDays;
+    if (paymentStructure.payroll_frequency === EMPLOYMENT_TYPE.MONTHLY) {
+      if (isOver21Days) {
+        baseAmount = Number(paymentStructure.basic_salary);
+      } else {
+        baseAmount = effectiveDailyRate * presentDays;
+      }
+    } else if (paymentStructure.payroll_frequency === EMPLOYMENT_TYPE.CUSTOM) {
+      if (isOver21Days) {
+        baseAmount = Number(paymentStructure.basic_salary) || (effectiveDailyRate * requestedWorkDays);
+      } else {
+        baseAmount = effectiveDailyRate * requestedWorkDays;
+      }
     } else {
+      // DAILY
       baseAmount = effectiveDailyRate * presentDays;
     }
 
     const overtimeAmount =
       Number(paymentStructure.overtime_rate) * overtimeHours;
-    const allowanceEligible =
-      effectiveFrequency === EMPLOYMENT_TYPE.MONTHLY ||
-      (effectiveFrequency === EMPLOYMENT_TYPE.CUSTOM &&
-        (requestedWorkDays ?? 0) > 21);
+    
+    // Allowance only if > 21 days
+    const allowanceEligible = isOver21Days;
     const allowances = allowanceEligible
       ? await this.prisma.allowances.findMany({
           where: { employee_id: employee.id, is_active: true },
@@ -669,12 +677,15 @@ export class PayrollService {
 
       return sum + Number(deduction.deduction_type.amount);
     }, 0);
-    const taxExempt =
-      effectiveFrequency === EMPLOYMENT_TYPE.CUSTOM &&
-      (requestedWorkDays ?? 0) < 21;
-    const taxAmount = taxExempt
-      ? 0
-      : grossAmount * (Number(paymentStructure.tax_percentage) / 100);
+
+    // Global Tax logic
+    let taxAmount = 0;
+    if (isOver21Days) {
+      const globalTaxRateConfig = await this.systemConfigService.findByKey('GLOBAL_TAX_RATE').catch(() => ({ value: '15' }));
+      const taxRate = Number(globalTaxRateConfig.value) || 15;
+      taxAmount = grossAmount * (taxRate / 100);
+    }
+
     const totalDeductions = configuredDeductions + taxAmount;
     const netAmount = Math.max(0, grossAmount - totalDeductions);
 
@@ -686,21 +697,17 @@ export class PayrollService {
       taxAmount,
       attendanceDays: presentDays,
       payrollWorkDays:
-        effectiveFrequency === EMPLOYMENT_TYPE.CUSTOM ? requestedWorkDays : null,
+        paymentStructure.payroll_frequency === EMPLOYMENT_TYPE.CUSTOM ? requestedWorkDays : null,
       payrollStartDate: periodStart,
       payrollEndDate: periodEnd,
       metadata: {
         configured_frequency: paymentStructure.payroll_frequency,
-        effective_frequency: effectiveFrequency,
-        monthly_joiner_converted_to_daily:
-          paymentStructure.payroll_frequency === EMPLOYMENT_TYPE.MONTHLY &&
-          effectiveFrequency === EMPLOYMENT_TYPE.DAILY,
-        days_after_payroll_start: daysAfterPayrollStart,
+        days_worked: daysWorked,
+        is_over_21_days: isOver21Days,
         period_calendar_days: periodCalendarDays,
         overtime_hours: overtimeHours,
         allowance_eligible: allowanceEligible,
         allowance_titles: allowances.map((allowance) => allowance.title),
-        custom_tax_exempt: taxExempt,
       },
       grossAmount,
       totalDeductions,
@@ -918,7 +925,7 @@ export class PayrollService {
 
   private toBigInt(value: string, fieldName: string): bigint {
     if (!/^\d+$/.test(value)) {
-      throw new BadRequestException(`${fieldName} must be a numeric id.`);
+      throw new BadRequestException(`Please choose a valid ${fieldName.replace('_', ' ')}.`);
     }
 
     return BigInt(value);
