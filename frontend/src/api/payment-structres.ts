@@ -151,3 +151,8 @@ export const deactivateAllowance = async (uuid: string) => {
     const response = await api.patch(`/payment-structures/allowances/${uuid}/deactivate`);
     return response.data;
 };
+
+export const updateAllowance = async (uuid: string, payload: Partial<CreateAllowancePayload>) => {
+    const response = await api.patch(`/payment-structures/allowances/${uuid}`, payload);
+    return response.data;
+};

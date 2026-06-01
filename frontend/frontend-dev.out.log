@@ -1,0 +1,15 @@
+
+> frontend@0.1.0 dev
+> next dev --hostname localhost --port 3000
+
+▲ Next.js 16.2.6 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://localhost:3000
+- Environments: .env
+✓ Ready in 1273ms
+Creating turbopack project {
+  dir: 'C:\\Users\\siboa\\Music\\reg_pay\\reg_pay\\frontend',
+  testMode: true
+}
+
+[?25h

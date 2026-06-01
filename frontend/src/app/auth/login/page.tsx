@@ -139,29 +139,6 @@ export default function LoginPage() {
         <div className="absolute bottom-[20%] left-[10%] w-[30%] h-[30%] bg-red-500/10 rounded-full blur-[80px] animate-blob animation-delay-6000" />
       </div>
       
-      <style jsx global>{`
-        @keyframes blob {
-          0% { transform: translate(0px, 0px) scale(1); }
-          25% { transform: translate(100vw, 50vh) scale(1.2); }
-          50% { transform: translate(-50vw, 100vh) scale(0.8); }
-          75% { transform: translate(-100vw, -50vh) scale(1.1); }
-          100% { transform: translate(0px, 0px) scale(1); }
-        }
-        .animate-blob {
-          animation: blob 20s infinite linear;
-          opacity: 0.4;
-        }
-        .animation-delay-2000 {
-          animation-delay: -5s;
-        }
-        .animation-delay-4000 {
-          animation-delay: -10s;
-        }
-        .animation-delay-6000 {
-          animation-delay: -15s;
-        }
-      `}</style>
-      
       <div className="z-10 w-full max-w-[450px]">
         <div className="flex flex-col items-center mb-8">
           <div className="bg-white p-2 rounded-2xl shadow-xl mb-4 border-2 border-primary/10 overflow-hidden">
@@ -170,7 +147,7 @@ export default function LoginPage() {
               alt="REG Logo" 
               width={60} 
               height={60} 
-              className="object-contain"
+              className="h-[60px] w-[60px] object-contain"
             />
           </div>
           <h1 className="text-4xl font-headline font-bold mb-2">

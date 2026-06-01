@@ -124,3 +124,28 @@
   from { transform: rotate(0deg) translate(-25%, -25%); }
   to { transform: rotate(360deg) translate(-25%, -25%); }
 }
+
+@keyframes blob {
+  0% { transform: translate(0, 0) scale(1); }
+  25% { transform: translate(100vw, 50vh) scale(1.2); }
+  50% { transform: translate(-50vw, 100vh) scale(0.8); }
+  75% { transform: translate(-100vw, -50vh) scale(1.1); }
+  100% { transform: translate(0, 0) scale(1); }
+}
+
+.animate-blob {
+  animation: blob 20s infinite linear;
+  opacity: 0.4;
+}
+
+.animation-delay-2000 {
+  animation-delay: -5s;
+}
+
+.animation-delay-4000 {
+  animation-delay: -10s;
+}
+
+.animation-delay-6000 {
+  animation-delay: -15s;
+}

@@ -3,11 +3,11 @@
 
 import React from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useParams } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { 
-  LayoutDashboard, Users, Shield, MapPin, Building2, UserCircle, 
-  Calendar, CreditCard, FileText, Settings, LogOut, ShieldCheck
+  LayoutDashboard, Users, MapPin, Building2, UserCircle, 
+  Calendar, CreditCard, FileText, Settings, LogOut, ShieldCheck, Bell
 } from 'lucide-react';
 import { useAuth } from '@/context/auth-context';
 import { Button } from '@/components/ui/button';
@@ -21,27 +21,35 @@ interface SidebarProps {
 export function Sidebar({ type }: SidebarProps) {
   const [collapsed, setCollapsed] = React.useState(false);
   const pathname = usePathname();
+  const params = useParams();
   const { user, logout, hasPermission } = useAuth();
 
+  const role = params.role as string;
+  const uuid = params.uuid as string;
+  const basePath = `/${role}/${uuid}`;
+
   const adminMenuItems = [
-    { name: 'Dashboard', href: '/admin/admin', icon: LayoutDashboard },
-    { name: 'Users', href: '/admin/admin/users', icon: Users, permission: 'users.read' },
-    { name: 'RBAC Control', href: '/admin/admin/permissions', icon: Shield, permission: 'permissions.read' },
-    { name: 'Employees', href: '/admin/admin/employees', icon: UserCircle, permission: 'employees.read' },
-    { name: 'Working Locations', href: '/admin/admin/locations', icon: MapPin, permission: 'branches.manage' },
-    { name: 'Departments', href: '/admin/admin/departments', icon: Building2, permission: 'departments.manage' },
-    { name: 'Attendance', href: '/admin/admin/attendance', icon: Calendar, permission: 'attendance.read' },
-    { name: 'Payroll Engine', href: '/admin/admin/payroll', icon: FileText, permission: 'payroll.read' },
-    { name: 'Financial Setup', href: '/admin/admin/payments', icon: CreditCard, permission: 'payment-structures.read' },
-    { name: 'Profile', href: '/admin/admin/profile', icon: UserCircle },
-    { name: 'Settings', href: '/admin/admin/settings', icon: Settings },
+    { name: 'Dashboard', href: `${basePath}`, icon: LayoutDashboard },
+    { name: 'Users', href: `${basePath}/users`, icon: Users, permission: 'users.read' },
+    { name: 'Employees', href: `${basePath}/employees`, icon: UserCircle, permission: 'employees.read' },
+    { name: 'Branches', href: `${basePath}/locations`, icon: MapPin, permission: 'branches.manage' },
+    { name: 'Departments', href: `${basePath}/departments`, icon: Building2, permission: 'departments.manage' },
+    { name: 'Attendance', href: `${basePath}/attendance`, icon: Calendar, permission: 'attendance.read' },
+    { name: 'Payroll Engine', href: `${basePath}/payroll`, icon: FileText, permission: 'payroll.read' },
+    { name: 'Financial Setup', href: `${basePath}/payments`, icon: CreditCard, permission: 'payment-structures.read' },
+    { name: 'Notifications', href: `${basePath}/notifications`, icon: Bell },
+    { name: 'Profile', href: `${basePath}/profile`, icon: UserCircle },
+    { name: 'Settings', href: `${basePath}/settings`, icon: Settings },
   ];
 
   const userMenuItems = [
-    { name: 'Dashboard', href: '/users/users', icon: LayoutDashboard },
-    { name: 'My Payroll', href: '/users/users/payroll', icon: FileText, permission: 'payroll.read' },
-    { name: 'Attendance', href: '/users/users/attendance', icon: Calendar, permission: 'attendance.read' },
-    { name: 'Profile', href: '/users/users/profile', icon: UserCircle },
+    { name: 'Dashboard', href: `${basePath}`, icon: LayoutDashboard },
+    { name: 'Employees', href: `${basePath}/employees`, icon: UserCircle, permission: 'employees.read' },
+    { name: 'Team Access', href: `${basePath}/users`, icon: Users, permission: 'users.read' },
+    { name: 'My Payroll', href: `${basePath}/payroll`, icon: FileText, permission: 'payroll.read' },
+    { name: 'Attendance', href: `${basePath}/attendance`, icon: Calendar, permission: 'attendance.read' },
+    { name: 'Notifications', href: `${basePath}/notifications`, icon: Bell },
+    { name: 'Profile', href: `${basePath}/profile`, icon: UserCircle },
   ];
 
   const menuItems = type === 'admin' ? adminMenuItems : userMenuItems;

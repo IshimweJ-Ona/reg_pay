@@ -12,6 +12,7 @@ import {
   saveTokens,
 } from '@/api/auth';
 import { User, UserRole } from '@/types/auth';
+import { expandPermissions } from '@/lib/permissions';
 
 type RegisterInput = {
   first_name: string;
@@ -36,7 +37,7 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-function isAdminRole(role?: string) {
+export function isAdminRole(role?: string) {
   return [
     'SUPER_ADMIN',
     'ADMIN',
@@ -152,7 +153,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const hasPermission = (permission: string) => {
     if (!user) return false;
     if (user.roles?.some((role) => ['SUPER_ADMIN', 'ADMIN'].includes(role))) return true;
-    return user.permissions.includes(permission);
+    return expandPermissions(user.permissions).has(permission);
   };
 
   return (

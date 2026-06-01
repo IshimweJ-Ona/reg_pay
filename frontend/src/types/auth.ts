@@ -1,5 +1,19 @@
 
-export type UserRole = 'SUPER_ADMIN' | 'ADMIN' | 'HR_ADMIN' | 'HR_MANAGER' | 'FINANCE' | 'BRANCH_MANAGER' | 'HQ_MANAGER' | 'USER';
+export type UserRole =
+  | 'SUPER_ADMIN'
+  | 'ADMIN'
+  | 'HR'
+  | 'HR_ADMIN'
+  | 'HR_MANAGER'
+  | 'ACCOUNTANT'
+  | 'ATTENDANT'
+  | 'FINANCE'
+  | 'BRANCH_MANAGER'
+  | 'HQ_MANAGER'
+  | 'DEPARTMENT_MANAGER'
+  | 'MANAGER'
+  | 'ON_MANAGER'
+  | 'USER';
 
 export type UserStatus = 'PENDING' | 'APPROVED' | 'SUSPENDED' | 'REJECTED';
 
@@ -12,6 +26,11 @@ export interface User {
   roles?: string[];
   status: UserStatus;
   permissions: string[];
+  permission_overrides?: {
+    permission_id: string;
+    permission_key: string;
+    is_allowed: boolean;
+  }[];
   avatar?: string;
   department?: string;
   location?: string;

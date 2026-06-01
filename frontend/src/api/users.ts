@@ -19,8 +19,8 @@ export const createUser = async (payload: Partial<RegisterUserPayload>) => {
     return response.data;
 };
 
-export const getUsers = async () => {
-    const response = await api.get("/users");
+export const getUsers = async (q?: string) => {
+    const response = await api.get("/users", { params: { q } });
     return response.data;
 };
 
@@ -58,6 +58,18 @@ export const deleteUser = async (uuid: string) => {
 
 export const assignUserRoles = async (uuid: string, role_ids: string[]) => {
     const response = await api.patch(`/users/${uuid}/roles`, { role_ids });
+    return response.data;
+};
+
+export const updateUserPermissionOverride = async (
+    uuid: string,
+    permission: string,
+    is_allowed: boolean,
+) => {
+    const response = await api.patch(
+        `/users/${uuid}/permissions/${encodeURIComponent(permission)}/override`,
+        { is_allowed },
+    );
     return response.data;
 };
 

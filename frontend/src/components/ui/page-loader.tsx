@@ -12,6 +12,23 @@ export function PageLoader() {
   const [progress, setProgress] = useState(0);
 
   useEffect(() => {
+    const isMajorChange = (prev: string | null, curr: string) => {
+      if (!prev) return true;
+      const getArea = (p: string) => p.split('/')[1];
+      return getArea(prev) !== getArea(curr);
+    };
+
+    const prevPath = sessionStorage.getItem("last_path");
+    const currentPath = pathname;
+
+    if (!isMajorChange(prevPath, currentPath)) {
+      setVisible(false);
+      sessionStorage.setItem("last_path", currentPath);
+      return;
+    }
+
+    sessionStorage.setItem("last_path", currentPath);
+
     let timers: ReturnType<typeof setTimeout>[] = [];
     let hide: ReturnType<typeof setTimeout> | undefined;
 

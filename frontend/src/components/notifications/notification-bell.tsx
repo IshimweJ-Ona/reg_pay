@@ -3,24 +3,30 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { Bell, Check, Clock, AlertCircle } from 'lucide-react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useParams } from 'next/navigation';
 import { 
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, 
   DropdownMenuTrigger, DropdownMenuLabel, DropdownMenuSeparator 
 } from "@/components/ui/dropdown-menu";
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { approveUser, rejectUser, approveUserTransfer, rejectUserTransfer } from '@/api/users';
+import { rejectUser, approveUserTransfer, rejectUserTransfer } from '@/api/users';
 import { getNotifications, getUnreadCount, markAsRead, markAllAsRead, Notification } from '@/api/notifications';
 import { approvePayrollBatch, rejectPayrollBatch } from '@/api/payroll';
 import { useToast } from '@/hooks/use-toast';
 import { Badge } from '../ui/badge';
+import { userFriendlyError } from '@/lib/error-message';
 
 export function NotificationBell({ type }: { type: 'admin' | 'user' }) {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const { toast } = useToast();
   const router = useRouter();
+  const params = useParams();
+
+  const role = params.role as string;
+  const uuid = params.uuid as string;
+  const basePath = `/${role}/${uuid}`;
 
   const loadNotifications = async () => {
     try {
@@ -42,15 +48,13 @@ export function NotificationBell({ type }: { type: 'admin' | 'user' }) {
 
   const handleApproveRegistration = async (notificationUuid: string, userUuid: string) => {
     try {
-      await approveUser(userUuid, {});
-      await markAsRead(notificationUuid);
-      toast({ title: "Account approved", description: "The user can now sign in with assigned access." });
-      await loadNotifications();
+      router.push(`${basePath}/users?edit=${userUuid}&needsRole=1`);
+      toast({ title: "Choose a role", description: "Select a role for this user before approving the account." });
     } catch (error: any) {
       toast({
         variant: "destructive",
-        title: "Approval failed",
-        description: error?.response?.data?.message ?? "Check roles and permissions.",
+        title: "Could not open user",
+        description: userFriendlyError(error, "Please open the Users page and review this user."),
       });
     }
   };
@@ -65,7 +69,7 @@ export function NotificationBell({ type }: { type: 'admin' | 'user' }) {
       toast({
         variant: "destructive",
         title: "Denial failed",
-        description: error?.response?.data?.message ?? "Please try again.",
+        description: userFriendlyError(error, "Please try again."),
       });
     }
   };
@@ -80,7 +84,7 @@ export function NotificationBell({ type }: { type: 'admin' | 'user' }) {
       toast({
         variant: "destructive",
         title: "Transfer approval failed",
-        description: error?.response?.data?.message ?? "Please try again.",
+        description: userFriendlyError(error, "Please try again."),
       });
     }
   };
@@ -95,7 +99,7 @@ export function NotificationBell({ type }: { type: 'admin' | 'user' }) {
       toast({
         variant: "destructive",
         title: "Transfer rejection failed",
-        description: error?.response?.data?.message ?? "Please try again.",
+        description: userFriendlyError(error, "Please try again."),
       });
     }
   };
@@ -110,7 +114,7 @@ export function NotificationBell({ type }: { type: 'admin' | 'user' }) {
       toast({
         variant: "destructive",
         title: "Payroll approval failed",
-        description: error?.response?.data?.message ?? "Please try again.",
+        description: userFriendlyError(error, "Please try again."),
       });
     }
   };
@@ -125,7 +129,7 @@ export function NotificationBell({ type }: { type: 'admin' | 'user' }) {
       toast({
         variant: "destructive",
         title: "Payroll rejection failed",
-        description: error?.response?.data?.message ?? "Please try again.",
+        description: userFriendlyError(error, "Please try again."),
       });
     }
   };
@@ -153,7 +157,8 @@ export function NotificationBell({ type }: { type: 'admin' | 'user' }) {
     const redirect = (notification.metadata as any)?.redirect;
     if (redirect) {
       if (!notification.is_read) await markAsRead(notification.uuid);
-      router.push(redirect);
+      const targetPath = redirect.startsWith('/') ? redirect : `${basePath}/${redirect}`;
+      router.push(targetPath);
     }
   };
 
