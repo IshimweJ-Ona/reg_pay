@@ -24,7 +24,7 @@ export class RolesService {
       },
       orderBy: { level_order: 'asc' },
     });
-    
+
     const result = roles.map((r) => ({
       ...r,
       id: r.id.toString(),

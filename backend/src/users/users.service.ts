@@ -65,7 +65,9 @@ export class UsersService {
       ? await this.resolveRoleIds(data.role_ids)
       : [];
 
-    const permissionIds: bigint[] = [];
+    const permissionIds = data.permission_ids?.length
+      ? await this.resolvePermissionIds(data.permission_ids)
+      : [];
 
     if (workingLocationId) {
       await this.ensureWorkingLocationExists(workingLocationId);
@@ -299,7 +301,9 @@ export class UsersService {
       ? await this.resolveRoleIds(dto.role_ids)
       : [await this.getDefaultRoleId()];
 
-    const permissionIds: bigint[] = [];
+    const permissionIds = dto.permission_ids?.length
+      ? await this.resolvePermissionIds(dto.permission_ids)
+      : [];
 
     await this.ensureRolesExist(roleIds);
 
@@ -324,10 +328,18 @@ export class UsersService {
 
     if (isManagerActor && !isSuperAdminActor) {
       const isAssigningHighLevelRole = roles.some((r) =>
-        ['MANAGER', 'BRANCH_MANAGER', 'ON_MANAGER', 'SUPER_ADMIN', 'ADMIN'].includes(r.name),
+        [
+          'MANAGER',
+          'BRANCH_MANAGER',
+          'ON_MANAGER',
+          'SUPER_ADMIN',
+          'ADMIN',
+        ].includes(r.name),
       );
       if (isAssigningHighLevelRole) {
-        throw new BadRequestException('Managers cannot assign Manager or Admin roles.');
+        throw new BadRequestException(
+          'Managers cannot assign Manager or Admin roles.',
+        );
       }
     }
 
@@ -382,6 +394,17 @@ export class UsersService {
       await tx.user_permission_overrides.deleteMany({
         where: { user_id: user.id },
       });
+
+      if (permissionIds.length) {
+        await tx.user_permissions.createMany({
+          data: permissionIds.map((permissionId) => ({
+            user_id: user.id,
+            permission_id: permissionId,
+            granted_by: BigInt(actor.userId),
+          })),
+          skipDuplicates: true,
+        });
+      }
 
       if (isBranchManagerRole) {
         const existingRecord = await tx.branch_managers.findFirst({
@@ -582,6 +605,54 @@ export class UsersService {
     };
   }
 
+  async bulkUpdateAvatars(files: any[], mappings: Record<string, string>) {
+    const results: any[] = [];
+    for (const file of files) {
+      const targetIdentifier = mappings[file.originalname];
+      if (!targetIdentifier) continue;
+
+      const user = await this.prisma.users.findFirst({
+        where: { OR: [{ email: targetIdentifier }, { uuid: targetIdentifier }] },
+      });
+
+      if (user) {
+        await this.prisma.users.update({
+          where: { id: user.id },
+          data: { avatar_url: `/uploads/profiles/${file.filename}` },
+        });
+        results.push({
+          identifier: targetIdentifier,
+          type: 'USER',
+          success: true,
+        });
+        continue;
+      }
+
+      const employee = await this.prisma.employees.findFirst({
+        where: {
+          OR: [
+            { email: targetIdentifier },
+            { national_id: targetIdentifier },
+            { uuid: targetIdentifier },
+          ],
+        },
+      });
+
+      if (employee) {
+        await this.prisma.employees.update({
+          where: { id: employee.id },
+          data: { avatar_url: `/uploads/profiles/${file.filename}` },
+        });
+        results.push({
+          identifier: targetIdentifier,
+          type: 'EMPLOYEE',
+          success: true,
+        });
+      }
+    }
+    return { success: true, count: results.length, details: results };
+  }
+
   async updatePermissionOverride(
     uuid: string,
     permissionInput: string,
@@ -762,26 +833,31 @@ export class UsersService {
 
     if (request.current_level === 'BRANCH_MANAGER') {
       if (!isBM && !isAdmin) {
-        throw new ForbiddenException('Only a Branch Manager can approve this at this level.');
+        throw new ForbiddenException(
+          'Only a Branch Manager can approve this at this level.',
+        );
       }
 
       const updated = await this.prisma.transfer_requests.update({
         where: { id: request.id },
         data: {
           current_level: 'ADMIN',
-          history: (request.history as any[] || []).concat([{
-            level: 'BRANCH_MANAGER',
-            action: 'APPROVED',
-            by: actor.userId,
-            at: new Date().toISOString()
-          }]),
+          history: ((request.history as any[]) || []).concat([
+            {
+              level: 'BRANCH_MANAGER',
+              action: 'APPROVED',
+              by: actor.userId,
+              at: new Date().toISOString(),
+            },
+          ]),
         },
       });
 
       await this.notificationsService.notifyAdmins({
         senderId: actor.userId,
         title: 'Transfer Request Awaiting Admin Approval',
-        message: 'A transfer request has been approved by the Branch Manager and requires final admin approval.',
+        message:
+          'A transfer request has been approved by the Branch Manager and requires final admin approval.',
         type: 'TRANSFER_REQUEST',
         referenceId: request.uuid,
         metadata: { level: 'ADMIN' },
@@ -792,7 +868,9 @@ export class UsersService {
 
     if (request.current_level === 'ADMIN') {
       if (!isAdmin) {
-        throw new ForbiddenException('Only an Admin can finalize this transfer.');
+        throw new ForbiddenException(
+          'Only an Admin can finalize this transfer.',
+        );
       }
 
       const updated = await this.prisma.$transaction(async (tx) => {
@@ -811,12 +889,14 @@ export class UsersService {
             approved_by: BigInt(actor.userId),
             approved_at: new Date(),
             current_level: 'FINALIZED',
-            history: (request.history as any[] || []).concat([{
-              level: 'ADMIN',
-              action: 'APPROVED',
-              by: actor.userId,
-              at: new Date().toISOString()
-            }]),
+            history: ((request.history as any[]) || []).concat([
+              {
+                level: 'ADMIN',
+                action: 'APPROVED',
+                by: actor.userId,
+                at: new Date().toISOString(),
+              },
+            ]),
           },
         });
 
@@ -858,13 +938,15 @@ export class UsersService {
         approved_by: BigInt(actor.userId),
         approved_at: new Date(),
         current_level: 'REJECTED',
-        history: (request.history as any[] || []).concat([{
-          level: request.current_level,
-          action: 'REJECTED',
-          by: actor.userId,
-          at: new Date().toISOString(),
-          reason: dto.rejection_reason
-        }]),
+        history: ((request.history as any[]) || []).concat([
+          {
+            level: request.current_level,
+            action: 'REJECTED',
+            by: actor.userId,
+            at: new Date().toISOString(),
+            reason: dto.rejection_reason,
+          },
+        ]),
       },
     });
 
@@ -1098,6 +1180,29 @@ export class UsersService {
     }
   }
 
+  private async resolvePermissionIds(values: string[]) {
+    const permissions = await this.prisma.permissions.findMany({
+      where: {
+        OR: values.map((value) =>
+          isNumericId(value)
+            ? { id: BigInt(value) }
+            : value.length >= 16
+              ? { uuid: value }
+              : { permission_key: value },
+        ),
+      },
+      select: { id: true },
+    });
+
+    if (permissions.length !== values.length) {
+      throw new BadRequestException(
+        'Please choose valid permissions before saving this user.',
+      );
+    }
+
+    return permissions.map((p) => p.id);
+  }
+
   private async resolveRoleIds(values: string[]) {
     const roles = await this.prisma.roles.findMany({
       where: {
@@ -1206,13 +1311,14 @@ export class UsersService {
 
       permissions: this.serializeEffectivePermissions(user),
 
-      permission_overrides: user.permission_overrides?.map((override) => ({
-        id: override.id.toString(),
-        permission_id: override.permission_id.toString(),
-        permission_key: override.permission?.permission_key,
-        is_allowed: override.is_allowed,
-        reason: override.reason,
-      })) ?? [],
+      permission_overrides:
+        user.permission_overrides?.map((override) => ({
+          id: override.id.toString(),
+          permission_id: override.permission_id.toString(),
+          permission_key: override.permission?.permission_key,
+          is_allowed: override.is_allowed,
+          reason: override.reason,
+        })) ?? [],
 
       working_location: user.working_location
         ? {
@@ -1230,7 +1336,7 @@ export class UsersService {
             id: user.department.id.toString(),
             working_location_id: user.department.working_location_id.toString(),
           }
-        : undefined,
+        : null,
     };
   }
 
@@ -1393,7 +1499,9 @@ export class UsersService {
 
   private toBigInt(value: string, fieldName: string): bigint {
     if (!/^\d+$/.test(value)) {
-      throw new BadRequestException(`Please choose a valid ${fieldName.replace('_', ' ')}.`);
+      throw new BadRequestException(
+        `Please choose a valid ${fieldName.replace('_', ' ')}.`,
+      );
     }
 
     return BigInt(value);

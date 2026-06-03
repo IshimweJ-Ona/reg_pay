@@ -1,4 +1,11 @@
-import { Controller, Get, Patch, Param, UseGuards, Query } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Patch,
+  Param,
+  UseGuards,
+  Query,
+} from '@nestjs/common';
 import { NotificationsService } from './notifications.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -20,7 +27,10 @@ export class NotificationsController {
   }
 
   @Patch(':uuid/read')
-  markAsRead(@Param('uuid') uuid: string, @CurrentUser() user: CurrentUserType) {
+  markAsRead(
+    @Param('uuid') uuid: string,
+    @CurrentUser() user: CurrentUserType,
+  ) {
     return this.notificationsService.markAsRead(uuid, user.uuid);
   }
 

@@ -358,26 +358,31 @@ export class EmployeesService {
 
     if (request.current_level === 'BRANCH_MANAGER') {
       if (!isBM && !isAdmin) {
-        throw new ForbiddenException('Only a Branch Manager can approve this at this level.');
+        throw new ForbiddenException(
+          'Only a Branch Manager can approve this at this level.',
+        );
       }
 
       const updated = await this.prisma.transfer_requests.update({
         where: { id: request.id },
         data: {
           current_level: 'ADMIN',
-          history: (request.history as any[] || []).concat([{
-            level: 'BRANCH_MANAGER',
-            action: 'APPROVED',
-            by: actor.userId,
-            at: new Date().toISOString()
-          }]),
+          history: ((request.history as any[]) || []).concat([
+            {
+              level: 'BRANCH_MANAGER',
+              action: 'APPROVED',
+              by: actor.userId,
+              at: new Date().toISOString(),
+            },
+          ]),
         },
       });
 
       await this.notificationsService.notifyAdmins({
         senderId: actor.userId,
         title: 'Employee Transfer Request Awaiting Admin Approval',
-        message: 'An employee transfer request has been approved by the Branch Manager and requires final admin approval.',
+        message:
+          'An employee transfer request has been approved by the Branch Manager and requires final admin approval.',
         type: 'TRANSFER_REQUEST',
         referenceId: request.uuid,
         metadata: { level: 'ADMIN' },
@@ -388,7 +393,9 @@ export class EmployeesService {
 
     if (request.current_level === 'ADMIN') {
       if (!isAdmin) {
-        throw new ForbiddenException('Only an Admin can finalize this transfer.');
+        throw new ForbiddenException(
+          'Only an Admin can finalize this transfer.',
+        );
       }
 
       const employee = await this.prisma.employees.findUniqueOrThrow({
@@ -430,12 +437,14 @@ export class EmployeesService {
             approved_by: BigInt(actor.userId),
             approved_at: new Date(),
             current_level: 'FINALIZED',
-            history: (request.history as any[] || []).concat([{
-              level: 'ADMIN',
-              action: 'APPROVED',
-              by: actor.userId,
-              at: new Date().toISOString()
-            }]),
+            history: ((request.history as any[]) || []).concat([
+              {
+                level: 'ADMIN',
+                action: 'APPROVED',
+                by: actor.userId,
+                at: new Date().toISOString(),
+              },
+            ]),
           },
         });
 
@@ -475,13 +484,15 @@ export class EmployeesService {
         approved_by: BigInt(actor.userId),
         approved_at: new Date(),
         current_level: 'REJECTED',
-        history: (request.history as any[] || []).concat([{
-          level: request.current_level,
-          action: 'REJECTED',
-          by: actor.userId,
-          at: new Date().toISOString(),
-          reason: dto.rejection_reason
-        }]),
+        history: ((request.history as any[]) || []).concat([
+          {
+            level: request.current_level,
+            action: 'REJECTED',
+            by: actor.userId,
+            at: new Date().toISOString(),
+            reason: dto.rejection_reason,
+          },
+        ]),
       },
     });
 
@@ -866,7 +877,9 @@ export class EmployeesService {
 
   private toBigInt(value: string, fieldName: string): bigint {
     if (!/^\d+$/.test(value)) {
-      throw new BadRequestException(`Please choose a valid ${fieldName.replace('_', ' ')}.`);
+      throw new BadRequestException(
+        `Please choose a valid ${fieldName.replace('_', ' ')}.`,
+      );
     }
 
     return BigInt(value);

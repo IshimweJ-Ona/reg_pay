@@ -27,7 +27,9 @@ export class PaymentStructuresService {
 
   private toBigInt(value: string, fieldName: string): bigint {
     if (!/^\d+$/.test(value)) {
-      throw new BadRequestException(`Please choose a valid ${fieldName.replace('_', ' ')}.`);
+      throw new BadRequestException(
+        `Please choose a valid ${fieldName.replace('_', ' ')}.`,
+      );
     }
     return BigInt(value);
   }
@@ -444,7 +446,11 @@ export class PaymentStructuresService {
     return this.serializeAllowance(updated);
   }
 
-  async updateAllowance(uuid: string, dto: Partial<CreateAllowanceDto>, actor: CurrentUserType) {
+  async updateAllowance(
+    uuid: string,
+    dto: Partial<CreateAllowanceDto>,
+    actor: CurrentUserType,
+  ) {
     const existing = await this.prisma.allowances.findUnique({
       where: { uuid },
     });

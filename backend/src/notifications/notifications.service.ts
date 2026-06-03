@@ -41,7 +41,10 @@ export class NotificationsService {
     return this.create({ ...dto, userId: undefined });
   }
 
-  async notifyBranchManager(locationId: bigint, dto: Omit<CreateNotificationDto, 'userId'>) {
+  async notifyBranchManager(
+    locationId: bigint,
+    dto: Omit<CreateNotificationDto, 'userId'>,
+  ) {
     const manager = await this.prisma.branch_managers.findFirst({
       where: { working_location_id: locationId, is_active: true },
       select: { user_id: true },
@@ -62,13 +65,11 @@ export class NotificationsService {
         where: { uuid: userId },
         include: { roles: { include: { role: true } } },
       });
-      
-      const roles = user?.roles.map(r => r.role.name) || [];
+
+      const roles = user?.roles.map((r) => r.role.name) || [];
       const isAdmin = roles.includes('ADMIN') || roles.includes('SUPER_ADMIN');
 
-      const orConditions: any[] = [
-        { user_id: user?.id },
-      ];
+      const orConditions: any[] = [{ user_id: user?.id }];
 
       if (isAdmin) {
         orConditions.push({ user_id: null });

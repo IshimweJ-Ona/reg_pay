@@ -37,7 +37,9 @@ export class OrganizationService {
     actor: CurrentUserType,
   ) {
     if (!actor.roles.includes('SUPER_ADMIN')) {
-      throw new BadRequestException('Only SUPER_ADMIN can create working locations.');
+      throw new BadRequestException(
+        'Only SUPER_ADMIN can create working locations.',
+      );
     }
     if (dto.type === WORKING_LOCATION_TYPE.HQ) {
       const existingHq = await this.prisma.working_locations.findFirst({
@@ -156,7 +158,9 @@ export class OrganizationService {
     actor: CurrentUserType,
   ) {
     if (!actor.roles.includes('SUPER_ADMIN')) {
-      throw new BadRequestException('Only a system administrator can update branches.');
+      throw new BadRequestException(
+        'Only a system administrator can update branches.',
+      );
     }
 
     const current = await this.prisma.working_locations.findFirst({
@@ -167,14 +171,19 @@ export class OrganizationService {
       throw new NotFoundException('Branch not found.');
     }
 
-    if (dto.type === WORKING_LOCATION_TYPE.HQ && current.type !== WORKING_LOCATION_TYPE.HQ) {
+    if (
+      dto.type === WORKING_LOCATION_TYPE.HQ &&
+      current.type !== WORKING_LOCATION_TYPE.HQ
+    ) {
       const existingHq = await this.prisma.working_locations.findFirst({
         where: { type: WORKING_LOCATION_TYPE.HQ, deleted_at: null },
         select: { id: true },
       });
 
       if (existingHq) {
-        throw new BadRequestException('Only one headquarters branch can exist.');
+        throw new BadRequestException(
+          'Only one headquarters branch can exist.',
+        );
       }
     }
 
@@ -198,7 +207,11 @@ export class OrganizationService {
           activity_type: ACTIVITY_TYPE.UPDATE,
           activity_description: 'Updated branch details.',
           action: AUDIT_ACTION.UPDATED,
-          new_values: { name: saved.name, type: saved.type, address: saved.address },
+          new_values: {
+            name: saved.name,
+            type: saved.type,
+            address: saved.address,
+          },
         },
       });
 
@@ -263,7 +276,8 @@ export class OrganizationService {
           entity_id: created[0].id,
           module_name: 'ORGANIZATION',
           activity_type: ACTIVITY_TYPE.CREATE,
-          activity_description: 'Created global department across all working locations.',
+          activity_description:
+            'Created global department across all working locations.',
           action: AUDIT_ACTION.CREATED,
           new_values: {
             code: dto.code,
@@ -339,7 +353,9 @@ export class OrganizationService {
     actor: CurrentUserType,
   ) {
     if (!actor.roles.includes('SUPER_ADMIN')) {
-      throw new BadRequestException('Only a system administrator can update departments.');
+      throw new BadRequestException(
+        'Only a system administrator can update departments.',
+      );
     }
 
     const current = await this.prisma.departments.findUnique({
@@ -387,7 +403,9 @@ export class OrganizationService {
     actor: CurrentUserType,
   ) {
     if (!actor.roles.includes('SUPER_ADMIN')) {
-      throw new BadRequestException('Only SUPER_ADMIN can assign branch managers.');
+      throw new BadRequestException(
+        'Only SUPER_ADMIN can assign branch managers.',
+      );
     }
     const userId = await this.resolveUserId(dto.user_id);
 
@@ -655,7 +673,9 @@ export class OrganizationService {
 
   private toBigInt(value: string, fieldName: string): bigint {
     if (!/^\d+$/.test(value)) {
-      throw new BadRequestException(`Please choose a valid ${fieldName.replace('_', ' ')}.`);
+      throw new BadRequestException(
+        `Please choose a valid ${fieldName.replace('_', ' ')}.`,
+      );
     }
 
     return BigInt(value);

@@ -34,6 +34,15 @@ export class TimeRecordsController {
     return this.timeRecordsService.create(dto, actor);
   }
 
+  @Permissions('attendance.create')
+  @Post('bulk')
+  bulkCreate(
+    @Body() dto: { records: CreateTimeRecordDto[] },
+    @CurrentUser() actor: CurrentUserType,
+  ) {
+    return this.timeRecordsService.bulkCreate(dto, actor);
+  }
+
   @Permissions('attendance.update')
   @Patch(':uuid/clock-out')
   clockOut(

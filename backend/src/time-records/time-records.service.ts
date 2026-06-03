@@ -73,6 +73,21 @@ export class TimeRecordsService {
     return this.serialize(record);
   }
 
+  async bulkCreate(dto: { records: CreateTimeRecordDto[] }, actor: CurrentUserType) {
+    const results: any[] = [];
+    for (const recordDto of dto.records) {
+      try {
+        const result = await this.create(recordDto, actor);
+        results.push(result);
+      } catch (error: any) {
+        if (!(error instanceof ConflictException)) {
+            console.error('Bulk item failed:', error.message || error);
+        }
+      }
+    }
+    return { success: true, count: results.length };
+  }
+
   async clockOut(
     uuid: string,
     dto: UpdateTimeRecordDto,
@@ -235,8 +250,8 @@ export class TimeRecordsService {
       id: record.id.toString(),
       employee_id: record.employee_id.toString(),
       approved_by: record.approved_by?.toString() ?? null,
-      hours_worked: record.hours_worked?.toString(),
-      overtime_hours: record.overtime_hours?.toString(),
+      hours_worked: record.hours_worked?.toString() ?? null,
+      overtime_hours: record.overtime_hours?.toString() ?? null,
       employee: record.employee
         ? {
             ...record.employee,
@@ -263,7 +278,9 @@ export class TimeRecordsService {
 
   private toBigInt(value: string, fieldName: string): bigint {
     if (!/^\d+$/.test(value)) {
-      throw new BadRequestException(`Please choose a valid ${fieldName.replace('_', ' ')}.`);
+      throw new BadRequestException(
+        `Please choose a valid ${fieldName.replace('_', ' ')}.`,
+      );
     }
 
     return BigInt(value);

@@ -78,10 +78,7 @@ export class PayrollService {
     const calculations: PayrollCalculation[] = [];
 
     for (const employee of employees) {
-      const calculation = await this.calculateEmployeePayroll(
-        employee,
-        dto,
-      );
+      const calculation = await this.calculateEmployeePayroll(employee, dto);
 
       if (calculation) calculations.push(calculation);
     }
@@ -108,7 +105,10 @@ export class PayrollService {
       (sum, item) => sum + item.totalDeductions,
       0,
     );
-    const totalTax = calculations.reduce((sum, item) => sum + item.taxAmount, 0);
+    const totalTax = calculations.reduce(
+      (sum, item) => sum + item.taxAmount,
+      0,
+    );
     const batchCode = `PAY-${dto.payroll_year}-${dto.payroll_month
       .toString()
       .padStart(2, '0')}-${Date.now()}`;
@@ -359,6 +359,31 @@ export class PayrollService {
       return saved;
     });
 
+    // Notify the submitter about the denied employee
+    const batch = await this.prisma.payment_batches.findUnique({
+      where: { id: item.payment_batch_id },
+      select: { submitted_by: true, batch_code: true, created_at: true, uuid: true }
+    });
+
+    if (batch) {
+        const rejectedCount = await this.prisma.payment_batch_items.count({
+            where: { payment_batch_id: item.payment_batch_id, status: PAYMENT_BATCH_STATUS.REJECTED }
+        });
+
+        await this.notificationsService.create({
+            userId: batch.submitted_by,
+            senderId: actor.userId,
+            title: 'Personnel Denied in Payroll',
+            message: `${rejectedCount} employees on batch ${batch.batch_code} / ${batch.created_at.toISOString().split('T')[0]} are denied.`,
+            type: 'PAYROLL_ITEM_REJECTED',
+            referenceId: batch.uuid,
+            metadata: {
+                redirect: `payroll/${batch.uuid}`,
+                reason: dto.rejection_reason,
+            },
+        });
+    }
+
     return this.serializeItem(rejected);
   }
 
@@ -570,7 +595,9 @@ export class PayrollService {
       : new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
 
     if (periodEnd < periodStart) {
-      throw new BadRequestException('Payroll end date must be after start date.');
+      throw new BadRequestException(
+        'Payroll end date must be after start date.',
+      );
     }
 
     const paymentStructure = await this.prisma.payment_structures.findFirst({
@@ -604,12 +631,15 @@ export class PayrollService {
 
     const requestedWorkDays =
       dto.work_days ?? paymentStructure.custom_work_days ?? presentDays;
-    
+
     // Determine days worked for eligibility
-    const daysWorked = paymentStructure.payroll_frequency === EMPLOYMENT_TYPE.MONTHLY 
-      ? presentDays 
-      : (paymentStructure.payroll_frequency === EMPLOYMENT_TYPE.CUSTOM ? requestedWorkDays : presentDays);
-    
+    const daysWorked =
+      paymentStructure.payroll_frequency === EMPLOYMENT_TYPE.MONTHLY
+        ? presentDays
+        : paymentStructure.payroll_frequency === EMPLOYMENT_TYPE.CUSTOM
+          ? requestedWorkDays
+          : presentDays;
+
     const isOver21Days = daysWorked > 21;
 
     const periodCalendarDays = Math.max(
@@ -631,7 +661,9 @@ export class PayrollService {
       }
     } else if (paymentStructure.payroll_frequency === EMPLOYMENT_TYPE.CUSTOM) {
       if (isOver21Days) {
-        baseAmount = Number(paymentStructure.basic_salary) || (effectiveDailyRate * requestedWorkDays);
+        baseAmount =
+          Number(paymentStructure.basic_salary) ||
+          effectiveDailyRate * requestedWorkDays;
       } else {
         baseAmount = effectiveDailyRate * requestedWorkDays;
       }
@@ -642,7 +674,7 @@ export class PayrollService {
 
     const overtimeAmount =
       Number(paymentStructure.overtime_rate) * overtimeHours;
-    
+
     // Allowance only if > 21 days
     const allowanceEligible = isOver21Days;
     const allowances = allowanceEligible
@@ -681,7 +713,9 @@ export class PayrollService {
     // Global Tax logic
     let taxAmount = 0;
     if (isOver21Days) {
-      const globalTaxRateConfig = await this.systemConfigService.findByKey('GLOBAL_TAX_RATE').catch(() => ({ value: '15' }));
+      const globalTaxRateConfig = await this.systemConfigService
+        .findByKey('GLOBAL_TAX_RATE')
+        .catch(() => ({ value: '15' }));
       const taxRate = Number(globalTaxRateConfig.value) || 15;
       taxAmount = grossAmount * (taxRate / 100);
     }
@@ -697,7 +731,9 @@ export class PayrollService {
       taxAmount,
       attendanceDays: presentDays,
       payrollWorkDays:
-        paymentStructure.payroll_frequency === EMPLOYMENT_TYPE.CUSTOM ? requestedWorkDays : null,
+        paymentStructure.payroll_frequency === EMPLOYMENT_TYPE.CUSTOM
+          ? requestedWorkDays
+          : null,
       payrollStartDate: periodStart,
       payrollEndDate: periodEnd,
       metadata: {
@@ -925,7 +961,9 @@ export class PayrollService {
 
   private toBigInt(value: string, fieldName: string): bigint {
     if (!/^\d+$/.test(value)) {
-      throw new BadRequestException(`Please choose a valid ${fieldName.replace('_', ' ')}.`);
+      throw new BadRequestException(
+        `Please choose a valid ${fieldName.replace('_', ' ')}.`,
+      );
     }
 
     return BigInt(value);

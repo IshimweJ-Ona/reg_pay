@@ -9,7 +9,7 @@ import { map } from 'rxjs/operators';
 
 /**
  * Interceptor to handle BigInt serialization issues in JSON responses.
- * Since JSON.stringify does not support BigInt, this interceptor recursively 
+ * Since JSON.stringify does not support BigInt, this interceptor recursively
  * converts all BigInt values in the response data to strings.
  */
 @Injectable()

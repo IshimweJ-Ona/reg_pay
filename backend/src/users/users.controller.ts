@@ -6,8 +6,13 @@ import {
   Patch,
   Post,
   Query,
+  UploadedFiles,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FilesInterceptor } from '@nestjs/platform-express';
+import { diskStorage } from 'multer';
+import { extname } from 'path';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Permissions } from '../auth/decorators/permissions.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -116,6 +121,33 @@ export class UsersController {
       dto,
       actor,
     );
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
+  @Roles('SUPER_ADMIN', 'ADMIN')
+  @Permissions('users.update')
+  @Post('bulk-profile-images')
+  @UseInterceptors(
+    FilesInterceptor('images', 50, {
+      storage: diskStorage({
+        destination: './uploads/profiles',
+        filename: (req, file, cb) => {
+          const uniqueSuffix =
+            Date.now() + '-' + Math.round(Math.random() * 1e9);
+          cb(
+            null,
+            file.fieldname + '-' + uniqueSuffix + extname(file.originalname),
+          );
+        },
+      }),
+    }),
+  )
+  async bulkUploadImages(
+    @UploadedFiles() files: Express.Multer.File[],
+    @Body('mappings') mappings: string,
+  ) {
+    const parsedMappings = mappings ? JSON.parse(mappings) : {};
+    return this.usersService.bulkUpdateAvatars(files, parsedMappings);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)

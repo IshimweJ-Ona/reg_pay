@@ -97,7 +97,7 @@ export class AuthService {
       : null;
 
     // Create notification for the local manager when available; otherwise HQ admins receive it.
-    // For registration, we don't know the manager's UUID yet easily here without a query, 
+    // For registration, we don't know the manager's UUID yet easily here without a query,
     // but the notification bell in frontend can handle mapping relative paths.
     // However, to be safe and consistent with the user's request:
     await this.prisma.notifications.create({
@@ -182,13 +182,21 @@ export class AuthService {
     await this.writeLoginAudit(user.id, context.ipAddress, true);
 
     const roles = user.roles.map((r) => r.role.name);
-    
+
     let rolePath = 'users';
     if (roles.includes('SUPER_ADMIN')) {
       rolePath = 'super_admin';
-    } else if (roles.includes('BRANCH_MANAGER') || roles.includes('MANAGER') || roles.includes('ON_MANAGER')) {
+    } else if (
+      roles.includes('BRANCH_MANAGER') ||
+      roles.includes('MANAGER') ||
+      roles.includes('ON_MANAGER')
+    ) {
       rolePath = 'manager';
-    } else if (roles.includes('HR') || roles.includes('HR_MANAGER') || roles.includes('HR_ADMIN')) {
+    } else if (
+      roles.includes('HR') ||
+      roles.includes('HR_MANAGER') ||
+      roles.includes('HR_ADMIN')
+    ) {
       rolePath = 'hr';
     } else if (roles.includes('ACCOUNTANT') || roles.includes('FINANCE')) {
       rolePath = 'finance';
@@ -197,7 +205,7 @@ export class AuthService {
     }
 
     let redirectUrl = `/${rolePath}/${user.uuid}`;
-    
+
     if (user.status === STATUS_USER.PENDING) {
       redirectUrl = `/auth/pending/${user.uuid}`;
     }
@@ -215,7 +223,9 @@ export class AuthService {
 
     if (!user) {
       // For security, don't reveal if user exists
-      return { message: 'If an account exists, a reset token has been generated.' };
+      return {
+        message: 'If an account exists, a reset token has been generated.',
+      };
     }
 
     const token = generateUUID();
@@ -255,9 +265,12 @@ export class AuthService {
     }
 
     // Password regex: minimum 5, two digits, one capital, one small, one symbol
-    const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{5,}$/;
+    const passwordRegex =
+      /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{5,}$/;
     if (!passwordRegex.test(dto.password)) {
-      throw new ConflictException('Password does not meet security requirements.');
+      throw new ConflictException(
+        'Password does not meet security requirements.',
+      );
     }
 
     await this.prisma.users.update({
@@ -494,34 +507,39 @@ export class AuthService {
   }
 
   private async loadUserRbac(userId: bigint) {
-    const [user, userRoles, userPermissions, permissionOverrides, activeBranchManager] =
-      await Promise.all([
-        this.prisma.users.findUnique({ where: { id: userId } }),
-        this.prisma.user_roles.findMany({
-          where: { user_id: userId },
-          include: {
-            role: {
-              include: {
-                role_permissions: {
-                  include: { permission: true },
-                },
+    const [
+      user,
+      userRoles,
+      userPermissions,
+      permissionOverrides,
+      activeBranchManager,
+    ] = await Promise.all([
+      this.prisma.users.findUnique({ where: { id: userId } }),
+      this.prisma.user_roles.findMany({
+        where: { user_id: userId },
+        include: {
+          role: {
+            include: {
+              role_permissions: {
+                include: { permission: true },
               },
             },
           },
-        }),
-        this.prisma.user_permissions.findMany({
-          where: { user_id: userId },
-          include: { permission: true },
-        }),
-        this.prisma.user_permission_overrides.findMany({
-          where: { user_id: userId },
-          include: { permission: true },
-        }),
-        this.prisma.branch_managers.findFirst({
-          where: { user_id: userId, is_active: true },
-          select: { id: true },
-        }),
-      ]);
+        },
+      }),
+      this.prisma.user_permissions.findMany({
+        where: { user_id: userId },
+        include: { permission: true },
+      }),
+      this.prisma.user_permission_overrides.findMany({
+        where: { user_id: userId },
+        include: { permission: true },
+      }),
+      this.prisma.branch_managers.findFirst({
+        where: { user_id: userId, is_active: true },
+        select: { id: true },
+      }),
+    ]);
 
     const roles = userRoles.map((userRole) => userRole.role.name);
     const permissions = new Set<string>();

@@ -26,7 +26,15 @@ export class EmployeesController {
   constructor(private readonly employeesService: EmployeesService) {}
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
-  @Roles('SUPER_ADMIN', 'ADMIN', 'HR', 'HR_MANAGER', 'MANAGER', 'ON_MANAGER', 'BRANCH_MANAGER')
+  @Roles(
+    'SUPER_ADMIN',
+    'ADMIN',
+    'HR',
+    'HR_MANAGER',
+    'MANAGER',
+    'ON_MANAGER',
+    'BRANCH_MANAGER',
+  )
   @Permissions('employees.create')
   @Post()
   create(
@@ -37,7 +45,15 @@ export class EmployeesController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
-  @Roles('SUPER_ADMIN', 'ADMIN', 'HR', 'HR_MANAGER', 'MANAGER', 'ON_MANAGER', 'BRANCH_MANAGER')
+  @Roles(
+    'SUPER_ADMIN',
+    'ADMIN',
+    'HR',
+    'HR_MANAGER',
+    'MANAGER',
+    'ON_MANAGER',
+    'BRANCH_MANAGER',
+  )
   @Permissions('employees.read')
   @Get()
   findAll(@CurrentUser() actor: CurrentUserType, @Query('q') q?: string) {
@@ -45,7 +61,15 @@ export class EmployeesController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
-  @Roles('SUPER_ADMIN', 'ADMIN', 'HR', 'HR_MANAGER', 'MANAGER', 'ON_MANAGER', 'BRANCH_MANAGER')
+  @Roles(
+    'SUPER_ADMIN',
+    'ADMIN',
+    'HR',
+    'HR_MANAGER',
+    'MANAGER',
+    'ON_MANAGER',
+    'BRANCH_MANAGER',
+  )
   @Permissions('employees.read')
   @Get(':uuid')
   findOne(@Param('uuid') uuid: string, @CurrentUser() actor: CurrentUserType) {
@@ -54,7 +78,15 @@ export class EmployeesController {
 
   // Update employee profile information
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
-  @Roles('SUPER_ADMIN', 'ADMIN', 'HR', 'HR_MANAGER', 'MANAGER', 'ON_MANAGER', 'BRANCH_MANAGER')
+  @Roles(
+    'SUPER_ADMIN',
+    'ADMIN',
+    'HR',
+    'HR_MANAGER',
+    'MANAGER',
+    'ON_MANAGER',
+    'BRANCH_MANAGER',
+  )
   @Permissions('employees.update')
   @Patch(':uuid')
   update(
@@ -66,7 +98,15 @@ export class EmployeesController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
-  @Roles('SUPER_ADMIN', 'ADMIN', 'HR', 'HR_MANAGER', 'MANAGER', 'ON_MANAGER', 'BRANCH_MANAGER')
+  @Roles(
+    'SUPER_ADMIN',
+    'ADMIN',
+    'HR',
+    'HR_MANAGER',
+    'MANAGER',
+    'ON_MANAGER',
+    'BRANCH_MANAGER',
+  )
   @Permissions('employees.transfer')
   @Patch(':uuid/transfer')
   transfer(
@@ -101,7 +141,15 @@ export class EmployeesController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
-  @Roles('SUPER_ADMIN', 'ADMIN', 'HR', 'HR_MANAGER', 'MANAGER', 'ON_MANAGER', 'BRANCH_MANAGER')
+  @Roles(
+    'SUPER_ADMIN',
+    'ADMIN',
+    'HR',
+    'HR_MANAGER',
+    'MANAGER',
+    'ON_MANAGER',
+    'BRANCH_MANAGER',
+  )
   @Permissions('employees.suspend')
   @Patch(':uuid/suspend')
   suspend(
@@ -113,7 +161,15 @@ export class EmployeesController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
-  @Roles('SUPER_ADMIN', 'ADMIN', 'HR', 'HR_MANAGER', 'MANAGER', 'ON_MANAGER', 'BRANCH_MANAGER')
+  @Roles(
+    'SUPER_ADMIN',
+    'ADMIN',
+    'HR',
+    'HR_MANAGER',
+    'MANAGER',
+    'ON_MANAGER',
+    'BRANCH_MANAGER',
+  )
   @Permissions('employees.update')
   @Patch(':uuid/reactivate')
   reactivate(

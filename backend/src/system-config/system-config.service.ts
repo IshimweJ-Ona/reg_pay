@@ -9,7 +9,7 @@ export class SystemConfigService {
 
   async findAll() {
     const configs = await this.prisma.system_config.findMany();
-    return configs.map(config => ({
+    return configs.map((config) => ({
       ...config,
       id: config.id.toString(),
     }));
