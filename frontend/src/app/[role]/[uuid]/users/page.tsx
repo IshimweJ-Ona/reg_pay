@@ -49,6 +49,7 @@ import { getRoles } from '@/api/roles';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { userFriendlyError } from '@/lib/error-message';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { getAvatarUrl } from '@/lib/utils';
 
 function mapApiUser(apiUser: any): User {
   const role = apiUser.roles?.[0]?.name ?? 'USER';
@@ -195,7 +196,7 @@ export default function UsersManagementPage() {
                 <TableCell>
                   <div className="flex items-center gap-3">
                     <Avatar className="h-10 w-10 border shadow-sm">
-                      <AvatarImage src={user.avatar_url ? `${process.env.NEXT_PUBLIC_API_URL}${user.avatar_url}` : undefined} />
+                      <AvatarImage src={getAvatarUrl(user.avatar_url)} />
                       <AvatarFallback className="bg-primary/10 text-primary font-bold">{user.name.charAt(0)}</AvatarFallback>
                     </Avatar>
                     <div className="flex flex-col">

@@ -38,9 +38,11 @@ import {
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/hooks/use-toast';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Employee } from '@/types/employee';
 import { getEmployees, suspendEmployee, createEmployee, updateEmployee } from '@/api/employees';
 import { getWorkingLocations, getDepartments } from '@/api/working_locations';
+import { getAvatarUrl } from '@/lib/utils';
 import { 
   createAllowance, 
   updateAllowance,
@@ -71,6 +73,7 @@ function mapApiEmployee(item: any): Employee {
     status: item.status || 'ACTIVE',
     attendanceRate: 0,
     email: item.email ?? '',
+    avatar_url: item.avatar_url,
     phone_number: item.phone_number ?? '',
     national_id: item.national_id ?? '',
     gender: item.gender ?? 'MALE',
@@ -569,9 +572,12 @@ export default function EmployeeDirectoryPage() {
               <TableRow key={emp.id} className="hover:bg-secondary/10 transition-colors">
                 <TableCell>
                   <div className="flex items-center gap-3">
-                    <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center font-bold text-primary">
-                      {emp.fullName.charAt(0)}
-                    </div>
+                    <Avatar className="h-10 w-10 border shadow-sm">
+                      <AvatarImage src={getAvatarUrl(emp.avatar_url)} />
+                      <AvatarFallback className="bg-primary/10 text-primary font-bold">
+                        {emp.fullName.charAt(0)}
+                      </AvatarFallback>
+                    </Avatar>
                     <div className="flex flex-col">
                       <span className="font-semibold">{emp.fullName}</span>
                       <span className="text-xs text-muted-foreground">{emp.employeeId}</span>

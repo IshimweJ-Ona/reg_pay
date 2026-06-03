@@ -11,6 +11,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from '@/hooks/use-toast';
 import { Save, User as UserIcon, Mail, Shield, Camera } from 'lucide-react';
+import { getAvatarUrl } from '@/lib/utils';
 
 export default function AdminProfilePage() {
   const { user } = useAuth();
@@ -43,7 +44,7 @@ export default function AdminProfilePage() {
               <div className="flex items-center gap-6 mb-8">
                 <div className="relative group">
                   <Avatar className="h-24 w-24 border-4 border-white shadow-xl">
-                    <AvatarImage src={user?.avatar} />
+                    <AvatarImage src={getAvatarUrl(user?.avatar_url)} />
                     <AvatarFallback className="text-2xl font-bold bg-primary/10 text-primary">
                       {user?.name?.charAt(0)}
                     </AvatarFallback>

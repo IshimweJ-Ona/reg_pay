@@ -13,6 +13,8 @@ import { useAuth } from '@/context/auth-context';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { NotificationBell } from '@/components/notifications/notification-bell';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { getAvatarUrl } from '@/lib/utils';
 
 interface SidebarProps {
   type: 'admin' | 'user';
@@ -102,9 +104,12 @@ export function Sidebar({ type }: SidebarProps) {
 
       <div className="p-4 border-t mt-auto bg-secondary/5">
         <div className={cn("flex items-center gap-3 p-2 rounded-xl mb-4 bg-white border shadow-sm", collapsed ? "justify-center" : "")}>
-          <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center font-bold text-primary shrink-0 border border-primary/20">
-            {user?.name?.charAt(0)}
-          </div>
+          <Avatar className="h-10 w-10 border shadow-sm">
+            <AvatarImage src={getAvatarUrl(user?.avatar_url)} />
+            <AvatarFallback className="bg-primary/10 text-primary font-bold">
+              {user?.name?.charAt(0)}
+            </AvatarFallback>
+          </Avatar>
           {!collapsed && (
             <div className="flex flex-col min-w-0">
               <span className="text-xs font-bold truncate">{user?.name}</span>
