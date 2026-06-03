@@ -11,6 +11,7 @@ export interface Employee {
   attendanceRate: number;
   email: string;
   avatar?: string;
+  avatar_url?: string;
   phone_number?: string;
   national_id?: string;
   gender?: 'MALE' | 'FEMALE';

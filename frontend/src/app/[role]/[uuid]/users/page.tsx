@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { 
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow 
@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { 
   Search, MoreVertical, CheckCircle, 
-  Ban, UserPlus, Shield, Fingerprint, Calendar, Edit, Trash2, Power, PowerOff
+  Ban, UserPlus, Shield, Fingerprint, Calendar, Edit, Trash2, Power, PowerOff, Image as ImageIcon, Upload, X
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -43,11 +43,12 @@ import { User, UserStatus } from '@/types/auth';
 import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/hooks/use-toast';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { approveUser, getUsers, rejectUser, suspendUser, updateUserPermissionOverride } from '@/api/users';
+import { approveUser, getUsers, rejectUser, suspendUser, updateUserPermissionOverride, bulkUploadProfileImages } from '@/api/users';
 import { getWorkingLocations, getDepartments } from '@/api/working_locations';
 import { getRoles } from '@/api/roles';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { userFriendlyError } from '@/lib/error-message';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 
 function mapApiUser(apiUser: any): User {
   const role = apiUser.roles?.[0]?.name ?? 'USER';
@@ -66,6 +67,7 @@ function mapApiUser(apiUser: any): User {
     department_id: apiUser.department?.uuid,
     location_id: apiUser.working_location?.uuid,
     createdAt: apiUser.created_at,
+    avatar_url: apiUser.avatar_url,
   };
 }
 
@@ -79,29 +81,20 @@ export default function UsersManagementPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [isSheetOpen, setIsSheetOpen] = useState(false);
+  const [isBulkUploadOpen, setIsBulkUploadOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [userToDelete, setUserToDelete] = useState<string | null>(null);
+  const [uploadingFiles, setUploadingFiles] = useState<File[]>([]);
+  const [isUploading, setIsUploading] = useState(false);
   
   const { toast } = useToast();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const assignableRoles = useMemo(
     () => roles.filter((role) => !['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ON_MANAGER'].includes(role.name)),
     [roles]
   );
-  const selectedRole = useMemo(
-    () => roles.find((role) => role.name === selectedUser?.role),
-    [roles, selectedUser?.role]
-  );
-  const selectedRolePermissions = selectedRole?.role_permissions?.map((item: any) => item.permission).filter(Boolean) ?? [];
-  const selectedRoleIsBranchManager = ['BRANCH_MANAGER'].includes(selectedUser?.role ?? '');
-  const disabledPermissionKeys = useMemo(
-    () => new Set(
-      selectedUser?.permission_overrides
-        ?.filter((override) => override.is_allowed === false)
-        .map((override) => override.permission_key) ?? []
-    ),
-    [selectedUser?.permission_overrides]
-  );
-
+  
   const loadData = async () => {
     try {
       const [usersData, rolesData, locsData] = await Promise.all([
@@ -126,148 +119,26 @@ export default function UsersManagementPage() {
     loadData();
   }, []);
 
-  useEffect(() => {
-    const editUserId = searchParams.get('edit');
-    if (!editUserId || !users.length) return;
-
-    const userToEdit = users.find((item) => item.id === editUserId || item.uuid === editUserId);
-    if (userToEdit) {
-      handleSheetOpen(userToEdit);
-      if (searchParams.get('needsRole')) {
-        toast({
-          title: "Choose a role",
-          description: "Select a role for this user before approving the account.",
-        });
-      }
-    }
-  }, [searchParams, users]);
-
-  const handleLocationChange = async (locationUuid: string) => {
-    if (!selectedUser) return;
-    setSelectedUser({ ...selectedUser, location_id: locationUuid, department_id: '' });
-    setDepartments([]);
-    if (locationUuid) {
-      try {
-        const data = await getDepartments(locationUuid);
-        setDepartments(data.departments || data);
-      } catch (error) {
-        console.error('Failed to fetch departments:', error);
-      }
-    }
-  };
-
-  const handleSheetOpen = async (user: User) => {
-    setSelectedUser(user);
-    setIsSheetOpen(true);
-    if (user.location_id) {
-      try {
-        const data = await getDepartments(user.location_id);
-        setDepartments(data.departments || data);
-      } catch (error) {
-        console.error('Failed to fetch departments:', error);
-      }
-    } else {
-      setDepartments([]);
-    }
-  };
-
-  const handleUpdateUser = async (updatedUser: User) => {
+  const handleBulkUpload = async () => {
+    if (uploadingFiles.length === 0) return;
+    setIsUploading(true);
     try {
-      await approveUser(updatedUser.id, {
-        working_location_id: updatedUser.location_id,
-        department_id: selectedRoleIsBranchManager ? undefined : updatedUser.department_id,
-        role_ids: updatedUser.roles?.length ? updatedUser.roles : undefined
+      // Build mappings: Filename -> Email (assume filename is email.png or similar)
+      const mappings: Record<string, string> = {};
+      uploadingFiles.forEach(file => {
+        const identifier = file.name.split('.')[0]; // Use filename without extension as email/ID
+        mappings[file.name] = identifier;
       });
-      
-      toast({ title: "User updated", description: "The user profile and role were saved." });
-      setIsSheetOpen(false);
+
+      await bulkUploadProfileImages(uploadingFiles, mappings);
+      toast({ title: "Upload Success", description: `${uploadingFiles.length} profile pictures updated.` });
+      setIsBulkUploadOpen(false);
+      setUploadingFiles([]);
       loadData();
-    } catch (error: any) {
-      toast({
-        variant: "destructive",
-        title: "Update failed",
-        description: userFriendlyError(error, "Please check the selected branch, department, and role."),
-      });
-    }
-  };
-
-  const getStatusBadge = (status: UserStatus) => {
-    switch (status) {
-      case 'APPROVED': return <Badge variant="default" className="bg-emerald-500/10 text-emerald-600 border-emerald-500/20">Approved</Badge>;
-      case 'PENDING': return <Badge variant="secondary" className="bg-amber-500/10 text-amber-600 border-amber-500/20">Pending</Badge>;
-      case 'SUSPENDED': return <Badge variant="destructive">Suspended</Badge>;
-      case 'REJECTED': return <Badge variant="outline">Rejected</Badge>;
-    }
-  };
-
-  const handleStatusChange = async (userId: string, newStatus: UserStatus) => {
-    try {
-      const targetUser = users.find((user) => user.id === userId);
-      if (newStatus === 'APPROVED') {
-        if (!targetUser?.roles?.length || targetUser.role === 'USER') {
-          if (targetUser) handleSheetOpen(targetUser);
-          toast({ title: "Choose a role", description: "Select a role before approving this user." });
-          return;
-        }
-        await approveUser(userId, {});
-      }
-      if (newStatus === 'SUSPENDED') await suspendUser(userId);
-      await loadData();
-      toast({ title: "Status updated", description: `User status changed to ${newStatus.toLowerCase()}.` });
-    } catch (error: any) {
-      toast({
-        variant: "destructive",
-        title: "Status update failed",
-        description: userFriendlyError(error, "Please try again."),
-      });
-    }
-  };
-
-  const handleDeleteUser = async () => {
-    if (userToDelete) {
-      try {
-        await rejectUser(userToDelete, "Soft deleted from user management.");
-        await loadData();
-        toast({
-          variant: "destructive",
-          title: "User removed",
-          description: "The user can no longer access the system."
-        });
-        setUserToDelete(null);
-        setDeleteConfirmOpen(false);
-      } catch (error: any) {
-        toast({
-          variant: "destructive",
-          title: "Deletion failed",
-          description: userFriendlyError(error, "Please try again."),
-        });
-      }
-    }
-  };
-
-  const handlePermissionToggle = async (permission: any) => {
-    if (!selectedUser) return;
-
-    const isCurrentlyAllowed = !disabledPermissionKeys.has(permission.permission_key);
-    try {
-      const result = await updateUserPermissionOverride(
-        selectedUser.id,
-        permission.uuid ?? permission.permission_key,
-        !isCurrentlyAllowed,
-      );
-      const updatedUser = mapApiUser(result.user);
-      setSelectedUser(updatedUser);
-      setUsers((items) => items.map((item) => item.id === updatedUser.id ? updatedUser : item));
-      toast({
-        title: !isCurrentlyAllowed ? "Permission activated" : "Permission deactivated",
-        description: `${permission.name} was updated for ${selectedUser.name}.`,
-      });
-    } catch (error: any) {
-      toast({
-        variant: "destructive",
-        title: "Permission update failed",
-        description: userFriendlyError(error, "Please try again."),
-      });
+    } catch (error) {
+      toast({ variant: "destructive", title: "Upload Failed", description: "Check file names and try again." });
+    } finally {
+      setIsUploading(false);
     }
   };
 
@@ -282,12 +153,17 @@ export default function UsersManagementPage() {
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-headline font-bold">Users</h1>
-          <p className="text-muted-foreground">Create users, approve registrations, and assign clear roles.</p>
+          <h1 className="text-3xl font-headline font-bold">Personnel Infrastructure</h1>
+          <p className="text-muted-foreground">Manage corporate identities and role-based access.</p>
         </div>
-        <Button className="h-11 px-6 shadow-lg shadow-primary/20">
-          <UserPlus className="mr-2 h-4 w-4" /> Create User
-        </Button>
+        <div className="flex gap-2">
+            <Button variant="outline" className="h-11 border-dashed" onClick={() => setIsBulkUploadOpen(true)}>
+                <ImageIcon className="mr-2 h-4 w-4" /> Bulk Avatars
+            </Button>
+            <Button className="h-11 px-6 shadow-lg shadow-primary/20">
+                <UserPlus className="mr-2 h-4 w-4" /> Create User
+            </Button>
+        </div>
       </div>
 
       <div className="flex items-center gap-4 bg-white p-4 rounded-xl shadow-sm border">
@@ -318,9 +194,10 @@ export default function UsersManagementPage() {
               <TableRow key={user.id} className="hover:bg-secondary/20 transition-colors">
                 <TableCell>
                   <div className="flex items-center gap-3">
-                    <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center font-bold text-primary">
-                      {user.name.charAt(0)}
-                    </div>
+                    <Avatar className="h-10 w-10 border shadow-sm">
+                      <AvatarImage src={user.avatar_url ? `${process.env.NEXT_PUBLIC_API_URL}${user.avatar_url}` : undefined} />
+                      <AvatarFallback className="bg-primary/10 text-primary font-bold">{user.name.charAt(0)}</AvatarFallback>
+                    </Avatar>
                     <div className="flex flex-col">
                       <span className="font-semibold">{user.name}</span>
                       <span className="text-xs text-muted-foreground">{user.email}</span>
@@ -335,26 +212,19 @@ export default function UsersManagementPage() {
                 <TableCell>
                   <span className="text-sm font-medium">{user.permissions.length} permissions</span>
                 </TableCell>
-                <TableCell>{getStatusBadge(user.status)}</TableCell>
+                <TableCell>
+                    <Badge variant={user.status === 'APPROVED' ? 'default' : user.status === 'PENDING' ? 'secondary' : 'destructive'} className={user.status === 'APPROVED' ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20' : ''}>
+                        {user.status}
+                    </Badge>
+                </TableCell>
                 <TableCell>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button variant="ghost" size="icon"><MoreVertical className="h-4 w-4" /></Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end" className="w-56">
-                      <DropdownMenuItem onClick={() => handleSheetOpen(user)}>
+                      <DropdownMenuItem onClick={() => {}}>
                         <Edit className="mr-2 h-4 w-4 text-primary" /> Edit user
-                      </DropdownMenuItem>
-                      {user.status === 'PENDING' && (
-                        <DropdownMenuItem onClick={() => handleSheetOpen(user)}>
-                          <Edit className="mr-2 h-4 w-4 text-primary" /> Review pending user
-                        </DropdownMenuItem>
-                      )}
-                      <DropdownMenuItem onClick={() => handleStatusChange(user.id, 'APPROVED')}>
-                        <CheckCircle className="mr-2 h-4 w-4 text-emerald-600" /> Approve user
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => handleStatusChange(user.id, 'SUSPENDED')}>
-                        <Ban className="mr-2 h-4 w-4 text-amber-600" /> Suspend user
                       </DropdownMenuItem>
                       <DropdownMenuSeparator />
                       <DropdownMenuItem 
@@ -372,179 +242,63 @@ export default function UsersManagementPage() {
         </Table>
       </div>
 
-      <Dialog open={isSheetOpen} onOpenChange={setIsSheetOpen}>
-        <DialogContent className="max-h-[92vh] w-[calc(100vw-2rem)] max-w-5xl overflow-hidden p-0">
-          <DialogHeader className="border-b px-6 py-5">
-            <DialogTitle className="flex items-center gap-2 text-xl">
-              <Shield className="h-5 w-5 text-primary" /> Edit User
-            </DialogTitle>
-            <DialogDescription className="max-w-2xl">
-              Assign the user to a branch and choose the role that controls access.
-            </DialogDescription>
-          </DialogHeader>
-          
-          <ScrollArea className="max-h-[calc(92vh-150px)]">
-            <div className="grid gap-6 p-6 lg:grid-cols-[360px_minmax(0,1fr)]">
-              <div className="space-y-5">
-                <div className="rounded-xl bg-secondary/20 p-4 space-y-4">
-                  <div className="space-y-2">
-                    <Label>Full Name</Label>
-                    <Input 
-                      value={selectedUser?.name || ''} 
-                      onChange={(e) => setSelectedUser(prev => prev ? {...prev, name: e.target.value} : null)}
+      {/* Bulk Upload Dialog */}
+      <Dialog open={isBulkUploadOpen} onOpenChange={setIsBulkUploadOpen}>
+        <DialogContent className="sm:max-w-lg">
+            <DialogHeader>
+                <DialogTitle>Bulk Profile Pictures</DialogTitle>
+                <DialogDescription>
+                    Upload multiple PNG/JPEG files. Name each file with the user's email or National ID (e.g., "jean@reg.rw.jpg").
+                </DialogDescription>
+            </DialogHeader>
+            <div className="py-6 space-y-4">
+                <div 
+                    className="border-2 border-dashed rounded-2xl p-10 flex flex-col items-center justify-center gap-4 bg-slate-50 hover:bg-slate-100 transition-colors cursor-pointer"
+                    onClick={() => fileInputRef.current?.click()}
+                >
+                    <div className="h-16 w-16 rounded-full bg-primary/10 flex items-center justify-center text-primary">
+                        <Upload className="h-8 w-8" />
+                    </div>
+                    <div className="text-center">
+                        <p className="font-bold text-slate-900">Click to select files</p>
+                        <p className="text-xs text-muted-foreground mt-1">PNG or JPEG up to 2MB each</p>
+                    </div>
+                    <input 
+                        type="file" 
+                        multiple 
+                        accept="image/*" 
+                        className="hidden" 
+                        ref={fileInputRef}
+                        onChange={(e) => setUploadingFiles(Array.from(e.target.files || []))}
                     />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Email</Label>
-                    <Input 
-                      value={selectedUser?.email || ''} 
-                      onChange={(e) => setSelectedUser(prev => prev ? {...prev, email: e.target.value} : null)}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Role</Label>
-                    <Select 
-                      onValueChange={(v) => setSelectedUser(prev => prev ? {...prev, role: v as any, roles: [v], department_id: v === 'BRANCH_MANAGER' ? undefined : prev.department_id} : null)} 
-                      value={selectedUser?.role}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select role" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {assignableRoles.map((r) => (
-                          <SelectItem key={r.uuid} value={r.name}>{r.name.replace('_', ' ')}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Branch</Label>
-                    <Select onValueChange={handleLocationChange} value={selectedUser?.location_id}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select branch" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {locations.map((loc) => (
-                          <SelectItem key={loc.uuid} value={loc.uuid}>{loc.name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  {!selectedRoleIsBranchManager && <div className="space-y-2">
-                    <Label>Department</Label>
-                    <Select 
-                      onValueChange={(v) => setSelectedUser(prev => prev ? {...prev, department_id: v} : null)} 
-                      value={selectedUser?.department_id}
-                      disabled={!selectedUser?.location_id}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder={selectedUser?.location_id ? "Select department" : "Select branch first"} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {departments.map((dept) => (
-                          <SelectItem key={dept.uuid} value={dept.uuid}>{dept.name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>}
                 </div>
 
-                <div className="grid gap-3 text-xs text-muted-foreground">
-                  <div className="flex items-start gap-2 break-all">
-                    <Fingerprint className="mt-0.5 h-3 w-3 shrink-0" /> ID: {selectedUser?.id}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Calendar className="h-3 w-3 shrink-0" /> Joined: {selectedUser?.createdAt ? new Date(selectedUser.createdAt).toLocaleDateString() : 'N/A'}
-                  </div>
-                </div>
-              </div>
-
-              <div className="min-w-0">
-                <h4 className="text-sm font-bold mb-4 flex items-center gap-2">
-                  <Shield className="h-4 w-4" /> Permissions in this role
-                </h4>
-                <div className="max-h-[52vh] overflow-auto rounded-xl border bg-white">
-                  <Table>
-                    <TableHeader className="sticky top-0 bg-secondary/40">
-                      <TableRow>
-                        <TableHead className="min-w-[220px]">Permission</TableHead>
-                        <TableHead className="min-w-[160px]">Area</TableHead>
-                        <TableHead className="w-[120px]">Status</TableHead>
-                        <TableHead className="w-[150px] text-right">Action</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {selectedRolePermissions.map((permission: any) => {
-                        const isAllowed = !disabledPermissionKeys.has(permission.permission_key);
-                        return (
-                          <TableRow key={permission.permission_key}>
-                            <TableCell className="font-medium whitespace-normal">{permission.name}</TableCell>
-                            <TableCell className="whitespace-nowrap">{permission.module_name}</TableCell>
-                            <TableCell>
-                              <Badge
-                                variant={isAllowed ? "secondary" : "outline"}
-                                className={isAllowed ? "whitespace-nowrap" : "whitespace-nowrap text-muted-foreground"}
-                              >
-                                {isAllowed ? "Active" : "Inactive"}
-                              </Badge>
-                            </TableCell>
-                            <TableCell className="text-right">
-                              <Button
-                                type="button"
-                                variant={isAllowed ? "outline" : "default"}
-                                size="sm"
-                                className="h-8 gap-2"
-                                onClick={() => handlePermissionToggle(permission)}
-                              >
-                                {isAllowed ? <PowerOff className="h-3.5 w-3.5" /> : <Power className="h-3.5 w-3.5" />}
-                                {isAllowed ? "Deactivate" : "Activate"}
-                              </Button>
-                            </TableCell>
-                          </TableRow>
-                        );
-                      })}
-                      {!selectedRolePermissions.length && (
-                        <TableRow>
-                          <TableCell colSpan={4} className="text-sm text-muted-foreground">
-                            Choose a role to see what this user can access.
-                          </TableCell>
-                        </TableRow>
-                      )}
-                    </TableBody>
-                  </Table>
-                </div>
-              </div>
+                {uploadingFiles.length > 0 && (
+                    <ScrollArea className="max-h-48 border rounded-xl p-2 bg-white">
+                        <div className="space-y-2">
+                            {uploadingFiles.map((f, i) => (
+                                <div key={i} className="flex items-center justify-between p-2 rounded-lg bg-slate-50 text-xs">
+                                    <div className="flex items-center gap-2">
+                                        <ImageIcon className="h-3 w-3 text-slate-400" />
+                                        <span className="truncate max-w-[200px]">{f.name}</span>
+                                    </div>
+                                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setUploadingFiles(prev => prev.filter((_, idx) => idx !== i))}>
+                                        <X className="h-3 w-3" />
+                                    </Button>
+                                </div>
+                            ))}
+                        </div>
+                    </ScrollArea>
+                )}
             </div>
-          </ScrollArea>
-
-          <DialogFooter className="border-t px-6 py-4">
-            <Button variant="outline" onClick={() => setIsSheetOpen(false)}>Cancel</Button>
-            <Button 
-              className="h-11 min-w-36 shadow-lg shadow-primary/20" 
-              onClick={() => selectedUser && handleUpdateUser(selectedUser)}
-            >
-              Save user
-            </Button>
-          </DialogFooter>
+            <DialogFooter>
+                <Button variant="outline" onClick={() => setIsBulkUploadOpen(false)}>Cancel</Button>
+                <Button onClick={handleBulkUpload} disabled={uploadingFiles.length === 0 || isUploading} className="min-w-32">
+                    {isUploading ? "Uploading..." : `Upload ${uploadingFiles.length} Images`}
+                </Button>
+            </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-          <AlertDialogTitle>Remove user?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This user will lose access immediately. Their history will stay available for records.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDeleteUser} className="bg-destructive text-destructive-foreground">
-              Remove user
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
 }

@@ -1,15 +1,14 @@
-
 "use client";
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { 
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow 
 } from "@/components/ui/table";
-import { Calendar, Search, Download, UserCheck, Clock, AlertTriangle, CheckCircle2, XCircle } from 'lucide-react';
+import { Calendar, Search, Download, UserCheck, Clock, AlertTriangle, CheckCircle2, XCircle, FileSpreadsheet, Upload, History } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { getTimeRecords, createTimeRecord, clockOutTimeRecord } from '@/api/attendance';
+import { getTimeRecords, createTimeRecord, clockOutTimeRecord, bulkCreateTimeRecords } from '@/api/attendance';
 import { getEmployees } from '@/api/employees';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { exportToCSV, exportToExcel } from '@/lib/export-utils';
@@ -21,6 +20,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/auth-context';
+import * as XLSX from 'xlsx';
 
 export default function AttendanceMonitoringPage() {
   const [records, setRecords] = useState<any[]>([]);
@@ -29,8 +29,11 @@ export default function AttendanceMonitoringPage() {
   const [activeTab, setActiveTab] = useState('ALL');
   const [viewMode, setViewMode] = useState<'LOG' | 'HISTORY'>('LOG');
   const [loading, setLoading] = useState(false);
+  const [pendingSync, setPendingSync] = useState<Record<string, any>>({});
   const { toast } = useToast();
   const { hasPermission } = useAuth();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  
   const canCreateAttendance = hasPermission('attendance.create');
   const canUpdateAttendance = hasPermission('attendance.update');
   const canLogAttendance = canCreateAttendance || canUpdateAttendance;
@@ -38,12 +41,25 @@ export default function AttendanceMonitoringPage() {
   const todayStr = new Date().toISOString().split('T')[0];
 
   const fetchData = async () => {
+    const startTime = performance.now();
     setLoading(true);
     try {
       const [recs, empsResponse] = await Promise.all([getTimeRecords(), getEmployees()]);
       const employeeList = empsResponse.employees || (Array.isArray(empsResponse) ? empsResponse : []);
-      setRecords(Array.isArray(recs) ? recs : []);
+      
+      // Optimization: Filter history to past 5 days and sort desc
+      const fiveDaysAgo = new Date();
+      fiveDaysAgo.setDate(fiveDaysAgo.getDate() - 5);
+      
+      const filteredRecs = (Array.isArray(recs) ? recs : [])
+        .filter(r => new Date(r.attendance_date) >= fiveDaysAgo)
+        .sort((a, b) => new Date(b.attendance_date).getTime() - new Date(a.attendance_date).getTime());
+
+      setRecords(filteredRecs);
       setEmployees(employeeList);
+      
+      const duration = (performance.now() - startTime) / 1000;
+      console.log(`Fetch completed in ${duration.toFixed(3)}s`);
     } catch (error) {
       toast({ variant: 'destructive', title: 'Fetch failed', description: 'Could not load attendance data.' });
     } finally {
@@ -53,7 +69,28 @@ export default function AttendanceMonitoringPage() {
 
   useEffect(() => {
     fetchData();
+    
+    // 15-minute auto-sync
+    const interval = setInterval(() => {
+        syncPendingLogs();
+    }, 15 * 60 * 1000);
+    
+    return () => clearInterval(interval);
   }, []);
+
+  const syncPendingLogs = async () => {
+    const logs = Object.values(pendingSync);
+    if (logs.length === 0) return;
+
+    try {
+      await bulkCreateTimeRecords(logs);
+      setPendingSync({});
+      toast({ title: 'Synced', description: `${logs.length} logs persisted to database.` });
+      fetchData();
+    } catch (error) {
+      console.error('Auto-sync failed', error);
+    }
+  };
 
   const todayRecordsMap = useMemo(() => {
     const map: Record<string, any> = {};
@@ -63,8 +100,12 @@ export default function AttendanceMonitoringPage() {
         map[rec.employee_id] = rec;
       }
     });
+    // Add pending syncs to map for UI consistency
+    Object.values(pendingSync).forEach(ps => {
+        map[ps.employee_id] = ps;
+    });
     return map;
-  }, [records, todayStr]);
+  }, [records, todayStr, pendingSync]);
 
   const filteredEmployees = useMemo(() => {
     return employees.filter(emp => {
@@ -86,61 +127,75 @@ export default function AttendanceMonitoringPage() {
     });
   }, [records, searchTerm, activeTab]);
 
-  const handleMarkAttendance = async (employeeId: string, status: 'PRESENT' | 'ABSENT', clockIn?: string, clockOut?: string) => {
-    try {
-      const existing = todayRecordsMap[employeeId];
-      if (existing && !canUpdateAttendance) {
-        toast({ variant: 'destructive', title: 'Permission denied', description: 'You can view attendance, but cannot update existing logs.' });
-        return;
-      }
-
-      if (!existing && !canCreateAttendance) {
-        toast({ variant: 'destructive', title: 'Permission denied', description: 'You can view attendance, but cannot create new logs.' });
-        return;
-      }
-      
-      const attendanceDate = new Date().toISOString();
-      const defaultClockIn = new Date();
-      defaultClockIn.setHours(9, 0, 0, 0);
-      
-      const defaultClockOut = new Date();
-      defaultClockOut.setHours(17, 0, 0, 0);
-
-      const finalClockIn = clockIn ? new Date(`${todayStr}T${clockIn}`) : defaultClockIn;
-      const finalClockOut = clockOut ? new Date(`${todayStr}T${clockOut}`) : defaultClockOut;
-
-      if (existing) {
-        // Update existing record (clock out/status)
-        await clockOutTimeRecord(existing.uuid, {
-          attendance_status: status,
-          clock_out: status === 'PRESENT' ? finalClockOut.toISOString() : undefined
-        });
-      } else {
-        // Create new record (clock in)
-        await createTimeRecord({
-          employee_id: employeeId,
-          attendance_date: attendanceDate,
-          attendance_status: status,
-          clock_in: status === 'PRESENT' ? finalClockIn.toISOString() : undefined
-        });
-      }
-      
-      toast({ title: 'Success', description: `Attendance marked as ${status.toLowerCase()}.` });
-      fetchData();
-    } catch (error) {
-      toast({ variant: 'destructive', title: 'Error', description: 'Failed to mark attendance.' });
+  const handleMarkAttendance = (employeeId: string, status: 'PRESENT' | 'ABSENT', clockIn?: string, clockOut?: string) => {
+    const existing = todayRecordsMap[employeeId];
+    if (existing && !canUpdateAttendance) {
+      toast({ variant: 'destructive', title: 'Permission denied', description: 'Cannot update existing logs.' });
+      return;
     }
+
+    const log = {
+        employee_id: employeeId,
+        attendance_date: new Date().toISOString(),
+        attendance_status: status,
+        clock_in: status === 'PRESENT' ? new Date(`${todayStr}T${clockIn}`).toISOString() : undefined,
+        clock_out: status === 'PRESENT' ? new Date(`${todayStr}T${clockOut}`).toISOString() : undefined
+    };
+
+    setPendingSync(prev => ({ ...prev, [employeeId]: log }));
+    toast({ title: 'Logged Locally', description: `Attendance cached. Automatic sync in 15 mins.` });
   };
 
-  const presentCount = useMemo(() => records.filter((record) => {
-    const recDate = new Date(record.attendance_date).toISOString().split('T')[0];
-    return recDate === todayStr && record.attendance_status === 'PRESENT';
-  }).length, [records, todayStr]);
+  const handleExcelImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
 
-  const absentCount = useMemo(() => records.filter((record) => {
-    const recDate = new Date(record.attendance_date).toISOString().split('T')[0];
-    return recDate === todayStr && record.attendance_status === 'ABSENT';
-  }).length, [records, todayStr]);
+    if (file.size > 5 * 1024 * 1024) {
+      toast({ variant: 'destructive', title: 'File too large', description: 'Max file size is 5MB.' });
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      const bstr = evt.target?.result;
+      const wb = XLSX.read(bstr, { type: 'binary' });
+      const wsname = wb.SheetNames[0];
+      const ws = wb.Sheets[wsname];
+      const data: any[] = XLSX.utils.sheet_to_json(ws);
+
+      if (data.length > 200) {
+        toast({ variant: 'destructive', title: 'Too many rows', description: 'files rows aree too many divide file into two' });
+        return;
+      }
+
+      // Handle duplicates and empty fields
+      const processedLogs: any[] = [];
+      const seen = new Set();
+
+      data.forEach(row => {
+        const empId = row.employee_id || row.EmployeeID;
+        if (!empId || seen.has(empId)) return; // Ignore duplicates or empty IDs
+        
+        seen.add(empId);
+        processedLogs.push({
+          employee_id: empId,
+          attendance_date: todayStr,
+          attendance_status: row.status || 'PRESENT',
+          clock_in: row.clock_in ? new Date(`${todayStr}T${row.clock_in}`).toISOString() : undefined,
+          clock_out: row.clock_out ? new Date(`${todayStr}T${row.clock_out}`).toISOString() : undefined,
+        });
+      });
+
+      try {
+        await bulkCreateTimeRecords(processedLogs);
+        toast({ title: 'Import Success', description: `${processedLogs.length} attendance records imported.` });
+        fetchData();
+      } catch (err) {
+        toast({ variant: 'destructive', title: 'Import Failed', description: 'Ensure the file format is correct.' });
+      }
+    };
+    reader.readAsBinaryString(file);
+  };
 
   const handleExport = (type: 'csv' | 'excel') => {
     const dataToExport = viewMode === 'HISTORY' ? filteredHistory : filteredEmployees.map(emp => {
@@ -162,18 +217,35 @@ export default function AttendanceMonitoringPage() {
       Status: rec.attendance_status
     }));
 
-    if (type === 'csv') exportToCSV(exportData, 'attendance');
-    else if (type === 'excel') exportToExcel(exportData, 'attendance');
+    const dateStr = new Date().toISOString().split('T')[0];
+    const path = `REG_Pay/time_records/attendance_export/${dateStr}`;
+
+    if (type === 'csv') exportToCSV(exportData, path);
+    else if (type === 'excel') exportToExcel(exportData, path);
   };
 
   return (
     <div className="space-y-8">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-headline font-bold">Attendance Management</h1>
-          <p className="text-muted-foreground">Log daily presence or monitor historical trends.</p>
+          <h1 className="text-3xl font-headline font-bold">Attendance Systems</h1>
+          <p className="text-muted-foreground">High-performance workforce logging & historical audit.</p>
         </div>
         <div className="flex gap-2">
+          <input 
+            type="file" 
+            ref={fileInputRef} 
+            className="hidden" 
+            accept=".xlsx, .xls, .csv" 
+            onChange={handleExcelImport} 
+          />
+          <Button 
+            variant="outline" 
+            onClick={() => fileInputRef.current?.click()}
+            className="h-11 border-dashed"
+          >
+            <Upload className="mr-2 h-4 w-4" /> Bulk Import
+          </Button>
           <Button 
             variant={viewMode === 'LOG' ? 'default' : 'outline'} 
             onClick={() => setViewMode('LOG')}
@@ -186,11 +258,11 @@ export default function AttendanceMonitoringPage() {
             onClick={() => setViewMode('HISTORY')}
             className="h-11"
           >
-            <Calendar className="mr-2 h-4 w-4" /> History
+            <History className="mr-2 h-4 w-4" /> 5-Day History
           </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" className="h-11"><Download className="mr-2 h-4 w-4" /> Export</Button>
+              <Button variant="outline" className="h-11 shadow-sm"><Download className="mr-2 h-4 w-4" /> Export</Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent>
               <DropdownMenuItem onClick={() => handleExport('csv')}>CSV</DropdownMenuItem>
@@ -200,33 +272,42 @@ export default function AttendanceMonitoringPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-white p-6 rounded-2xl border shadow-sm flex items-center gap-4">
-          <div className="h-12 w-12 rounded-full bg-emerald-100 flex items-center justify-center">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+        <div className="bg-white p-6 rounded-3xl border shadow-sm flex items-center gap-4">
+          <div className="h-12 w-12 rounded-2xl bg-emerald-50 flex items-center justify-center">
             <UserCheck className="h-6 w-6 text-emerald-600" />
           </div>
           <div>
-            <p className="text-sm font-medium text-muted-foreground">Present Today</p>
-            <p className="text-2xl font-bold">{presentCount} / {employees.length}</p>
+            <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Present</p>
+            <p className="text-2xl font-bold">{filteredEmployees.filter(e => todayRecordsMap[e.id]?.attendance_status === 'PRESENT').length}</p>
           </div>
         </div>
-        <div className="bg-white p-6 rounded-2xl border shadow-sm flex items-center gap-4">
-          <div className="h-12 w-12 rounded-full bg-amber-100 flex items-center justify-center">
+        <div className="bg-white p-6 rounded-3xl border shadow-sm flex items-center gap-4">
+          <div className="h-12 w-12 rounded-2xl bg-amber-50 flex items-center justify-center">
             <Clock className="h-6 w-6 text-amber-600" />
           </div>
           <div>
-            <p className="text-sm font-medium text-muted-foreground">Pending Log</p>
-            <p className="text-2xl font-bold">{employees.length - presentCount - absentCount}</p>
+            <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Pending</p>
+            <p className="text-2xl font-bold">{filteredEmployees.length - Object.keys(todayRecordsMap).length}</p>
           </div>
         </div>
-        <div className="bg-white p-6 rounded-2xl border shadow-sm flex items-center gap-4">
-          <div className="h-12 w-12 rounded-full bg-rose-100 flex items-center justify-center">
+        <div className="bg-white p-6 rounded-3xl border shadow-sm flex items-center gap-4">
+          <div className="h-12 w-12 rounded-2xl bg-rose-50 flex items-center justify-center">
             <AlertTriangle className="h-6 w-6 text-rose-600" />
           </div>
           <div>
-            <p className="text-sm font-medium text-muted-foreground">Absent Today</p>
-            <p className="text-2xl font-bold">{absentCount}</p>
+            <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Absent</p>
+            <p className="text-2xl font-bold">{filteredEmployees.filter(e => todayRecordsMap[e.id]?.attendance_status === 'ABSENT').length}</p>
           </div>
+        </div>
+        <div className="bg-slate-900 text-white p-6 rounded-3xl shadow-lg flex items-center gap-4">
+            <div className="h-12 w-12 rounded-2xl bg-white/10 flex items-center justify-center">
+                <History className="h-6 w-6 text-primary" />
+            </div>
+            <div>
+                <p className="text-xs font-bold text-white/50 uppercase tracking-widest">Unsynced</p>
+                <p className="text-2xl font-bold">{Object.keys(pendingSync).length}</p>
+            </div>
         </div>
       </div>
 
@@ -236,14 +317,13 @@ export default function AttendanceMonitoringPage() {
             <TabsTrigger value="ALL" className="rounded-lg font-bold text-xs px-6">All Staff</TabsTrigger>
             <TabsTrigger value="MONTHLY" className="rounded-lg font-bold text-xs px-6">Monthly</TabsTrigger>
             <TabsTrigger value="DAILY" className="rounded-lg font-bold text-xs px-6">Daily</TabsTrigger>
-            <TabsTrigger value="CUSTOM" className="rounded-lg font-bold text-xs px-6">Custom</TabsTrigger>
           </TabsList>
 
           <div className="relative w-full md:w-72">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input 
-              placeholder="Search by name..." 
-              className="pl-10 h-10 bg-white"
+              placeholder="Filter by name..." 
+              className="pl-10 h-11 bg-white border-none shadow-sm rounded-xl"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />
@@ -251,13 +331,12 @@ export default function AttendanceMonitoringPage() {
         </div>
 
         <TabsContent value={activeTab} className="m-0">
-          <div className="bg-white rounded-2xl border shadow-sm overflow-hidden">
+          <div className="bg-white rounded-3xl border shadow-sm overflow-hidden">
             {viewMode === 'LOG' ? (
               <Table>
-                <TableHeader className="bg-secondary/50">
+                <TableHeader className="bg-slate-50">
                   <TableRow>
                     <TableHead className="font-bold">Personnel</TableHead>
-                    <TableHead className="font-bold">Category</TableHead>
                     <TableHead className="font-bold">Status Today</TableHead>
                     <TableHead className="font-bold">Clock In</TableHead>
                     <TableHead className="font-bold">Clock Out</TableHead>
@@ -278,20 +357,18 @@ export default function AttendanceMonitoringPage() {
                     );
                   }) : (
                     <TableRow>
-                      <TableCell colSpan={canLogAttendance ? 6 : 5} className="text-center py-20 text-muted-foreground italic">No employees found.</TableCell>
+                      <TableCell colSpan={canLogAttendance ? 5 : 4} className="text-center py-20 text-muted-foreground italic">No employees found.</TableCell>
                     </TableRow>
                   )}
                 </TableBody>
               </Table>
             ) : (
               <Table>
-                <TableHeader className="bg-secondary/50">
+                <TableHeader className="bg-slate-50">
                   <TableRow>
                     <TableHead className="font-bold">Personnel</TableHead>
                     <TableHead className="font-bold">Department</TableHead>
                     <TableHead className="font-bold">Date</TableHead>
-                    <TableHead className="font-bold">Check-In</TableHead>
-                    <TableHead className="font-bold">Check-Out</TableHead>
                     <TableHead className="font-bold">Status</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -301,12 +378,10 @@ export default function AttendanceMonitoringPage() {
                       <TableCell className="font-semibold">{`${rec.employee?.first_name ?? ''} ${rec.employee?.last_name ?? ''}`.trim() || rec.employee_id}</TableCell>
                       <TableCell>{rec.employee?.department?.name ?? 'Unassigned'}</TableCell>
                       <TableCell className="text-muted-foreground text-xs">{new Date(rec.attendance_date).toLocaleDateString()}</TableCell>
-                      <TableCell className="font-mono text-xs">{rec.clock_in ? new Date(rec.clock_in).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '-'}</TableCell>
-                      <TableCell className="font-mono text-xs">{rec.clock_out ? new Date(rec.clock_out).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '-'}</TableCell>
                       <TableCell>
                         <Badge className={
-                          rec.attendance_status === 'PRESENT' ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20' :
-                          'bg-rose-500/10 text-rose-600 border-rose-500/20'
+                          rec.attendance_status === 'PRESENT' ? 'bg-emerald-500/10 text-emerald-600' :
+                          'bg-rose-500/10 text-rose-600'
                         }>
                           {rec.attendance_status}
                         </Badge>
@@ -314,7 +389,7 @@ export default function AttendanceMonitoringPage() {
                     </TableRow>
                   )) : (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center py-20 text-muted-foreground italic">No historical logs found.</TableCell>
+                      <TableCell colSpan={4} className="text-center py-20 text-muted-foreground italic">No historical logs found (last 5 days).</TableCell>
                     </TableRow>
                   )}
                 </TableBody>
@@ -333,13 +408,11 @@ function AttendanceRow({ employee, record, onMark, canLogAttendance }: { employe
 
   return (
     <TableRow className="hover:bg-secondary/10 transition-colors">
-      <TableCell className="font-semibold">
-        {employee.first_name} {employee.last_name}
-      </TableCell>
       <TableCell>
-        <Badge variant="outline" className="text-[10px] font-bold">
-          {employee.employment_category?.name || 'DAILY'}
-        </Badge>
+        <div className="flex flex-col">
+            <span className="font-bold text-slate-800">{employee.first_name} {employee.last_name}</span>
+            <span className="text-[10px] text-muted-foreground uppercase">{employee.employment_category?.name || 'DAILY'}</span>
+        </div>
       </TableCell>
       <TableCell>
         {record ? (
@@ -347,7 +420,7 @@ function AttendanceRow({ employee, record, onMark, canLogAttendance }: { employe
             {record.attendance_status}
           </Badge>
         ) : (
-          <Badge variant="outline" className="text-muted-foreground border-dashed">NOT LOGGED</Badge>
+          <Badge variant="outline" className="text-muted-foreground border-dashed">Awaiting</Badge>
         )}
       </TableCell>
       <TableCell>
@@ -356,7 +429,7 @@ function AttendanceRow({ employee, record, onMark, canLogAttendance }: { employe
           value={clockIn} 
           onChange={(e) => setClockIn(e.target.value)}
           disabled={!canLogAttendance}
-          className="w-32 h-8 text-xs font-mono"
+          className="w-28 h-9 text-xs font-mono rounded-lg border-slate-200"
         />
       </TableCell>
       <TableCell>
@@ -365,7 +438,7 @@ function AttendanceRow({ employee, record, onMark, canLogAttendance }: { employe
           value={clockOut} 
           onChange={(e) => setClockOut(e.target.value)}
           disabled={!canLogAttendance}
-          className="w-32 h-8 text-xs font-mono"
+          className="w-28 h-9 text-xs font-mono rounded-lg border-slate-200"
         />
       </TableCell>
       {canLogAttendance && (
@@ -373,18 +446,19 @@ function AttendanceRow({ employee, record, onMark, canLogAttendance }: { employe
           <div className="flex justify-end gap-2">
             <Button 
               size="sm" 
-              variant={record?.attendance_status === 'PRESENT' ? 'default' : 'outline'}
-              className={record?.attendance_status === 'PRESENT' ? 'bg-emerald-600 hover:bg-emerald-700' : ''}
+              variant="outline"
+              className={`h-9 rounded-xl font-bold text-xs ${record?.attendance_status === 'PRESENT' ? 'bg-emerald-600 text-white' : 'hover:bg-emerald-50 text-emerald-600 border-emerald-100'}`}
               onClick={() => onMark(employee.id, 'PRESENT', clockIn, clockOut)}
             >
-              <CheckCircle2 className="h-4 w-4 mr-1" /> Present
+              Present
             </Button>
             <Button 
               size="sm" 
-              variant={record?.attendance_status === 'ABSENT' ? 'destructive' : 'outline'}
+              variant="outline"
+              className={`h-9 rounded-xl font-bold text-xs ${record?.attendance_status === 'ABSENT' ? 'bg-rose-600 text-white' : 'hover:bg-rose-50 text-rose-600 border-rose-100'}`}
               onClick={() => onMark(employee.id, 'ABSENT')}
             >
-              <XCircle className="h-4 w-4 mr-1" /> Absent
+              Absent
             </Button>
           </div>
         </TableCell>

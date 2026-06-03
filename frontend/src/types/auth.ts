@@ -32,6 +32,7 @@ export interface User {
     is_allowed: boolean;
   }[];
   avatar?: string;
+  avatar_url?: string;
   department?: string;
   location?: string;
   department_id?: string;

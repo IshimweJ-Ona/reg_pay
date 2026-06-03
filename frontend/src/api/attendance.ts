@@ -57,3 +57,8 @@ export const getTimeRecordsByEmployee = async (employeeId: string) => {
     const response = await api.get(`/time-records/employee/${employeeId}`);
     return response.data;
 };
+
+export const bulkCreateTimeRecords = async (records: any[]) => {
+    const response = await api.post("/time-records/bulk", { records });
+    return response.data;
+};

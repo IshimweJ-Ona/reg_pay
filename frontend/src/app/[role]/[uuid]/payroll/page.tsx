@@ -1,4 +1,3 @@
-
 "use client";
 
 import React, { useEffect, useState } from 'react';
@@ -8,7 +7,7 @@ import {
 } from "@/components/ui/table";
 import { 
   Plus, Search, Filter, Download, FileText, 
-  MoreVertical, Eye, CheckCircle, XCircle
+  MoreVertical, Eye, CheckCircle, XCircle, Clock, Wallet
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -27,6 +26,7 @@ import { useParams } from 'next/navigation';
 import { approvePayrollBatch, getPayrollBatches, rejectPayrollBatch } from '@/api/payroll';
 import { exportToCSV, exportToExcel } from '@/lib/export-utils';
 import { useToast } from '@/hooks/use-toast';
+import { PendingBatchesModal } from '@/components/payroll/pending-batches-modal';
 
 const formatRwf = (value: number) => `RWF ${value.toLocaleString()}`;
 
@@ -52,10 +52,12 @@ export default function PayrollAdminPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [batches, setBatches] = useState<PayrollBatch[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [showReviewModal, setShowReviewModal] = useState(false);
 
   const role = params.role as string;
   const uuid = params.uuid as string;
   const basePath = `/${role}/${uuid}`;
+
   useEffect(() => {
     setIsLoading(true);
     getPayrollBatches()
@@ -66,9 +68,9 @@ export default function PayrollAdminPage() {
 
   const stats = [
     { name: 'Total Batches', value: String(batches.length), icon: FileText, color: 'text-blue-600' },
-    { name: 'Pending Approval', value: String(batches.filter((batch) => batch.status === 'PENDING').length), icon: Eye, color: 'text-amber-600' },
-    { name: 'Total Amount', value: formatRwf(batches.reduce((sum, batch) => sum + batch.totalAmount, 0)), icon: Plus, color: 'text-primary' },
-    { name: 'Failed Transfers', value: '0', icon: XCircle, color: 'text-destructive' },
+    { name: 'Active Batches', value: String(batches.filter(b => b.status === 'APPROVED' || b.status === 'MANAGER_APPROVED').length), icon: CheckCircle, color: 'text-emerald-600' },
+    { name: 'Pending Review', value: String(batches.filter(b => b.status === 'PENDING' || b.status === 'IN_REVIEW').length), icon: Clock, color: 'text-amber-600', action: 'review' },
+    { name: 'Total Disbursed', value: formatRwf(batches.filter(b => b.status === 'APPROVED').reduce((sum, batch) => sum + batch.totalAmount, 0)), icon: Wallet, color: 'text-primary' },
   ];
 
   const filteredBatches = batches.filter(b => 
@@ -92,8 +94,15 @@ export default function PayrollAdminPage() {
   };
 
   const refreshBatches = async () => {
-    const items = await getPayrollBatches();
-    setBatches((Array.isArray(items) ? items : []).map(mapApiBatch));
+    setIsLoading(true);
+    try {
+      const items = await getPayrollBatches();
+      setBatches((Array.isArray(items) ? items : []).map(mapApiBatch));
+    } catch (error) {
+      setBatches([]);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleApprove = async (batch: PayrollBatch) => {
@@ -126,6 +135,12 @@ export default function PayrollAdminPage() {
 
   return (
     <div className="space-y-8">
+      <PendingBatchesModal 
+        isOpen={showReviewModal} 
+        onClose={() => setShowReviewModal(false)} 
+        onRefresh={refreshBatches} 
+      />
+
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-headline font-bold">Payroll Infrastructure</h1>
@@ -142,7 +157,7 @@ export default function PayrollAdminPage() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {stats.map((stat) => (
-          <Card key={stat.name} className="border-none shadow-sm">
+          <Card key={stat.name} className={`border-none shadow-sm ${stat.action ? 'cursor-pointer hover:ring-2 hover:ring-primary/20 transition-all' : ''}`} onClick={() => stat.action === 'review' && setShowReviewModal(true)}>
             <CardContent className="pt-6">
               <div className="flex items-center justify-between">
                 <div>

@@ -3,7 +3,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Users, FileCheck, AlertCircle, TrendingUp, DollarSign, Activity, Clock, ShieldAlert, Bell, FileText, Calendar, ChevronRight, Plus, Building2, MapPin } from 'lucide-react';
+import { Users, FileCheck, AlertCircle, TrendingUp, Activity, Clock, ShieldAlert, Bell, FileText, Calendar, ChevronRight, Plus, Building2, MapPin, Receipt, Wallet } from 'lucide-react';
 import { useAuth, isAdminRole } from '@/context/auth-context';
 import { getEmployees } from '@/api/employees';
 import { getPayrollBatches } from '@/api/payroll';
@@ -170,9 +170,9 @@ export default function DashboardPage() {
   // Management Dashboard
   const stats = [
     { label: 'Total Personnel', value: employees.length, icon: Users, color: 'text-blue-600', bg: 'bg-blue-50' },
-    { label: 'Active Batches', value: batches.filter(b => b.status === 'PENDING').length, icon: FileCheck, color: 'text-emerald-600', bg: 'bg-emerald-50' },
-    { label: 'Pending Users', value: employees.filter(e => e.status === 'PENDING').length, icon: AlertCircle, color: 'text-amber-600', bg: 'bg-amber-50' },
-    { label: 'Avg Attendance', value: '94.2%', icon: TrendingUp, color: 'text-purple-600', bg: 'bg-purple-50' },
+    { label: 'Active Batches', value: batches.filter(b => b.status === 'APPROVED' || b.status === 'MANAGER_APPROVED').length, icon: FileCheck, color: 'text-emerald-600', bg: 'bg-emerald-50' },
+    { label: 'Pending Batches', value: batches.filter(b => b.status === 'PENDING' || b.status === 'IN_REVIEW').length, icon: Clock, color: 'text-amber-600', bg: 'bg-amber-50' },
+    { label: 'Pending Users', value: employees.filter(e => e.status === 'PENDING').length, icon: AlertCircle, color: 'text-rose-600', bg: 'bg-rose-50' },
   ];
 
   return (
@@ -215,8 +215,8 @@ export default function DashboardPage() {
               <CardTitle className="text-xl font-bold">Group Liquidity & Disbursement</CardTitle>
               <CardDescription>Aggregated monthly salary trends across all regional branches.</CardDescription>
             </div>
-            <div className="h-10 w-10 rounded-xl bg-emerald-50 flex items-center justify-center text-emerald-600">
-              <DollarSign className="h-5 w-5" />
+            <div className="h-12 w-16 rounded-xl bg-emerald-50 flex items-center justify-center text-emerald-600 font-bold text-sm">
+              RWF
             </div>
           </CardHeader>
           <CardContent>

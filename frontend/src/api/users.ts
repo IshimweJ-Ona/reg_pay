@@ -73,6 +73,17 @@ export const updateUserPermissionOverride = async (
     return response.data;
 };
 
+export const bulkUploadProfileImages = async (files: File[], mappings: Record<string, string>) => {
+    const formData = new FormData();
+    files.forEach(file => formData.append('images', file));
+    formData.append('mappings', JSON.stringify(mappings));
+
+    const response = await api.post('/users/bulk-profile-images', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+    });
+    return response.data;
+};
+
 export const requestUserTransfer = async (
     uuid: string,
     payload: RequestUserTransferPayload,
