@@ -410,6 +410,7 @@ export class AuthService {
         phone_number: user.phone_number,
         gender: user.gender,
         status: user.status,
+        avatar_url: user.avatar_url,
         working_location: user.working_location
           ? {
               uuid: user.working_location.uuid,

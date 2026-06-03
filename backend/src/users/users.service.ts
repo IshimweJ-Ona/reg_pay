@@ -653,6 +653,20 @@ export class UsersService {
     return { success: true, count: results.length, details: results };
   }
 
+  async getAvatarUrl(uuid: string) {
+    const user = await this.prisma.users.findUnique({
+      where: { uuid },
+      select: { avatar_url: true },
+    });
+    if (user) return user.avatar_url;
+
+    const employee = await this.prisma.employees.findUnique({
+      where: { uuid },
+      select: { avatar_url: true },
+    });
+    return employee?.avatar_url || null;
+  }
+
   async updatePermissionOverride(
     uuid: string,
     permissionInput: string,

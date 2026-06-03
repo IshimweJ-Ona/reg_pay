@@ -175,7 +175,6 @@ export class UsersController {
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
   @Roles('SUPER_ADMIN', 'ADMIN', 'HQ_MANAGER')
-  @Permissions('users.transfer')
   @Patch('transfer-requests/:uuid/reject')
   rejectTransfer(
     @Param('uuid') uuid: string,
@@ -183,5 +182,11 @@ export class UsersController {
     @CurrentUser() actor: CurrentUserType,
   ) {
     return this.usersService.rejectTransfer(uuid, dto, actor);
+  }
+
+  @Get(':uuid/avatar')
+  async getAvatar(@Param('uuid') uuid: string) {
+    const avatarUrl = await this.usersService.getAvatarUrl(uuid);
+    return { avatar_url: avatarUrl };
   }
 }
