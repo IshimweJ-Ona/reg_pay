@@ -16,6 +16,11 @@ export const createPayrollBatch = async (payload: Partial<CreatePayrollBatchPayl
     return response.data;
 };
 
+export const submitPayrollBatch = async (uuid: string) => {
+    const response = await api.post(`/payroll/batches/${uuid}/submit`);
+    return response.data;
+};
+
 export const getPayrollBatches = async () => {
     const response = await api.get("/payroll/batches");
     return response.data;

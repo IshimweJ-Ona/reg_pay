@@ -7,6 +7,7 @@ import { useRouter, useParams } from 'next/navigation';
 import { useEffect } from 'react';
 import { SectionErrorBoundary } from '@/components/layout/section-error-boundary';
 import { cn } from '@/lib/utils';
+import { ProtectedRoute } from '@/components/auth/protected-route';
 
 function DashboardLayoutContent({ children }: { children: React.ReactNode }) {
   const { user, isLoading } = useAuth();
@@ -35,17 +36,19 @@ function DashboardLayoutContent({ children }: { children: React.ReactNode }) {
   const isManagement = isAdminRole(user.role);
 
   return (
-    <div className={cn(
-      "flex h-screen overflow-hidden",
-      isManagement ? "bg-pearl-fog" : "bg-secondary/5"
-    )}>
-      <Sidebar type={isManagement ? "admin" : "user"} />
-      <main className="flex-1 overflow-y-auto p-8 relative">
-        <SectionErrorBoundary>
-          {children}
-        </SectionErrorBoundary>
-      </main>
-    </div>
+    <ProtectedRoute>
+      <div className={cn(
+        "flex h-screen overflow-hidden",
+        isManagement ? "bg-pearl-fog" : "bg-secondary/5"
+      )}>
+        <Sidebar type={isManagement ? "admin" : "user"} />
+        <main className="flex-1 overflow-y-auto p-8 relative">
+          <SectionErrorBoundary>
+            {children}
+          </SectionErrorBoundary>
+        </main>
+      </div>
+    </ProtectedRoute>
   );
 }
 

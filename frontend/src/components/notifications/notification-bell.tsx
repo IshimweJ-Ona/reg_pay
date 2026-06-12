@@ -16,10 +16,14 @@ import { approvePayrollBatch, rejectPayrollBatch } from '@/api/payroll';
 import { useToast } from '@/hooks/use-toast';
 import { Badge } from '../ui/badge';
 import { userFriendlyError } from '@/lib/error-message';
+import { useNotifications, Notification as SSENotification } from '@/hooks/use-notifications';
+import { useAuth } from '@/context/auth-context';
 
 export function NotificationBell({ type }: { type: 'admin' | 'user' }) {
-  const [notifications, setNotifications] = useState<Notification[]>([]);
-  const [unreadCount, setUnreadCount] = useState(0);
+  const { accessToken } = useAuth();
+  const { notifications: sseNotifications, unreadCount: sseUnreadCount, setUnreadCount: setSSEUnreadCount } = useNotifications(accessToken || '');
+  const [initialNotifications, setInitialNotifications] = useState<Notification[]>([]);
+  const [initialUnreadCount, setInitialUnreadCount] = useState(0);
   const { toast } = useToast();
   const router = useRouter();
   const params = useParams();
@@ -31,21 +35,31 @@ export function NotificationBell({ type }: { type: 'admin' | 'user' }) {
   const loadNotifications = async () => {
     try {
       const data = await getNotifications();
-      setNotifications(data);
+      setInitialNotifications(data);
       const count = await getUnreadCount();
-      setUnreadCount(count);
+      setInitialUnreadCount(count);
+      setSSEUnreadCount(count);
     } catch {
-      setNotifications([]);
-      setUnreadCount(0);
+      setInitialNotifications([]);
+      setInitialUnreadCount(0);
     }
   };
 
   useEffect(() => {
     loadNotifications();
-    const interval = setInterval(loadNotifications, 30000); // Refresh every 30s
-    return () => clearInterval(interval);
   }, []);
 
+  const allNotifications = useMemo(() => {
+    // Combine initial fetch with real-time updates, deduplicating by uuid
+    const combined = [...sseNotifications, ...initialNotifications];
+    const unique = new Map();
+    combined.forEach(n => {
+        if (!unique.has(n.uuid)) unique.set(n.uuid, n);
+    });
+    return Array.from(unique.values()).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  }, [sseNotifications, initialNotifications]);
+
+  const unreadCount = sseUnreadCount;
   const handleApproveRegistration = async (notificationUuid: string, userUuid: string) => {
     try {
       router.push(`${basePath}/users?edit=${userUuid}&needsRole=1`);
@@ -120,18 +134,8 @@ export function NotificationBell({ type }: { type: 'admin' | 'user' }) {
   };
 
   const handleRejectPayroll = async (notificationUuid: string, batchUuid: string) => {
-    try {
-      await rejectPayrollBatch(batchUuid, "Rejected from notifications.");
-      await markAsRead(notificationUuid);
-      toast({ variant: "destructive", title: "Payroll rejected", description: "The creator has been notified." });
-      await loadNotifications();
-    } catch (error: any) {
-      toast({
-        variant: "destructive",
-        title: "Payroll rejection failed",
-        description: userFriendlyError(error, "Please try again."),
-      });
-    }
+    router.push(`${basePath}/payroll/${batchUuid}`);
+    if (accessToken) await markAsRead(notificationUuid);
   };
 
   const handleMarkAllRead = async () => {
@@ -188,7 +192,7 @@ export function NotificationBell({ type }: { type: 'admin' | 'user' }) {
         <DropdownMenuSeparator className="m-0" />
         <ScrollArea className="h-[400px]">
           <div className="flex flex-col">
-            {notifications.length > 0 ? notifications.map((n) => (
+            {allNotifications.length > 0 ? allNotifications.map((n) => (
               <div key={n.uuid} className={`p-4 border-b last:border-0 relative group transition-colors ${n.is_read ? 'bg-white opacity-80' : 'bg-blue-50/30'}`}>
                 <div className="flex gap-4">
                   <div className={`h-10 w-10 shrink-0 rounded-full flex items-center justify-center ${

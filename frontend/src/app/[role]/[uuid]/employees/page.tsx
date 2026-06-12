@@ -15,7 +15,9 @@ import {
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuLabel,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -41,6 +43,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Employee } from '@/types/employee';
 import { getEmployees, suspendEmployee, createEmployee, updateEmployee } from '@/api/employees';
+import { getTimeRecords } from '@/api/attendance';
 import { getWorkingLocations, getDepartments } from '@/api/working_locations';
 import { getAvatarUrl } from '@/lib/utils';
 import { 
@@ -60,10 +63,19 @@ import { Download } from 'lucide-react';
 
 const formatRwf = (value: number) => `RWF ${value.toLocaleString()}`;
 
-function mapApiEmployee(item: any): Employee {
+function mapApiEmployee(item: any, attendanceByEmployee = new Map<string, any[]>()): Employee {
   const structure = item.payment_structures?.[0] || {};
+  const timeRecords = attendanceByEmployee.get(String(item.id)) ?? [];
+  const presentCount = timeRecords.filter((record) => record.attendance_status === 'PRESENT').length;
+  const latestRecord = [...timeRecords].sort(
+    (a, b) =>
+      new Date(b.attendance_date ?? b.created_at).getTime() -
+      new Date(a.attendance_date ?? a.created_at).getTime(),
+  )[0];
+
   return {
     id: item.uuid || '',
+    uuid: item.uuid || '',
     bigIntId: item.id || '',
     employeeId: item.uuid || '',
     fullName: `${item.first_name || ''} ${item.last_name || ''}`.trim() || 'Unknown Name',
@@ -71,7 +83,10 @@ function mapApiEmployee(item: any): Employee {
     location: item.working_location?.name ?? 'Unassigned',
     salary: Number(structure.basic_salary ?? structure.daily_rate ?? 0),
     status: item.status || 'ACTIVE',
-    attendanceRate: 0,
+    attendanceRate: timeRecords.length ? Math.round((presentCount / timeRecords.length) * 100) : 0,
+    lastAttendanceDate: latestRecord?.attendance_date,
+    lastAttendanceStatus: latestRecord?.attendance_status,
+    employmentCategory: item.employment_category?.name ?? 'Unassigned',
     email: item.email ?? '',
     avatar_url: item.avatar_url,
     phone_number: item.phone_number ?? '',
@@ -101,6 +116,12 @@ export default function EmployeeDirectoryPage() {
   const [departments, setDepartments] = useState<any[]>([]);
   const [filteredDepartments, setFilteredDepartments] = useState<any[]>([]);
   const [paymentCategories, setPaymentCategories] = useState<any[]>([]);
+  const [filters, setFilters] = useState({
+    location: 'ALL',
+    department: 'ALL',
+    category: 'ALL',
+    status: 'ALL',
+  });
   
   const [newEmployee, setNewEmployee] = useState({
     first_name: '',
@@ -139,9 +160,28 @@ export default function EmployeeDirectoryPage() {
   const loadEmployees = async () => {
     setIsLoading(true);
     try {
-      const response = await getEmployees();
+      const [response, timeRecords] = await Promise.all([
+        getEmployees(),
+        getTimeRecords().catch(() => []),
+      ]);
       const employeeList = response.employees || (Array.isArray(response) ? response : []);
-      setEmployees(employeeList.map(mapApiEmployee));
+      const attendanceByEmployee = new Map<string, any[]>();
+
+      (Array.isArray(timeRecords) ? timeRecords : []).forEach((record: any) => {
+        const employeeId = String(record.employee_id ?? record.employee?.id ?? '');
+        if (!employeeId) return;
+        const existing = attendanceByEmployee.get(employeeId) ?? [];
+        existing.push(record);
+        attendanceByEmployee.set(employeeId, existing);
+      });
+
+      const uniqueEmployees = new Map<string, Employee>();
+      employeeList.forEach((item: any) => {
+        const employee = mapApiEmployee(item, attendanceByEmployee);
+        if (employee.uuid) uniqueEmployees.set(employee.uuid, employee);
+      });
+
+      setEmployees([...uniqueEmployees.values()]);
     } catch (error: any) {
       toast({
         variant: "destructive",
@@ -459,10 +499,30 @@ export default function EmployeeDirectoryPage() {
     }
   };
 
-  const filtered = employees.filter(e => 
-    e.fullName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    e.employeeId.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filtered = employees.filter((e) => {
+    const normalizedSearch = searchTerm.toLowerCase();
+    const matchesSearch =
+      e.fullName.toLowerCase().includes(normalizedSearch) ||
+      e.employeeId.toLowerCase().includes(normalizedSearch) ||
+      e.department.toLowerCase().includes(normalizedSearch) ||
+      e.location.toLowerCase().includes(normalizedSearch);
+
+    return (
+      matchesSearch &&
+      (filters.location === 'ALL' || e.working_location_id === filters.location) &&
+      (filters.department === 'ALL' || e.department_id === filters.department) &&
+      (filters.category === 'ALL' || e.employment_category_id === filters.category) &&
+      (filters.status === 'ALL' || e.status === filters.status)
+    );
+  });
+  const resetFilters = () =>
+    setFilters({
+      location: 'ALL',
+      department: 'ALL',
+      category: 'ALL',
+      status: 'ALL',
+    });
+  const activeFilterCount = Object.values(filters).filter((value) => value !== 'ALL').length;
   const selectedCategory = paymentCategories.find(
     (category) =>
       category.id === newEmployee.employment_category_id ||
@@ -546,9 +606,91 @@ export default function EmployeeDirectoryPage() {
             onChange={(e) => setSearchTerm(e.target.value)}
           />
         </div>
-        <Button variant="outline" className="h-11 gap-2 border-dashed bg-white">
-          <Filter className="h-4 w-4" /> More Filters
-        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" className="h-11 gap-2 border-dashed bg-white">
+              <Filter className="h-4 w-4" />
+              More Filters
+              {activeFilterCount > 0 && <Badge variant="secondary">{activeFilterCount}</Badge>}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-72 p-3">
+            <DropdownMenuLabel className="px-0">Working Location</DropdownMenuLabel>
+            <select
+              className="mb-3 h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+              value={filters.location}
+              onChange={(event) =>
+                setFilters((current) => ({
+                  ...current,
+                  location: event.target.value,
+                  department: 'ALL',
+                }))
+              }
+            >
+              <option value="ALL">All scoped locations</option>
+              {locations.map((location) => (
+                <option key={location.uuid} value={String(location.id ?? location.uuid)}>
+                  {location.name}
+                </option>
+              ))}
+            </select>
+
+            <DropdownMenuLabel className="px-0">Department</DropdownMenuLabel>
+            <select
+              className="mb-3 h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+              value={filters.department}
+              onChange={(event) =>
+                setFilters((current) => ({ ...current, department: event.target.value }))
+              }
+            >
+              <option value="ALL">All scoped departments</option>
+              {departments
+                .filter(
+                  (department) =>
+                    filters.location === 'ALL' ||
+                    String(department.working_location_id) === filters.location,
+                )
+                .map((department) => (
+                  <option key={department.uuid} value={String(department.id ?? department.uuid)}>
+                    {department.name}
+                  </option>
+                ))}
+            </select>
+
+            <DropdownMenuLabel className="px-0">Employment Category</DropdownMenuLabel>
+            <select
+              className="mb-3 h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+              value={filters.category}
+              onChange={(event) =>
+                setFilters((current) => ({ ...current, category: event.target.value }))
+              }
+            >
+              <option value="ALL">All categories</option>
+              {paymentCategories.map((category) => (
+                <option key={category.uuid ?? category.id} value={String(category.id ?? category.uuid)}>
+                  {category.name}
+                </option>
+              ))}
+            </select>
+
+            <DropdownMenuLabel className="px-0">Status</DropdownMenuLabel>
+            <select
+              className="mb-3 h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+              value={filters.status}
+              onChange={(event) =>
+                setFilters((current) => ({ ...current, status: event.target.value }))
+              }
+            >
+              <option value="ALL">All statuses</option>
+              <option value="ACTIVE">Active</option>
+              <option value="SUSPENDED">Suspended</option>
+              <option value="PENDING">Pending</option>
+              <option value="REJECTED">Rejected</option>
+            </select>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={resetFilters}>Clear filters</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
       <div className="bg-white rounded-2xl border shadow-sm overflow-hidden">
@@ -592,6 +734,9 @@ export default function EmployeeDirectoryPage() {
                     <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                       <MapPin className="h-3 w-3" /> {emp.location}
                     </div>
+                    <Badge variant="outline" className="w-fit text-[10px]">
+                      {emp.employmentCategory}
+                    </Badge>
                   </div>
                 </TableCell>
                 <TableCell>
@@ -602,7 +747,14 @@ export default function EmployeeDirectoryPage() {
                 <TableCell>
                   <div className="flex items-center gap-2">
                     <Activity className="h-4 w-4 text-blue-500" />
-                    <span className="text-sm font-medium">{emp.attendanceRate}%</span>
+                    <div className="flex flex-col">
+                      <span className="text-sm font-medium">{emp.attendanceRate}%</span>
+                      <span className="text-[10px] text-muted-foreground">
+                        {emp.lastAttendanceStatus
+                          ? `${emp.lastAttendanceStatus} · ${new Date(emp.lastAttendanceDate ?? '').toLocaleDateString()}`
+                          : 'No time records'}
+                      </span>
+                    </div>
                   </div>
                 </TableCell>
                 <TableCell>{getStatusBadge(emp.status)}</TableCell>

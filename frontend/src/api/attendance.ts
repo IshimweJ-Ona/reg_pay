@@ -35,6 +35,14 @@ export const getTimeRecords = async () => {
     return response.data;
 };
 
+export const getTodayAttendance = async (workingLocationId?: string, category?: string) => {
+    const params = new URLSearchParams();
+    if (workingLocationId) params.append("working_location_id", workingLocationId);
+    if (category) params.append("category", category);
+    const response = await api.get(`/time-records/today?${params.toString()}`);
+    return response.data;
+};
+
 export const getAttendance = getTimeRecords;
 
 export const createAttendance = async (payload: any) => {
@@ -58,7 +66,7 @@ export const getTimeRecordsByEmployee = async (employeeId: string) => {
     return response.data;
 };
 
-export const bulkCreateTimeRecords = async (records: any[]) => {
-    const response = await api.post("/time-records/bulk", { records });
+export const bulkCreateTimeRecords = async (records: any[], signal?: AbortSignal) => {
+    const response = await api.post("/time-records/batch-sync", { records }, { signal });
     return response.data;
 };

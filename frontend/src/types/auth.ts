@@ -19,7 +19,7 @@ export type UserStatus = 'PENDING' | 'APPROVED' | 'SUSPENDED' | 'REJECTED';
 
 export interface User {
   id: string;
-  uuid?: string;
+  uuid: string;
   name: string;
   email: string;
   role: UserRole;

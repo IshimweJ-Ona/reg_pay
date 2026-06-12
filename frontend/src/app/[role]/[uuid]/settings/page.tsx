@@ -8,8 +8,8 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
-import { ShieldCheck, Globe, Save, Database, Loader2, Percent, Plus } from 'lucide-react';
-import { getSystemConfigs, updateBatchSystemConfigs } from '@/api/system-config';
+import { ShieldCheck, Globe, Save, Database, Loader2, Percent, Plus, Trash2 } from 'lucide-react';
+import { getSystemConfigs, updateBatchSystemConfigs, getMonthlyTaxes, updateMonthlyTax, deactivateMonthlyTax } from '@/api/system-config';
 import { useToast } from '@/hooks/use-toast';
 import {
   createDeductionType,
@@ -24,7 +24,10 @@ export default function SystemSettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savingDeduction, setSavingDeduction] = useState(false);
+  const [savingTax, setSavingTax] = useState(false);
   const [deductionTypes, setDeductionTypes] = useState<any[]>([]);
+  const [monthlyTaxes, setMonthlyTaxes] = useState<any[]>([]);
+  const [newTax, setNewTax] = useState({ name: '', rate: '' });
   const [newDeduction, setNewDeduction] = useState({
     name: '',
     deduction_mode: 'PERCENTAGE' as 'FIXED' | 'PERCENTAGE',
@@ -45,8 +48,9 @@ export default function SystemSettingsPage() {
     hqPhone: ''
   });
   const { toast } = useToast();
-  const { hasPermission } = useAuth();
+  const { hasPermission, user } = useAuth();
   const canManageDeductions = hasPermission('payment-structures.update');
+  const isSuperAdmin = (user?.roles ?? []).includes('SUPER_ADMIN');
 
   useEffect(() => {
     loadConfigs();
@@ -54,9 +58,10 @@ export default function SystemSettingsPage() {
 
   const loadConfigs = async () => {
     try {
-      const [data, deductions] = await Promise.all([
+      const [data, deductions, taxes] = await Promise.all([
         getSystemConfigs(),
         getDeductionTypes().catch(() => []),
+        getMonthlyTaxes().catch(() => []),
       ]);
       const configMap: Record<string, string> = {};
       data.forEach(c => {
@@ -64,6 +69,7 @@ export default function SystemSettingsPage() {
       });
       setConfigs(prev => ({ ...prev, ...configMap }));
       setDeductionTypes(Array.isArray(deductions) ? deductions : []);
+      setMonthlyTaxes(Array.isArray(taxes) ? taxes : []);
     } catch (error) {
       console.error('Failed to load configs', error);
     } finally {
@@ -101,12 +107,17 @@ export default function SystemSettingsPage() {
   const nextMonthLabel = () => {
     const now = new Date();
     return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1))
-      .toLocaleDateString();
+      .toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
   };
 
   const refreshDeductions = async () => {
     const deductions = await getDeductionTypes();
     setDeductionTypes(Array.isArray(deductions) ? deductions : []);
+  };
+
+  const refreshMonthlyTaxes = async () => {
+    const taxes = await getMonthlyTaxes();
+    setMonthlyTaxes(Array.isArray(taxes) ? taxes : []);
   };
 
   const handleCreateDeduction = async () => {
@@ -155,6 +166,53 @@ export default function SystemSettingsPage() {
       });
     } finally {
       setSavingDeduction(false);
+    }
+  };
+
+  const handleUpdateMonthlyTax = async () => {
+    if (!newTax.name.trim() || !newTax.rate) {
+      toast({ variant: 'destructive', title: 'Invalid tax', description: 'Please provide both tax name and percentage.' });
+      return;
+    }
+
+    setSavingTax(true);
+    try {
+      await updateMonthlyTax(newTax.name.trim(), Number(newTax.rate));
+      await refreshMonthlyTaxes();
+      
+      const now = new Date();
+      const isFirstDay = now.getDate() === 1;
+      const effectiveMonth = isFirstDay 
+        ? now.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
+        : new Date(now.getFullYear(), now.getMonth() + 1, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+
+      setNewTax({ name: '', rate: '' });
+      toast({
+        title: 'Tax updated',
+        description: `tax updated will apply automatically to the following month except change on the first day of month then it applies to that month. Otherwise to the following month.`,
+      });
+    } catch (error: any) {
+      toast({
+        variant: 'destructive',
+        title: 'Update failed',
+        description: error?.response?.data?.message ?? 'Please try again.',
+      });
+    } finally {
+      setSavingTax(false);
+    }
+  };
+
+  const handleDeactivateTax = async (uuid: string) => {
+    try {
+      await deactivateMonthlyTax(uuid);
+      await refreshMonthlyTaxes();
+      toast({ title: 'Tax deactivated', description: 'The tax will no longer be applied to future payrolls.' });
+    } catch (error: any) {
+      toast({
+        variant: 'destructive',
+        title: 'Deactivation failed',
+        description: error?.response?.data?.message ?? 'Please try again.',
+      });
     }
   };
 
@@ -308,7 +366,84 @@ export default function SystemSettingsPage() {
           </CardContent>
         </Card>
 
-        {canManageDeductions && (
+        {isSuperAdmin && (
+          <Card className="border-none shadow-sm">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Percent className="h-5 w-5 text-emerald-600" /> Monthly Statutory Taxes
+              </CardTitle>
+              <CardDescription>
+                Configure taxes applied globally to all Monthly employees. Updates automatically take effect on {nextMonthLabel()}.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-[1fr_200px_120px] gap-3 items-end rounded-lg border p-4 bg-emerald-50/20">
+                <div className="space-y-2">
+                  <Label>Tax Name</Label>
+                  <Input
+                    value={newTax.name}
+                    onChange={(e) => setNewTax(prev => ({ ...prev, name: e.target.value }))}
+                    placeholder="e.g. PAYE, Health Insurance"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Rate (%)</Label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    value={newTax.rate}
+                    onChange={(e) => setNewTax(prev => ({ ...prev, rate: e.target.value }))}
+                  />
+                </div>
+                <Button onClick={handleUpdateMonthlyTax} disabled={savingTax} className="h-10 bg-emerald-600 hover:bg-emerald-700">
+                  {savingTax ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
+                  Add/Update
+                </Button>
+              </div>
+
+              <div className="rounded-lg border overflow-hidden">
+                <Table>
+                  <TableHeader className="bg-emerald-50/50">
+                    <TableRow>
+                      <TableHead>Tax Name</TableHead>
+                      <TableHead>Current Rate (%)</TableHead>
+                      <TableHead>Effective Since</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {monthlyTaxes.length > 0 ? monthlyTaxes.map((tax) => (
+                      <TableRow key={tax.uuid}>
+                        <TableCell className="font-medium">{tax.name}</TableCell>
+                        <TableCell className="font-bold text-emerald-700">{tax.rate}%</TableCell>
+                        <TableCell className="text-muted-foreground text-xs">
+                          {new Date(tax.effective_from).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            className="text-destructive hover:bg-destructive/10"
+                            onClick={() => handleDeactivateTax(tax.uuid)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    )) : (
+                      <TableRow>
+                        <TableCell colSpan={4} className="text-center py-10 text-muted-foreground">
+                          No monthly taxes configured.
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {isSuperAdmin && (
           <Card className="border-none shadow-sm">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">

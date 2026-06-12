@@ -44,6 +44,11 @@ export const suspendUser = async (uuid: string) => {
     return response.data;
 };
 
+export const reactivateUser = async (uuid: string) => {
+    const response = await api.patch(`/users/${uuid}/reactivate`);
+    return response.data;
+};
+
 export const updateUser = async (
     uuid: string,
     payload: Partial<RegisterUserPayload & ApproveUserPayload>,

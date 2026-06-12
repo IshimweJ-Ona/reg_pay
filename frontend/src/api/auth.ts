@@ -93,7 +93,10 @@ export const clearTokens = () => {
 export const decodeJwt = (token: string): JwtUser | null => {
     try {
         const payload = token.split(".")[1];
-        const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+        let normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+        // Add padding if required
+        const pad = normalized.length % 4;
+        if (pad) normalized += "=".repeat(4 - pad);
         const decoded = atob(normalized);
 
         return JSON.parse(decoded) as JwtUser;

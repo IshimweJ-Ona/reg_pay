@@ -38,18 +38,30 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetFooter,
+} from "@/components/ui/sheet";
+import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { User, UserStatus } from '@/types/auth';
 import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/hooks/use-toast';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { approveUser, getUsers, rejectUser, suspendUser, updateUserPermissionOverride, bulkUploadProfileImages } from '@/api/users';
+import { approveUser, getUsers, rejectUser, suspendUser, reactivateUser, updateUserPermissionOverride, bulkUploadProfileImages, assignUserRoles } from '@/api/users';
 import { getWorkingLocations, getDepartments } from '@/api/working_locations';
 import { getRoles } from '@/api/roles';
+import { getPermissions } from '@/api/permissions';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { userFriendlyError } from '@/lib/error-message';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { getAvatarUrl } from '@/lib/utils';
+import { getAvatarUrl, cn } from '@/lib/utils';
+import { PermissionGate } from '@/components/auth/permission-gate';
+import { ProtectedRoute } from '@/components/auth/protected-route';
 
 function mapApiUser(apiUser: any): User {
   const role = apiUser.roles?.[0]?.name ?? 'USER';
@@ -73,20 +85,30 @@ function mapApiUser(apiUser: any): User {
 }
 
 export default function UsersManagementPage() {
+  return (
+    <ProtectedRoute requiredPermission="users.read">
+      <UsersManagementContent />
+    </ProtectedRoute>
+  );
+}
+
+function UsersManagementContent() {
   const { user: currentUser } = useAuth();
   const searchParams = useSearchParams();
   const [users, setUsers] = useState<User[]>([]);
   const [roles, setRoles] = useState<any[]>([]);
+  const [allPermissions, setAllPermissions] = useState<any[]>([]);
   const [locations, setLocations] = useState<any[]>([]);
   const [departments, setDepartments] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
-  const [isSheetOpen, setIsSheetOpen] = useState(false);
+  const [isEditSheetOpen, setIsEditSheetOpen] = useState(false);
   const [isBulkUploadOpen, setIsBulkUploadOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [userToDelete, setUserToDelete] = useState<string | null>(null);
   const [uploadingFiles, setUploadingFiles] = useState<File[]>([]);
   const [isUploading, setIsUploading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -98,14 +120,16 @@ export default function UsersManagementPage() {
   
   const loadData = async () => {
     try {
-      const [usersData, rolesData, locsData] = await Promise.all([
+      const [usersData, rolesData, locsData, permsData] = await Promise.all([
         getUsers(),
         getRoles(),
-        getWorkingLocations()
+        getWorkingLocations(),
+        getPermissions()
       ]);
       const userList = usersData.users || usersData;
       setUsers(userList.map(mapApiUser));
-      setRoles(rolesData.filter((role: any) => !['SUPER_ADMIN', 'ADMIN'].includes(role.name)));
+      setRoles(rolesData);
+      setAllPermissions(permsData);
       setLocations(locsData.working_locations || locsData);
     } catch (error: any) {
       toast({
@@ -119,6 +143,53 @@ export default function UsersManagementPage() {
   useEffect(() => {
     loadData();
   }, []);
+
+  const handleUpdateRoles = async (userId: string, roleIds: string[]) => {
+    setIsSaving(true);
+    try {
+      await assignUserRoles(userId, roleIds);
+      toast({ title: "Roles Updated", description: "The user's roles have been successfully updated." });
+      loadData();
+    } catch (error) {
+      toast({ variant: "destructive", title: "Update Failed", description: "Could not update roles." });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleTogglePermission = async (userId: string, permissionKey: string, currentAllowed: boolean) => {
+    try {
+      await updateUserPermissionOverride(userId, permissionKey, !currentAllowed);
+      toast({ title: "Permission Updated", description: `Permission override for ${permissionKey} updated.` });
+      // Update local state for immediate feedback
+      setUsers(prev => prev.map(u => {
+        if (u.id === userId) {
+          const newOverrides = [...(u.permission_overrides || [])];
+          const idx = newOverrides.findIndex(o => o.permission_key === permissionKey);
+          if (idx > -1) {
+            newOverrides[idx] = { ...newOverrides[idx], is_allowed: !currentAllowed };
+          } else {
+            newOverrides.push({ permission_id: '', permission_key: permissionKey, is_allowed: !currentAllowed });
+          }
+          return { ...u, permission_overrides: newOverrides };
+        }
+        return u;
+      }));
+    } catch (error) {
+      toast({ variant: "destructive", title: "Update Failed", description: "Could not update permission override." });
+    }
+  };
+
+  const handleSuspendUser = async (userId: string) => {
+    try {
+      await suspendUser(userId);
+      toast({ title: "User Suspended", description: "Account access has been revoked." });
+      loadData();
+      setIsEditSheetOpen(false);
+    } catch (error) {
+      toast({ variant: "destructive", title: "Action Failed", description: "Could not suspend user." });
+    }
+  };
 
   const handleBulkUpload = async () => {
     if (uploadingFiles.length === 0) return;
@@ -158,12 +229,16 @@ export default function UsersManagementPage() {
           <p className="text-muted-foreground">Manage corporate identities and role-based access.</p>
         </div>
         <div className="flex gap-2">
-            <Button variant="outline" className="h-11 border-dashed" onClick={() => setIsBulkUploadOpen(true)}>
-                <ImageIcon className="mr-2 h-4 w-4" /> Bulk Avatars
-            </Button>
-            <Button className="h-11 px-6 shadow-lg shadow-primary/20">
-                <UserPlus className="mr-2 h-4 w-4" /> Create User
-            </Button>
+            <PermissionGate permission="users.update">
+                <Button variant="outline" className="h-11 border-dashed" onClick={() => setIsBulkUploadOpen(true)}>
+                    <ImageIcon className="mr-2 h-4 w-4" /> Bulk Avatars
+                </Button>
+            </PermissionGate>
+            <PermissionGate permission="users.create">
+                <Button className="h-11 px-6 shadow-lg shadow-primary/20">
+                    <UserPlus className="mr-2 h-4 w-4" /> Create User
+                </Button>
+            </PermissionGate>
         </div>
       </div>
 
@@ -219,29 +294,165 @@ export default function UsersManagementPage() {
                     </Badge>
                 </TableCell>
                 <TableCell>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon"><MoreVertical className="h-4 w-4" /></Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="w-56">
-                      <DropdownMenuItem onClick={() => {}}>
-                        <Edit className="mr-2 h-4 w-4 text-primary" /> Edit user
-                      </DropdownMenuItem>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem 
-                        className="text-destructive" 
-                        onClick={() => { setUserToDelete(user.id); setDeleteConfirmOpen(true); }}
-                      >
-                        <Trash2 className="mr-2 h-4 w-4" /> Remove user
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+                  <PermissionGate permission="users.update" fallback={<span className="text-muted-foreground">-</span>}>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="icon"><MoreVertical className="h-4 w-4" /></Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-56">
+                        <DropdownMenuItem onClick={() => { setSelectedUser(user); setIsEditSheetOpen(true); }}>
+                          <Edit className="mr-2 h-4 w-4 text-primary" /> Edit user
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <PermissionGate permission="users.delete">
+                          <DropdownMenuItem 
+                            className="text-destructive" 
+                            onClick={() => { setUserToDelete(user.id); setDeleteConfirmOpen(true); }}
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" /> Remove user
+                          </DropdownMenuItem>
+                        </PermissionGate>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </PermissionGate>
                 </TableCell>
               </TableRow>
             ))}
           </TableBody>
         </Table>
       </div>
+
+      {/* Edit User Sheet */}
+      <Sheet open={isEditSheetOpen} onOpenChange={setIsEditSheetOpen}>
+        <SheetContent className="sm:max-w-xl overflow-y-auto">
+          <SheetHeader className="mb-6">
+            <SheetTitle>Administrative User Control</SheetTitle>
+            <SheetDescription>
+              Adjust permissions, roles, and account status for {selectedUser?.name}.
+            </SheetDescription>
+          </SheetHeader>
+
+          {selectedUser && (
+            <div className="space-y-8 py-4">
+              <div className="bg-secondary/20 p-4 rounded-xl flex items-center gap-4 border">
+                <Avatar className="h-14 w-14 border shadow-sm">
+                  <AvatarImage src={getAvatarUrl(selectedUser.avatar_url)} />
+                  <AvatarFallback className="bg-primary/10 text-primary font-bold text-xl">{selectedUser.name.charAt(0)}</AvatarFallback>
+                </Avatar>
+                <div>
+                  <h3 className="font-bold text-lg">{selectedUser.name}</h3>
+                  <p className="text-sm text-muted-foreground">{selectedUser.email}</p>
+                </div>
+                <Badge className="ml-auto uppercase text-[10px] tracking-widest">{selectedUser.status}</Badge>
+              </div>
+
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <Label className="text-base font-bold">Primary Account Roles</Label>
+                  <Badge variant="outline">{selectedUser.roles?.length} Assigned</Badge>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  {roles.map((role) => {
+                    const isAssigned = selectedUser.roles?.includes(role.name);
+                    const isSystemRole = ['SUPER_ADMIN', 'ADMIN'].includes(role.name);
+                    
+                    return (
+                      <Button
+                        key={role.uuid}
+                        variant={isAssigned ? "default" : "outline"}
+                        size="sm"
+                        disabled={isSystemRole && currentUser?.role !== 'SUPER_ADMIN'}
+                        className={cn(
+                          "justify-start h-auto py-2 px-3 text-xs font-semibold rounded-lg",
+                          isAssigned ? "shadow-md shadow-primary/20" : "bg-transparent"
+                        )}
+                        onClick={() => {
+                          const currentRoles = roles.filter(r => selectedUser.roles?.includes(r.name)).map(r => r.uuid);
+                          const nextRoles = isAssigned 
+                            ? currentRoles.filter(id => id !== role.uuid)
+                            : [...currentRoles, role.uuid];
+                          handleUpdateRoles(selectedUser.id, nextRoles);
+                          // Optimistic update
+                          setSelectedUser({
+                            ...selectedUser,
+                            roles: isAssigned 
+                              ? selectedUser.roles?.filter(r => r !== role.name)
+                              : [...(selectedUser.roles || []), role.name]
+                          });
+                        }}
+                      >
+                        <Shield className={cn("mr-2 h-3.5 w-3.5", isAssigned ? "text-white" : "text-muted-foreground")} />
+                        {role.name.replace('_', ' ')}
+                      </Button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {currentUser?.role === 'SUPER_ADMIN' && (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-base font-bold">Security Overrides</Label>
+                    <span className="text-[10px] text-muted-foreground uppercase tracking-widest font-bold">Direct Permission Injection</span>
+                  </div>
+                  <ScrollArea className="h-[250px] border rounded-xl p-4 bg-slate-50">
+                    <div className="space-y-4">
+                      {allPermissions.map((perm) => {
+                        const override = selectedUser.permission_overrides?.find(o => o.permission_key === perm.permission_key);
+                        const isAllowed = override ? override.is_allowed : selectedUser.permissions.includes(perm.permission_key);
+                        
+                        return (
+                          <div key={perm.uuid} className="flex items-center justify-between group">
+                            <div className="flex flex-col">
+                              <span className="text-xs font-bold group-hover:text-primary transition-colors">{perm.name}</span>
+                              <span className="text-[10px] text-muted-foreground">{perm.permission_key}</span>
+                            </div>
+                            <Switch 
+                              checked={isAllowed} 
+                              onCheckedChange={() => {
+                                handleTogglePermission(selectedUser.id, perm.permission_key, isAllowed);
+                                // Optimistic update
+                                const newOverrides = [...(selectedUser.permission_overrides || [])];
+                                const idx = newOverrides.findIndex(o => o.permission_key === perm.permission_key);
+                                if (idx > -1) {
+                                  newOverrides[idx] = { ...newOverrides[idx], is_allowed: !isAllowed };
+                                } else {
+                                  newOverrides.push({ permission_id: perm.uuid, permission_key: perm.permission_key, is_allowed: !isAllowed });
+                                }
+                                setSelectedUser({ ...selectedUser, permission_overrides: newOverrides });
+                              }}
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </ScrollArea>
+                </div>
+              )}
+
+              <div className="pt-4 border-t flex items-center justify-between gap-4">
+                <div className="flex flex-col">
+                  <span className="text-sm font-bold">Account Status</span>
+                  <span className="text-xs text-muted-foreground">Manage user accessibility and sessions.</span>
+                </div>
+                {selectedUser.status === 'SUSPENDED' ? (
+                  <Button variant="outline" className="text-emerald-600 border-emerald-200 bg-emerald-50 hover:bg-emerald-100 font-bold" onClick={() => reactivateUser(selectedUser.id).then(() => loadData())}>
+                    <Power className="mr-2 h-4 w-4" /> Reactive Account
+                  </Button>
+                ) : (
+                  <Button variant="outline" className="text-destructive border-destructive/20 hover:bg-destructive/5 font-bold" onClick={() => handleSuspendUser(selectedUser.id)}>
+                    <Ban className="mr-2 h-4 w-4" /> Suspend Account
+                  </Button>
+                )}
+              </div>
+            </div>
+          )}
+          
+          <SheetFooter className="mt-8">
+             <Button variant="secondary" className="w-full" onClick={() => setIsEditSheetOpen(false)}>Close Interface</Button>
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
 
       {/* Bulk Upload Dialog */}
       <Dialog open={isBulkUploadOpen} onOpenChange={setIsBulkUploadOpen}>
@@ -300,6 +511,26 @@ export default function UsersManagementPage() {
             </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will suspend the user account. They will no longer be able to log in or access the system.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction 
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => userToDelete && handleSuspendUser(userToDelete)}
+            >
+              Confirm Suspension
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

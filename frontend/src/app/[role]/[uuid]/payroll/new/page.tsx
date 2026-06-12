@@ -37,6 +37,7 @@ export default function NewPayrollBatchPage() {
   const [paymentDate, setPaymentDate] = useState(now.toISOString().slice(0, 10));
   const [payrollMonth, setPayrollMonth] = useState(now.getMonth() + 1);
   const [payrollYear, setPayrollYear] = useState(now.getFullYear());
+  const [selectedCategories, setSelectedCategories] = useState<string[]>(['ALL']);
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [workDays, setWorkDays] = useState('');
@@ -44,6 +45,8 @@ export default function NewPayrollBatchPage() {
   const role = params.role as string;
   const uuid = params.uuid as string;
   const basePath = `/${role}/${uuid}`;
+
+  const { user } = useAuth();
 
   const handleLocationChange = async (locationUuid: string) => {
     setWorkingLocationId(locationUuid);
@@ -59,6 +62,22 @@ export default function NewPayrollBatchPage() {
     }
   };
 
+  const handleCategoryToggle = (category: string) => {
+    if (category === 'ALL') {
+      setSelectedCategories(['ALL']);
+      return;
+    }
+
+    setSelectedCategories(prev => {
+      const filtered = prev.filter(c => c !== 'ALL');
+      if (filtered.includes(category)) {
+        const next = filtered.filter(c => c !== category);
+        return next.length === 0 ? ['ALL'] : next;
+      }
+      return [...filtered, category];
+    });
+  };
+
   useEffect(() => {
     Promise.all([
       getEmployees().catch(() => ({ employees: [] })), 
@@ -68,20 +87,53 @@ export default function NewPayrollBatchPage() {
       const locs = locationData.working_locations || [];
       setEmployees(emps);
       setLocations(locs);
-      if (locs[0]) {
+      
+      const userLoc = locs.find((l: any) => l.uuid === user?.location || l.name === user?.location);
+      if (userLoc) {
+        setWorkingLocationId(userLoc.uuid);
+        handleLocationChange(userLoc.uuid);
+      } else if (locs[0]) {
         setWorkingLocationId(locs[0].uuid);
         handleLocationChange(locs[0].uuid);
       }
     });
-  }, []);
+  }, [user]);
 
   const filteredEmployees = useMemo(() => {
     return employees.filter(emp => {
       const locationMatch = !workingLocationId || emp.working_location?.uuid === workingLocationId;
       const departmentMatch = selectedDepartmentId === 'all' || emp.department?.uuid === selectedDepartmentId;
-      return locationMatch && departmentMatch;
+      
+      const category = emp.employment_category?.name?.toUpperCase();
+      const categoryMatch = selectedCategories.includes('ALL') || (category && selectedCategories.includes(category));
+      
+      return locationMatch && departmentMatch && categoryMatch;
     });
-  }, [employees, workingLocationId, selectedDepartmentId]);
+  }, [employees, workingLocationId, selectedDepartmentId, selectedCategories]);
+
+  const uniqueEmployeeCount = useMemo(() => {
+    const ids = new Set(filteredEmployees.map(e => e.id));
+    return ids.size;
+  }, [filteredEmployees]);
+
+  const [overrides, setOverrides] = useState<Record<string, { salary?: number; phone?: string }>>({});
+
+  const handleSalaryChange = (empId: string, value: string) => {
+    const numValue = parseFloat(value.replace(/[^0-9.]/g, ''));
+    if (!isNaN(numValue)) {
+      setOverrides(prev => ({ 
+        ...prev, 
+        [empId]: { ...prev[empId], salary: numValue } 
+      }));
+    }
+  };
+
+  const handlePhoneChange = (empId: string, value: string) => {
+    setOverrides(prev => ({ 
+      ...prev, 
+      [empId]: { ...prev[empId], phone: value } 
+    }));
+  };
 
   const handleSubmit = async () => {
     try {
@@ -91,11 +143,17 @@ export default function NewPayrollBatchPage() {
         payroll_year: payrollYear,
         payment_date: paymentDate,
         payment_method: 'BANK',
+        categories: selectedCategories.includes('ALL') ? undefined : selectedCategories,
         ...(startDate ? { start_date: startDate } : {}),
         ...(endDate ? { end_date: endDate } : {}),
         ...(workDays ? { work_days: Number(workDays) } : {}),
+        overrides: Object.entries(overrides).map(([id, data]) => ({
+          employee_id: id,
+          base_amount: data.salary,
+          phone_number: data.phone
+        }))
       });
-      toast({ title: "Payroll Batch Initialized", description: "The batch has been sent to review phase." });
+      toast({ title: "Payroll Batch Created", description: "The batch has been saved as DRAFT." });
       router.push(`${basePath}/payroll`);
     } catch (error: any) {
       toast({
@@ -184,6 +242,23 @@ export default function NewPayrollBatchPage() {
                   </SelectContent>
                 </Select>
               </div>
+              <div className="space-y-2 md:col-span-2">
+                <Label>Employee Categories</Label>
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {['ALL', 'MONTHLY', 'DAILY', 'CUSTOM'].map((cat) => (
+                    <Button
+                      key={cat}
+                      type="button"
+                      variant={selectedCategories.includes(cat) ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => handleCategoryToggle(cat)}
+                      className="rounded-full font-bold text-[10px]"
+                    >
+                      {cat}
+                    </Button>
+                  ))}
+                </div>
+              </div>
               <div className="space-y-2">
                 <Label>Custom Start Date</Label>
                 <Input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} />
@@ -218,8 +293,9 @@ export default function NewPayrollBatchPage() {
                 <TableHeader className="bg-secondary/30">
                   <TableRow>
                     <TableHead>Employee</TableHead>
+                    <TableHead>Phone Number</TableHead>
                     <TableHead>Payment Category</TableHead>
-                    <TableHead>Salary Basis</TableHead>
+                    <TableHead>Salary Basis (Editable)</TableHead>
                     <TableHead>Department</TableHead>
                     <TableHead>Status</TableHead>
                   </TableRow>
@@ -228,6 +304,8 @@ export default function NewPayrollBatchPage() {
                   {filteredEmployees.map((emp) => {
                     const base = Number(emp.payment_structures?.[0]?.basic_salary ?? 0);
                     const daily = Number(emp.payment_structures?.[0]?.daily_rate ?? 0);
+                    const currentSalary = overrides[emp.id]?.salary ?? (base > 0 ? base : daily);
+                    const currentPhone = overrides[emp.id]?.phone ?? (emp.phone_number || '');
                     
                     return (
                       <TableRow key={emp.uuid}>
@@ -237,8 +315,23 @@ export default function NewPayrollBatchPage() {
                             <span className="text-[10px] text-muted-foreground uppercase">{emp.department?.name ?? 'Unassigned'}</span>
                           </div>
                         </TableCell>
-                        <TableCell>{emp.payment_structures?.[0]?.payroll_frequency ?? emp.employment_category?.payroll_frequency ?? 'Unassigned'}</TableCell>
-                        <TableCell className="text-sm">{base > 0 ? formatRwf(base) : formatRwf(daily)}</TableCell>
+                        <TableCell>
+                          <Input 
+                            type="text" 
+                            className="h-8 w-40 text-xs font-mono" 
+                            value={currentPhone}
+                            onChange={(e) => handlePhoneChange(emp.id, e.target.value)}
+                          />
+                        </TableCell>
+                        <TableCell>{emp.employment_category?.name ?? 'Unassigned'}</TableCell>
+                        <TableCell>
+                          <Input 
+                            type="text" 
+                            className="h-8 w-32 text-xs font-bold" 
+                            value={currentSalary}
+                            onChange={(e) => handleSalaryChange(emp.id, e.target.value)}
+                          />
+                        </TableCell>
                         <TableCell>{emp.department?.name ?? 'Unassigned'}</TableCell>
                         <TableCell>{emp.status}</TableCell>
                       </TableRow>
@@ -263,7 +356,7 @@ export default function NewPayrollBatchPage() {
                   <Users className="h-4 w-4 opacity-70" />
                   <span className="text-sm">Total Employees</span>
                 </div>
-                <span className="font-bold text-xl">{filteredEmployees.length}</span>
+                <span className="font-bold text-xl">{uniqueEmployeeCount}</span>
               </div>
 
               <div className="space-y-3">
@@ -276,7 +369,7 @@ export default function NewPayrollBatchPage() {
                 <Button 
                   className="w-full bg-white text-primary hover:bg-white/90 font-bold h-12"
                   onClick={handleSubmit}
-                  disabled={!workingLocationId || filteredEmployees.length === 0}
+                  disabled={!workingLocationId || uniqueEmployeeCount === 0}
                 >
                   <Save className="mr-2 h-4 w-4" /> Finalize Draft
                 </Button>

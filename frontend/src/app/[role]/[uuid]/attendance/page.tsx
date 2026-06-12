@@ -8,7 +8,7 @@ import { Calendar, Search, Download, UserCheck, Clock, AlertTriangle, CheckCircl
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { getTimeRecords, createTimeRecord, clockOutTimeRecord, bulkCreateTimeRecords } from '@/api/attendance';
+import { getTimeRecords, createTimeRecord, clockOutTimeRecord, bulkCreateTimeRecords, getTodayAttendance } from '@/api/attendance';
 import { getEmployees } from '@/api/employees';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { exportToCSV, exportToExcel } from '@/lib/export-utils';
@@ -20,7 +20,10 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/auth-context';
+import { useAttendanceSync } from '@/context/attendance-sync-context';
 import * as XLSX from 'xlsx';
+import dayjs, { getRwandaTime } from '@/lib/dayjs';
+import { AttendanceSyncPopover } from '@/components/attendance/attendance-sync-popover';
 
 export default function AttendanceMonitoringPage() {
   const [records, setRecords] = useState<any[]>([]);
@@ -29,39 +32,55 @@ export default function AttendanceMonitoringPage() {
   const [activeTab, setActiveTab] = useState('ALL');
   const [viewMode, setViewMode] = useState<'LOG' | 'HISTORY'>('LOG');
   const [loading, setLoading] = useState(false);
-  const [pendingSync, setPendingSync] = useState<Record<string, any>>({});
-  const { toast } = useToast();
-  const { hasPermission } = useAuth();
+  const { startSync, syncState, pendingSync, setPendingSync } = useAttendanceSync();
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   const canCreateAttendance = hasPermission('attendance.create');
   const canUpdateAttendance = hasPermission('attendance.update');
   const canLogAttendance = canCreateAttendance || canUpdateAttendance;
 
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = getRwandaTime().format('YYYY-MM-DD');
 
   const fetchData = async () => {
     const startTime = performance.now();
     setLoading(true);
     try {
-      const [recs, empsResponse] = await Promise.all([getTimeRecords(), getEmployees()]);
+      const [recs, empsResponse, todayRecs] = await Promise.all([
+        getTimeRecords(), 
+        getEmployees(),
+        getTodayAttendance(user?.location, activeTab === 'ALL' ? undefined : activeTab)
+      ]);
       const employeeList = empsResponse.employees || (Array.isArray(empsResponse) ? empsResponse : []);
       
-      // Optimization: Filter history to past 5 days and sort desc
-      const fiveDaysAgo = new Date();
-      fiveDaysAgo.setDate(fiveDaysAgo.getDate() - 5);
+      // Optimization: Filter history to past 5 days (excluding today)
+      const fiveDaysAgo = getRwandaTime().subtract(5, 'day').startOf('day');
+      const todayStart = getRwandaTime().startOf('day');
       
       const filteredRecs = (Array.isArray(recs) ? recs : [])
-        .filter(r => new Date(r.attendance_date) >= fiveDaysAgo)
-        .sort((a, b) => new Date(b.attendance_date).getTime() - new Date(a.attendance_date).getTime());
+        .filter(r => {
+          const recDate = dayjs(r.attendance_date).tz('Africa/Kigali');
+          return recDate.isSameOrAfter(fiveDaysAgo) && recDate.isBefore(todayStart);
+        })
+        .sort((a, b) => dayjs(b.attendance_date).unix() - dayjs(a.attendance_date).unix());
 
       setRecords(filteredRecs);
       setEmployees(employeeList);
+
+      // Pre-fill today's synced records
+      const syncedTodayMap: Record<string, any> = {};
+      (todayRecs || []).forEach((r: any) => {
+        syncedTodayMap[r.employee_id] = r;
+      });
+      // We don't overwrite pendingSync, but todayRecordsMap will use syncedTodayMap
+      setRecords(prev => [...prev, ...todayRecs]);
       
       const duration = (performance.now() - startTime) / 1000;
       console.log(`Fetch completed in ${duration.toFixed(3)}s`);
     } catch (error) {
-      toast({ variant: 'destructive', title: 'Fetch failed', description: 'Could not load attendance data.' });
+      const status = (error as any)?.response?.status;
+      const msg = status ? `Could not load attendance data (HTTP ${status}).` : 'Could not load attendance data.';
+      console.error('Attendance fetch error:', error);
+      toast({ variant: 'destructive', title: 'Fetch failed', description: msg });
     } finally {
       setLoading(false);
     }
@@ -70,37 +89,41 @@ export default function AttendanceMonitoringPage() {
   useEffect(() => {
     fetchData();
     
-    // 15-minute auto-sync
+    // Midnight UI clear check
     const interval = setInterval(() => {
-        syncPendingLogs();
-    }, 15 * 60 * 1000);
+      const now = getRwandaTime();
+      if (now.hour() === 0 && now.minute() === 0) {
+        setPendingSync({});
+        fetchData();
+      }
+    }, 60000); // Check every minute
     
     return () => clearInterval(interval);
   }, []);
 
-  const syncPendingLogs = async () => {
+  const handleSync = async () => {
     const logs = Object.values(pendingSync);
     if (logs.length === 0) return;
-
     try {
-      await bulkCreateTimeRecords(logs);
+      await startSync(logs);
       setPendingSync({});
-      toast({ title: 'Synced', description: `${logs.length} logs persisted to database.` });
+      // Refresh historical data to show the newly synced records
       fetchData();
     } catch (error) {
-      console.error('Auto-sync failed', error);
+      console.error('Sync failed:', error);
     }
   };
 
   const todayRecordsMap = useMemo(() => {
     const map: Record<string, any> = {};
+    // Records from the backend
     records.forEach(rec => {
-      const recDate = new Date(rec.attendance_date).toISOString().split('T')[0];
+      const recDate = dayjs(rec.attendance_date).tz('Africa/Kigali').format('YYYY-MM-DD');
       if (recDate === todayStr) {
         map[rec.employee_id] = rec;
       }
     });
-    // Add pending syncs to map for UI consistency
+    // Pending syncs take precedence for local UI updates
     Object.values(pendingSync).forEach(ps => {
         map[ps.employee_id] = ps;
     });
@@ -143,7 +166,7 @@ export default function AttendanceMonitoringPage() {
     };
 
     setPendingSync(prev => ({ ...prev, [employeeId]: log }));
-    toast({ title: 'Logged Locally', description: `Attendance cached. Automatic sync in 15 mins.` });
+    toast({ title: 'Logged Locally', description: `Attendance cached. Use "Sync Now" to finalize.` });
   };
 
   const handleExcelImport = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -231,13 +254,15 @@ export default function AttendanceMonitoringPage() {
           <h1 className="text-3xl font-headline font-bold">Attendance Systems</h1>
           <p className="text-muted-foreground">High-performance workforce logging & historical audit.</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
+          <AttendanceSyncPopover />
           <input 
             type="file" 
             ref={fileInputRef} 
             className="hidden" 
             accept=".xlsx, .xls, .csv" 
-            onChange={handleExcelImport} 
+            onChange={handleExcelImport}
+            aria-label="bulk-import-file"
           />
           <Button 
             variant="outline" 
@@ -306,7 +331,20 @@ export default function AttendanceMonitoringPage() {
             </div>
             <div>
                 <p className="text-xs font-bold text-white/50 uppercase tracking-widest">Unsynced</p>
-                <p className="text-2xl font-bold">{Object.keys(pendingSync).length}</p>
+                <div className="flex items-center gap-3">
+                    <p className="text-2xl font-bold">{Object.keys(pendingSync).length}</p>
+                    {Object.keys(pendingSync).length > 0 && (
+                        <Button 
+                            type="button"
+                            size="sm" 
+                            className="h-8 bg-primary hover:bg-primary/90 text-[10px] font-bold px-3 rounded-lg animate-pulse shadow-lg shadow-primary/20"
+                            onClick={(e) => { e.preventDefault(); handleSync(); }}
+                            disabled={syncState.isSyncing}
+                        >
+                            {syncState.isSyncing ? 'Syncing...' : 'Sync Now'}
+                        </Button>
+                    )}
+                </div>
             </div>
         </div>
       </div>
@@ -317,6 +355,7 @@ export default function AttendanceMonitoringPage() {
             <TabsTrigger value="ALL" className="rounded-lg font-bold text-xs px-6">All Staff</TabsTrigger>
             <TabsTrigger value="MONTHLY" className="rounded-lg font-bold text-xs px-6">Monthly</TabsTrigger>
             <TabsTrigger value="DAILY" className="rounded-lg font-bold text-xs px-6">Daily</TabsTrigger>
+            <TabsTrigger value="CUSTOM" className="rounded-lg font-bold text-xs px-6">Custom</TabsTrigger>
           </TabsList>
 
           <div className="relative w-full md:w-72">
@@ -348,7 +387,7 @@ export default function AttendanceMonitoringPage() {
                     const rec = todayRecordsMap[emp.id];
                     return (
                       <AttendanceRow 
-                        key={emp.id} 
+                        key={emp.uuid} 
                         employee={emp} 
                         record={rec} 
                         onMark={handleMarkAttendance} 
@@ -374,7 +413,7 @@ export default function AttendanceMonitoringPage() {
                 </TableHeader>
                 <TableBody>
                   {filteredHistory.length > 0 ? filteredHistory.map((rec) => (
-                    <TableRow key={rec.id} className="hover:bg-secondary/20 transition-colors">
+                    <TableRow key={rec.uuid} className="hover:bg-secondary/20 transition-colors">
                       <TableCell className="font-semibold">{`${rec.employee?.first_name ?? ''} ${rec.employee?.last_name ?? ''}`.trim() || rec.employee_id}</TableCell>
                       <TableCell>{rec.employee?.department?.name ?? 'Unassigned'}</TableCell>
                       <TableCell className="text-muted-foreground text-xs">{new Date(rec.attendance_date).toLocaleDateString()}</TableCell>
@@ -403,8 +442,17 @@ export default function AttendanceMonitoringPage() {
 }
 
 function AttendanceRow({ employee, record, onMark, canLogAttendance }: { employee: any, record: any, onMark: any, canLogAttendance: boolean }) {
-  const [clockIn, setClockIn] = useState(record?.clock_in ? new Date(record.clock_in).toLocaleTimeString([], {hour12: false, hour: '2-digit', minute:'2-digit'}) : '09:00');
-  const [clockOut, setClockOut] = useState(record?.clock_out ? new Date(record.clock_out).toLocaleTimeString([], {hour12: false, hour: '2-digit', minute:'2-digit'}) : '17:00');
+  const [clockIn, setClockIn] = useState('09:00');
+  const [clockOut, setClockOut] = useState('17:00');
+
+  useEffect(() => {
+    if (record?.clock_in) {
+        setClockIn(new Date(record.clock_in).toLocaleTimeString([], {hour12: false, hour: '2-digit', minute:'2-digit'}));
+    }
+    if (record?.clock_out) {
+        setClockOut(new Date(record.clock_out).toLocaleTimeString([], {hour12: false, hour: '2-digit', minute:'2-digit'}));
+    }
+  }, [record]);
 
   return (
     <TableRow className="hover:bg-secondary/10 transition-colors">
@@ -445,18 +493,20 @@ function AttendanceRow({ employee, record, onMark, canLogAttendance }: { employe
         <TableCell className="text-right">
           <div className="flex justify-end gap-2">
             <Button 
+              type="button"
               size="sm" 
               variant="outline"
               className={`h-9 rounded-xl font-bold text-xs ${record?.attendance_status === 'PRESENT' ? 'bg-emerald-600 text-white' : 'hover:bg-emerald-50 text-emerald-600 border-emerald-100'}`}
-              onClick={() => onMark(employee.id, 'PRESENT', clockIn, clockOut)}
+              onClick={(e) => { e.preventDefault(); onMark(employee.id, 'PRESENT', clockIn, clockOut); }}
             >
               Present
             </Button>
             <Button 
+              type="button"
               size="sm" 
               variant="outline"
               className={`h-9 rounded-xl font-bold text-xs ${record?.attendance_status === 'ABSENT' ? 'bg-rose-600 text-white' : 'hover:bg-rose-50 text-rose-600 border-rose-100'}`}
-              onClick={() => onMark(employee.id, 'ABSENT')}
+              onClick={(e) => { e.preventDefault(); onMark(employee.id, 'ABSENT'); }}
             >
               Absent
             </Button>

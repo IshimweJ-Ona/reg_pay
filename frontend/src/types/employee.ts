@@ -1,6 +1,7 @@
 
 export interface Employee {
   id: string;
+  uuid: string;
   bigIntId?: string;
   employeeId: string;
   fullName: string;
@@ -9,6 +10,9 @@ export interface Employee {
   salary: number;
   status: 'ACTIVE' | 'ON_LEAVE' | 'SUSPENDED' | 'TERMINATED' | 'PENDING' | 'REJECTED';
   attendanceRate: number;
+  lastAttendanceDate?: string;
+  lastAttendanceStatus?: 'PRESENT' | 'ABSENT';
+  employmentCategory?: string;
   email: string;
   avatar?: string;
   avatar_url?: string;

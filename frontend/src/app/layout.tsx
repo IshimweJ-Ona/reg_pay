@@ -1,7 +1,12 @@
 import type { Metadata } from "next";
 import { Toaster } from "@/components/ui/toaster";
 import { PageLoader } from "@/components/ui/page-loader";
+import { AuthProvider } from "@/context/auth-context";
+import { AttendanceSyncProvider } from "@/context/attendance-sync-context";
 import "./globals.css";
+import { NotificationListener } from "@/components/notification-listener";
+import { AttendanceSyncPopover } from "@/components/attendance/attendance-sync-popover";
+import { SessionManager } from "@/components/auth/session-manager";
 
 export const metadata: Metadata = {
   title: "REG(Rwanda Energy Group) | Payment System",
@@ -24,9 +29,17 @@ export default function RootLayout({
         />
       </head>
       <body className="font-body antialiased">
-        <PageLoader />
-        {children}
-        <Toaster />
+        <AuthProvider>
+          <AttendanceSyncProvider>
+            <SessionManager>
+              <PageLoader />
+              <NotificationListener />
+              {children}
+              <AttendanceSyncPopover />
+              <Toaster />
+            </SessionManager>
+          </AttendanceSyncProvider>
+        </AuthProvider>
       </body>
     </html>
   );

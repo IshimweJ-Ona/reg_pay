@@ -5,8 +5,11 @@ export type PayrollStatus =
   | 'PENDING_APPROVAL' 
   | 'PENDING'
   | 'IN_REVIEW'
+  | 'MANAGER_APPROVED'
   | 'APPROVED' 
   | 'REJECTED' 
+  | 'REJECTED_BY_BRANCH_MANAGER'
+  | 'REJECTED_BY_SUPER_ADMIN'
   | 'PROCESSING' 
   | 'COMPLETED' 
   | 'FAILED';

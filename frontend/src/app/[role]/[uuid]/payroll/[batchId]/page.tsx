@@ -1,4 +1,3 @@
-
 "use client";
 
 import React, { useEffect, useMemo, useState } from 'react';
@@ -6,7 +5,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { 
   ArrowLeft, FileText, Users,
-  CheckCircle2, XCircle, Clock, MessageSquare, Download
+  CheckCircle2, XCircle, Clock, MessageSquare, Download, Save
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -24,8 +23,9 @@ import {
 } from "@/components/ui/dialog";
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
-import { approvePayrollBatch, getPayrollBatch, rejectPayrollBatch } from '@/api/payroll';
+import { approvePayrollBatch, getPayrollBatch, rejectPayrollBatch, submitPayrollBatch } from '@/api/payroll';
 import { PermissionGate } from '@/components/auth/permission-gate';
+import { useAuth } from '@/context/auth-context';
 
 const formatRwf = (value: number) => `RWF ${value.toLocaleString()}`;
 
@@ -33,6 +33,7 @@ export default function PayrollBatchDetailsPage() {
   const router = useRouter();
   const params = useParams<{ batchId: string }>();
   const { toast } = useToast();
+  const { user } = useAuth();
   const [comment, setComment] = useState('');
   const [batch, setBatch] = useState<any | null>(null);
 
@@ -49,13 +50,19 @@ export default function PayrollBatchDetailsPage() {
 
   const rows = useMemo(() => batch?.items ?? [], [batch]);
 
-  const handleAction = async (type: 'APPROVE' | 'REJECT') => {
+  const handleAction = async (type: 'APPROVE' | 'REJECT' | 'SUBMIT') => {
+    if (type === 'REJECT' && !comment.trim()) {
+      toast({ variant: 'destructive', title: 'Reason required', description: 'Please provide a reason for rejection.' });
+      return;
+    }
+
     try {
       if (type === 'APPROVE') await approvePayrollBatch(batchId, comment);
-      if (type === 'REJECT') await rejectPayrollBatch(batchId, comment || 'Rejected from dashboard.');
+      if (type === 'REJECT') await rejectPayrollBatch(batchId, comment);
+      if (type === 'SUBMIT') await submitPayrollBatch(batchId);
       await loadBatch();
       toast({
-        title: type === 'APPROVE' ? "Batch Approved" : "Batch Rejected",
+        title: type === 'APPROVE' ? "Batch Approved" : type === 'REJECT' ? "Batch Rejected" : "Batch Submitted",
         description: `Payroll cycle ${batch?.batch_code ?? batchId} has been updated.`
       });
       setComment('');
@@ -69,6 +76,17 @@ export default function PayrollBatchDetailsPage() {
   };
 
   if (!batch) return <div className="p-8 text-sm text-muted-foreground">Loading payroll batch...</div>;
+
+  const roles = user?.roles ?? [];
+  const isAccountant = roles.includes('ACCOUNTANT');
+  const isBranchManager = roles.includes('BRANCH_MANAGER');
+  const isSuperAdmin = roles.includes('SUPER_ADMIN');
+
+  const canSubmit = (batch.status === 'DRAFT' || batch.status.startsWith('REJECTED')) && isAccountant;
+  
+  const canApproveBM = batch.status === 'PENDING' && (isBranchManager || isSuperAdmin);
+  const canApproveAdmin = batch.status === 'MANAGER_APPROVED' && isSuperAdmin;
+  const canApprove = canApproveBM || canApproveAdmin;
 
   return (
     <div className="space-y-8 pb-12">
@@ -86,47 +104,60 @@ export default function PayrollBatchDetailsPage() {
           </div>
         </div>
         <div className="flex gap-2">
+          {canSubmit && (
+            <Button className="bg-primary hover:bg-primary/90 gap-2 shadow-lg" onClick={() => handleAction('SUBMIT')}>
+              <Save className="h-4 w-4" /> {batch.status.startsWith('REJECTED') ? 'Resubmit for Review' : 'Submit for Review'}
+            </Button>
+          )}
           <Button variant="outline" className="gap-2">
             <Download className="h-4 w-4" /> Export Assets
           </Button>
-          <PermissionGate permission="payroll.approve">
-            <Dialog>
-              <DialogTrigger asChild>
-                <Button variant="destructive" className="gap-2">
-                  <XCircle className="h-4 w-4" /> Reject Cycle
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Reject Payroll Batch</DialogTitle>
-                  <DialogDescription>Please provide a reason for the rejection. This will be visible to the batch creator.</DialogDescription>
-                </DialogHeader>
-                <Textarea placeholder="Type reason here..." value={comment} onChange={(e) => setComment(e.target.value)} className="min-h-[100px]" />
-                <DialogFooter>
-                  <Button variant="ghost" onClick={() => setComment('')}>Cancel</Button>
-                  <Button variant="destructive" onClick={() => handleAction('REJECT')}>Confirm Rejection</Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
-            <Dialog>
-              <DialogTrigger asChild>
-                <Button className="bg-emerald-600 hover:bg-emerald-700 gap-2 shadow-lg shadow-emerald-600/20">
-                  <CheckCircle2 className="h-4 w-4" /> Authorize Batch
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Final Authorization</DialogTitle>
-                  <DialogDescription>You are authorizing the disbursement of {formatRwf(Number(batch.total_amount))} to {rows.length} employees.</DialogDescription>
-                </DialogHeader>
-                <Textarea placeholder="Optional comment..." value={comment} onChange={(e) => setComment(e.target.value)} />
-                <DialogFooter>
-                  <Button variant="ghost" onClick={() => setComment('')}>Cancel</Button>
-                  <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={() => handleAction('APPROVE')}>Execute Payment</Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
-          </PermissionGate>
+          {canApprove && (
+            <>
+              <Dialog>
+                <DialogTrigger asChild>
+                  <Button variant="destructive" className="gap-2">
+                    <XCircle className="h-4 w-4" /> Reject Cycle
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Reject Payroll Batch</DialogTitle>
+                    <DialogDescription>Please provide a reason for the rejection. This will be visible to the batch creator.</DialogDescription>
+                  </DialogHeader>
+                  <Textarea placeholder="Type reason here..." value={comment} onChange={(e) => setComment(e.target.value)} className="min-h-[100px]" />
+                  <DialogFooter>
+                    <Button variant="ghost" onClick={() => setComment('')}>Cancel</Button>
+                    <Button variant="destructive" onClick={() => handleAction('REJECT')}>Confirm Rejection</Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+              <Dialog>
+                <DialogTrigger asChild>
+                  <Button className="bg-emerald-600 hover:bg-emerald-700 gap-2 shadow-lg shadow-emerald-600/20">
+                    <CheckCircle2 className="h-4 w-4" /> {canApproveAdmin ? 'Final Authorization' : 'Manager Approval'}
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>{canApproveAdmin ? 'Final Authorization' : 'Manager Approval'}</DialogTitle>
+                    <DialogDescription>
+                      {canApproveAdmin 
+                        ? `You are authorizing the final disbursement of ${formatRwf(Number(batch.total_amount))} to ${rows.length} employees.`
+                        : `You are approving this batch for final review by HQ.`}
+                    </DialogDescription>
+                  </DialogHeader>
+                  <Textarea placeholder="Optional comment..." value={comment} onChange={(e) => setComment(e.target.value)} />
+                  <DialogFooter>
+                    <Button variant="ghost" onClick={() => setComment('')}>Cancel</Button>
+                    <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={() => handleAction('APPROVE')}>
+                      {canApproveAdmin ? 'Execute Payment' : 'Confirm Approval'}
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+            </>
+          )}
         </div>
       </div>
 
@@ -177,6 +208,7 @@ export default function PayrollBatchDetailsPage() {
                 <TableHeader className="bg-secondary/30">
                   <TableRow>
                     <TableHead>Employee</TableHead>
+                    <TableHead>Phone Number</TableHead>
                     <TableHead>Role / Dept</TableHead>
                     <TableHead>Base Salary</TableHead>
                     <TableHead>OT/Bonus</TableHead>
@@ -189,6 +221,7 @@ export default function PayrollBatchDetailsPage() {
                   {rows.map((item: any) => (
                     <TableRow key={item.uuid} className="hover:bg-secondary/10 transition-colors">
                       <TableCell className="font-semibold">{`${item.employee?.first_name ?? ''} ${item.employee?.last_name ?? ''}`.trim()}</TableCell>
+                      <TableCell className="text-sm font-mono">{item.employee?.phone_number || 'N/A'}</TableCell>
                       <TableCell className="text-sm text-muted-foreground">{item.employee?.department?.name ?? 'Employee'}</TableCell>
                       <TableCell>{formatRwf(Number(item.transaction?.base_amount ?? item.transaction?.gross_amount ?? 0))}</TableCell>
                       <TableCell className="text-emerald-600">{formatRwf(Number(item.transaction?.allowance_amount ?? 0))}</TableCell>
