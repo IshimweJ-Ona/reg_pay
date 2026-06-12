@@ -167,6 +167,7 @@ export class EmployeesService {
             }
           : {}),
       },
+      distinct: ['uuid'],
       include: this.employeeIncludes(),
       orderBy: {
         created_at: 'desc',

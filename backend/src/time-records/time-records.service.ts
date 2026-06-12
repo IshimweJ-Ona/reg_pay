@@ -73,7 +73,10 @@ export class TimeRecordsService {
     return this.serialize(record);
   }
 
-  async bulkCreate(dto: { records: CreateTimeRecordDto[] }, actor: CurrentUserType) {
+  async bulkCreate(
+    dto: { records: CreateTimeRecordDto[] },
+    actor: CurrentUserType,
+  ) {
     const results: any[] = [];
     for (const recordDto of dto.records) {
       try {
@@ -81,10 +84,83 @@ export class TimeRecordsService {
         results.push(result);
       } catch (error: any) {
         if (!(error instanceof ConflictException)) {
-            console.error('Bulk item failed:', error.message || error);
+          console.error('Bulk item failed:', error.message || error);
         }
       }
     }
+    return { success: true, count: results.length };
+  }
+
+  async batchSync(
+    dto: { records: CreateTimeRecordDto[] },
+    actor: CurrentUserType,
+  ) {
+    if (!dto.records?.length) {
+      return { success: true, count: 0 };
+    }
+
+    const employeeIds = [
+      ...new Set(
+        dto.records.map((recordDto) =>
+          this.toBigInt(recordDto.employee_id, 'employee_id').toString(),
+        ),
+      ),
+    ].map((id) => BigInt(id));
+
+    const employees = await this.prisma.employees.findMany({
+      where: {
+        id: { in: employeeIds },
+        deleted_at: null,
+      },
+      select: { id: true, working_location_id: true, department_id: true },
+    });
+
+    if (employees.length !== employeeIds.length) {
+      throw new BadRequestException('One or more employees do not exist.');
+    }
+
+    employees.forEach((employee) =>
+      this.ensureActorCanAccessEmployee(actor, employee),
+    );
+
+    const results = await this.prisma.$transaction(async (tx) => {
+      const syncedRecords: any[] = [];
+
+      for (const recordDto of dto.records) {
+        const employeeId = this.toBigInt(recordDto.employee_id, 'employee_id');
+        const attendanceDate = new Date(recordDto.attendance_date);
+
+        const record = await tx.time_records.upsert({
+          where: {
+            employee_id_attendance_date: {
+              employee_id: employeeId,
+              attendance_date: attendanceDate,
+            },
+          },
+          update: {
+            clock_in: recordDto.clock_in
+              ? new Date(recordDto.clock_in)
+              : undefined,
+            attendance_status:
+              recordDto.attendance_status ?? ATTENDANCE_STATUS.PRESENT,
+          },
+          create: {
+            uuid: generateUUID(),
+            employee_id: employeeId,
+            attendance_date: attendanceDate,
+            clock_in: recordDto.clock_in
+              ? new Date(recordDto.clock_in)
+              : new Date(),
+            attendance_status:
+              recordDto.attendance_status ?? ATTENDANCE_STATUS.PRESENT,
+          },
+        });
+        syncedRecords.push(record);
+      }
+
+      return syncedRecords;
+    });
+
     return { success: true, count: results.length };
   }
 
@@ -197,6 +273,77 @@ export class TimeRecordsService {
       },
       include: this.includes(),
       orderBy: { attendance_date: 'desc' },
+    });
+
+    return records.map((record) => this.serialize(record));
+  }
+
+  async findToday(
+    workingLocationId?: string,
+    category?: string,
+    actor?: CurrentUserType,
+  ) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const where: any = {
+      attendance_date: today,
+    };
+
+    if (workingLocationId) {
+      // workingLocationId may be numeric id, uuid, or human-readable name (frontend sometimes passes name).
+      let wlId: bigint | null = null;
+
+      if (/^\d+$/.test(workingLocationId)) {
+        wlId = BigInt(workingLocationId);
+      } else {
+        // Try uuid lookup
+        const wlByUuid = await this.prisma.working_locations.findUnique({
+          where: { uuid: workingLocationId },
+          select: { id: true },
+        });
+        if (wlByUuid) wlId = wlByUuid.id;
+        else {
+          // Fallback: try matching by name
+          const wlByName = await this.prisma.working_locations.findFirst({
+            where: { name: workingLocationId, deleted_at: null },
+            select: { id: true },
+          });
+          if (wlByName) wlId = wlByName.id;
+        }
+      }
+
+      if (wlId !== null) {
+        where.employee = {
+          working_location_id: wlId,
+        };
+      } else {
+        // If we can't resolve, return empty set to avoid throwing on invalid input
+        return [];
+      }
+    }
+
+    if (category) {
+      where.employee = {
+        ...(where.employee || {}),
+        employment_category: {
+          name: category,
+        },
+      };
+    }
+
+    // Apply actor scoping if provided
+    if (actor) {
+      const scope = this.employeeScopeWhere(actor);
+      where.employee = {
+        ...(where.employee || {}),
+        ...scope,
+      };
+    }
+
+    const records = await this.prisma.time_records.findMany({
+      where,
+      include: this.includes(),
     });
 
     return records.map((record) => this.serialize(record));

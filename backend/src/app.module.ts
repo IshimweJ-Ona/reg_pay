@@ -1,4 +1,5 @@
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
+import { APP_INTERCEPTOR } from '@nestjs/core';
 
 import { ConfigModule } from '@nestjs/config';
 import { CacheModule } from '@nestjs/cache-manager';
@@ -20,6 +21,7 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { SystemConfigModule } from './system-config/system-config.module';
 
 import { SecurityMiddleware } from './common/security/security.middleware';
+import { WorkingLocationScopeInterceptor } from './common/interceptors/working-location-scope.interceptor';
 
 @Module({
   imports: [
@@ -60,7 +62,13 @@ import { SecurityMiddleware } from './common/security/security.middleware';
 
   controllers: [AppController],
 
-  providers: [AppService],
+  providers: [
+    AppService,
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: WorkingLocationScopeInterceptor,
+    },
+  ],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {

@@ -104,11 +104,14 @@ enum TRANSACTION_STATUS {
 }
 
 enum PAYMENT_BATCH_STATUS {
+  DRAFT
   PENDING
   IN_REVIEW
   MANAGER_APPROVED
   APPROVED
   REJECTED
+  REJECTED_BY_BRANCH_MANAGER
+  REJECTED_BY_SUPER_ADMIN
 }
 
 enum APPROVAL_STATUS {
@@ -607,6 +610,7 @@ model Employees {
   documents Employee_documents[]
   employee_transfer_subjects Transfer_requests[] @relation("TransferEmployeeSubject")
 
+  @@unique([first_name, last_name, working_location_id, department_id])
   @@index([department_id], name: "idx_employee_department")
   @@index([working_location_id], name: "idx_employee_location")
   @@index([employment_category_id], name: "idx_employee_category")
@@ -1125,6 +1129,22 @@ model Audit_logs {
   @@index([entity_id], name: "idx_audit_entity_id")
   @@index([action], name: "idx_audit_action")
   @@index([created_at], name: "idx_audit_created")
+}
+
+model Monthly_taxes {
+  id BigInt @id @default(autoincrement())
+  uuid String @unique @db.Char(36)
+
+  name String @db.VarChar(100)
+  rate Decimal @db.Decimal(5, 2)
+  effective_from DateTime @db.Date
+
+  is_active Boolean @default(true)
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  @@index([is_active], name: "idx_monthly_tax_active")
 }
 
 model System_config {

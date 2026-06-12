@@ -58,8 +58,21 @@ export class PaymentStructuresService {
     const overlapping = await this.prisma.payment_structures.findFirst({
       where: {
         employee_id: employeeId,
-        effective_from: { lte: effectiveFrom },
-        OR: [{ effective_to: null }, { effective_to: { gte: effectiveFrom } }],
+        OR: [
+          {
+            // Overlaps with a closed period
+            AND: [
+              { effective_to: { not: null } },
+              { effective_from: { lte: effectiveFrom } },
+              { effective_to: { gte: effectiveFrom } },
+            ],
+          },
+          {
+            // Overlaps with an active period starting in the future
+            effective_to: null,
+            effective_from: { gt: effectiveFrom },
+          },
+        ],
       },
     });
 

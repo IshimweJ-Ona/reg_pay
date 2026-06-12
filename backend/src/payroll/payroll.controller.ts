@@ -44,6 +44,15 @@ export class PayrollController {
     return this.payrollService.createBatch(dto, actor);
   }
 
+  @Permissions('payroll.create')
+  @Post('batches/:uuid/submit')
+  submitBatch(
+    @Param('uuid') uuid: string,
+    @CurrentUser() actor: CurrentUserType,
+  ) {
+    return this.payrollService.submitBatch(uuid, actor);
+  }
+
   @Permissions('payroll.read')
   @Get('batches')
   findBatches(@CurrentUser() actor: CurrentUserType, @Query('q') q?: string) {

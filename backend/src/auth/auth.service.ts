@@ -123,94 +123,111 @@ export class AuthService {
   }
 
   async login(dto: LoginDto, context: RequestContext = {}) {
-    const user = await this.prisma.users.findFirst({
-      where: {
-        OR: [{ email: dto.identifier }, { phone_number: dto.identifier }],
-        deleted_at: null,
-      },
-      include: {
-        roles: { include: { role: true } },
-      },
-    });
-
-    if (!user) {
-      throw new UnauthorizedException('Incorrect email or phone number');
-    }
-
-    const passwordIsValid = await comparePassword(
-      dto.password,
-      user.password_hash,
-    );
-
-    if (!passwordIsValid) {
-      await this.writeLoginAudit(user.id, context.ipAddress, false);
-      throw new UnauthorizedException('Incorrect password.');
-    }
-
-    if (user.status === STATUS_USER.SUSPENDED) {
-      throw new UnauthorizedException(
-        'Account is suspended. Contact an administrator.',
-      );
-    }
-
-    if (user.status === STATUS_USER.REJECTED) {
-      throw new UnauthorizedException(
-        'Your registration was rejected. Contact an administrator if you believe this is an error.',
-      );
-    }
-
-    const payload = await this.buildPayload(user.id);
-    const tokens = await this.createTokenPair(payload);
-
-    await this.prisma.$transaction([
-      this.prisma.user_sessions.create({
-        data: {
-          uuid: generateUUID(),
-          user_id: user.id,
-          refresh_token_hash: await hashValue(tokens.refresh_token),
-          device_info: this.normalizeDeviceInfo(context.deviceInfo),
-          ip_address: context.ipAddress,
-          expires_at: this.getRefreshExpiryDate(),
+    try {
+      const user = await this.prisma.users.findFirst({
+        where: {
+          OR: [{ email: dto.identifier }, { phone_number: dto.identifier }],
+          deleted_at: null,
         },
-      }),
-      this.prisma.users.update({
-        where: { id: user.id },
-        data: { last_login_at: new Date() },
-      }),
-    ]);
+        include: {
+          roles: { include: { role: true } },
+        },
+      });
 
-    await this.writeLoginAudit(user.id, context.ipAddress, true);
+      if (!user) {
+        throw new UnauthorizedException(
+          'Incorrect email or phone number. Please check your credentials and try again.',
+        );
+      }
 
-    const roles = user.roles.map((r) => r.role.name);
+      const passwordIsValid = await comparePassword(
+        dto.password,
+        user.password_hash,
+      );
 
-    let rolePath = 'users';
-    if (roles.includes('SUPER_ADMIN')) {
-      rolePath = 'super_admin';
-    } else if (
-      roles.includes('BRANCH_MANAGER') ||
-      roles.includes('MANAGER') ||
-      roles.includes('ON_MANAGER')
-    ) {
-      rolePath = 'manager';
-    } else if (
-      roles.includes('HR') ||
-      roles.includes('HR_MANAGER') ||
-      roles.includes('HR_ADMIN')
-    ) {
-      rolePath = 'hr';
-    } else if (roles.includes('ACCOUNTANT') || roles.includes('FINANCE')) {
-      rolePath = 'finance';
-    } else if (roles.includes('ATTENDANT')) {
-      rolePath = 'attendant';
+      if (!passwordIsValid) {
+        await this.writeLoginAudit(user.id, context.ipAddress, false);
+        throw new UnauthorizedException(
+          'Incorrect password. Please try again or reset your password if you forgotten it.',
+        );
+      }
+
+      if (user.status === STATUS_USER.SUSPENDED) {
+        throw new UnauthorizedException(
+          'Your account has been suspended. Please contact the system administrator for assistance.',
+        );
+      }
+
+      if (user.status === STATUS_USER.REJECTED) {
+        throw new UnauthorizedException(
+          'Your registration request was rejected. Please contact support if you believe this is an error.',
+        );
+      }
+
+      const payload = await this.buildPayload(user.id);
+      const tokens = await this.createTokenPair(payload);
+
+      await this.prisma.$transaction([
+        this.prisma.user_sessions.create({
+          data: {
+            uuid: generateUUID(),
+            user_id: user.id,
+            refresh_token_hash: await hashValue(tokens.refresh_token),
+            device_info: this.normalizeDeviceInfo(context.deviceInfo),
+            ip_address: context.ipAddress,
+            expires_at: this.getRefreshExpiryDate(),
+          },
+        }),
+        this.prisma.users.update({
+          where: { id: user.id },
+          data: { last_login_at: new Date() },
+        }),
+      ]);
+
+      await this.writeLoginAudit(user.id, context.ipAddress, true);
+
+      const roles = user.roles.map((r) => r.role.name);
+
+      let rolePath = 'users';
+      if (roles.includes('SUPER_ADMIN')) {
+        rolePath = 'super_admin';
+      } else if (
+        roles.includes('BRANCH_MANAGER') ||
+        roles.includes('MANAGER') ||
+        roles.includes('ON_MANAGER')
+      ) {
+        rolePath = 'manager';
+      } else if (
+        roles.includes('HR') ||
+        roles.includes('HR_MANAGER') ||
+        roles.includes('HR_ADMIN')
+      ) {
+        rolePath = 'hr';
+      } else if (roles.includes('ACCOUNTANT') || roles.includes('FINANCE')) {
+        rolePath = 'finance';
+      } else if (roles.includes('ATTENDANT')) {
+        rolePath = 'attendant';
+      }
+
+      let redirectUrl = `/${rolePath}/${user.uuid}`;
+
+      if (user.status === STATUS_USER.PENDING) {
+        redirectUrl = `/auth/pending/${user.uuid}`;
+      }
+
+      return { ...tokens, redirectUrl, uuid: user.uuid, status: user.status };
+    } catch (error) {
+      if (
+        error instanceof UnauthorizedException ||
+        error instanceof ConflictException
+      ) {
+        throw error;
+      }
+      console.error('Login error:', error);
+      throw new Error(
+        `An unexpected error occurred during login. ${error.message || ''}`,
+      );
     }
-
-    let redirectUrl = `/${rolePath}/${user.uuid}`;
-
-    if (user.status === STATUS_USER.PENDING) {
-      redirectUrl = `/auth/pending/${user.uuid}`;
-    }
-
-    return { ...tokens, redirectUrl, uuid: user.uuid, status: user.status };
   }
 
   async forgotPassword(emailOrPhone: string) {

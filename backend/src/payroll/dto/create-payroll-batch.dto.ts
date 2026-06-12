@@ -42,4 +42,15 @@ export class CreatePayrollBatchDto {
   @IsInt()
   @Min(1)
   work_days?: number;
+
+  @IsOptional()
+  @IsString({ each: true })
+  categories?: string[];
+
+  @IsOptional()
+  overrides?: Array<{
+    employee_id: string;
+    base_amount?: number;
+    phone_number?: string;
+  }>;
 }

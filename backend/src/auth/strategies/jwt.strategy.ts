@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
+import { Request } from 'express';
 import { JWT_ACCESS_SECRET } from '../constants/auth.constants';
 import type { JwtPayload } from '../interfaces/jwt-payload.interface';
 import type { CurrentUserType } from '../types/current-user.type';
@@ -9,7 +10,11 @@ import type { CurrentUserType } from '../types/current-user.type';
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor() {
     super({
-      jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+      // try Authorization header first, fall back to ?token= query param (needed for SSE)
+      jwtFromRequest: ExtractJwt.fromExtractors([
+        ExtractJwt.fromAuthHeaderAsBearerToken(),
+        (req: Request) => (req?.query?.token as string) ?? null,
+      ]),
       ignoreExpiration: false,
       secretOrKey: JWT_ACCESS_SECRET,
     });

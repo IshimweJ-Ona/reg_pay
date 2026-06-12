@@ -10,6 +10,14 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
+import {
+  ApiTags,
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+  ApiQuery,
+  ApiParam,
+} from '@nestjs/swagger';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import { extname } from 'path';
@@ -29,6 +37,8 @@ import { RejectUserDto } from './dto/reject-user.dto';
 import { UpdateUserPermissionOverrideDto } from './dto/update-user-permission-override.dto';
 import { UsersService } from './users.service';
 
+@ApiTags('Users')
+@ApiBearerAuth('jwt')
 @Controller('users')
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
@@ -37,6 +47,21 @@ export class UsersController {
   @Roles('SUPER_ADMIN', 'ADMIN', 'BRANCH_MANAGER')
   @Permissions('users.create')
   @Post()
+  @ApiOperation({
+    summary: 'Create a new user manually',
+    description:
+      'Allows administrators to manually create a user account. The user will be created with ACTIVE status if approved immediately, or PENDING if status is not specified.',
+  })
+  @ApiResponse({ status: 201, description: 'User created successfully.' })
+  @ApiResponse({ status: 400, description: 'Invalid input data.' })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden. User lacks necessary permissions.',
+  })
+  @ApiResponse({
+    status: 409,
+    description: 'Conflict. Email or phone number already exists.',
+  })
   create(@Body() dto: RegisterDto, @CurrentUser() actor: CurrentUserType) {
     return this.usersService.createUser(dto, actor);
   }
@@ -45,6 +70,15 @@ export class UsersController {
   @Roles('SUPER_ADMIN', 'ADMIN', 'BRANCH_MANAGER')
   @Permissions('users.read')
   @Get()
+  @ApiOperation({
+    summary: 'List all users',
+    description:
+      'Returns a list of all users in the system, with optional filtering by name or status.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'List of users returned successfully.',
+  })
   findAll(
     @CurrentUser() actor: CurrentUserType,
     @Query('q') q?: string,
@@ -57,6 +91,15 @@ export class UsersController {
   @Roles('SUPER_ADMIN', 'ADMIN', 'BRANCH_MANAGER')
   @Permissions('users.read')
   @Get('pending')
+  @ApiOperation({
+    summary: 'List users pending approval',
+    description:
+      'Returns a list of users who have registered but have not yet been approved by an administrator.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'List of pending users returned successfully.',
+  })
   findPending(@Query('q') q?: string) {
     return this.usersService.findPendingApproval(q);
   }
@@ -65,6 +108,13 @@ export class UsersController {
   @Roles('SUPER_ADMIN', 'ADMIN', 'BRANCH_MANAGER')
   @Permissions('users.approve')
   @Patch(':uuid/approve')
+  @ApiOperation({
+    summary: 'Approve a pending user',
+    description:
+      'Approves a pending registration, activates the account, and optionally assigns roles and permissions.',
+  })
+  @ApiResponse({ status: 200, description: 'User approved and activated.' })
+  @ApiResponse({ status: 404, description: 'User not found.' })
   approve(
     @Param('uuid') uuid: string,
     @Body() dto: ApproveUserDto,
@@ -77,6 +127,13 @@ export class UsersController {
   @Roles('SUPER_ADMIN', 'ADMIN', 'BRANCH_MANAGER')
   @Permissions('users.approve')
   @Patch(':uuid/reject')
+  @ApiOperation({
+    summary: 'Reject a pending user',
+    description:
+      'Rejects a pending registration. The account status is set to REJECTED and the user will not be able to log in.',
+  })
+  @ApiResponse({ status: 200, description: 'User registration rejected.' })
+  @ApiResponse({ status: 404, description: 'User not found.' })
   reject(
     @Param('uuid') uuid: string,
     @Body() dto: RejectUserDto,
@@ -89,14 +146,41 @@ export class UsersController {
   @Roles('SUPER_ADMIN', 'ADMIN', 'BRANCH_MANAGER')
   @Permissions('users.suspend')
   @Patch(':uuid/suspend')
+  @ApiOperation({
+    summary: 'Suspend a user account',
+    description:
+      'Suspends an active user account. The user will be immediately logged out and blocked from further access.',
+  })
+  @ApiResponse({ status: 200, description: 'User account suspended.' })
+  @ApiResponse({ status: 404, description: 'User not found.' })
   suspend(@Param('uuid') uuid: string, @CurrentUser() actor: CurrentUserType) {
     return this.usersService.suspendUser(uuid, actor);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
+  @Roles('SUPER_ADMIN', 'ADMIN', 'BRANCH_MANAGER')
+  @Permissions('users.suspend')
+  @Patch(':uuid/reactivate')
+  @ApiOperation({
+    summary: 'Reactivate a user account',
+    description: 'Restores access to a previously suspended user account.',
+  })
+  @ApiResponse({ status: 200, description: 'User account reactivated.' })
+  @ApiResponse({ status: 404, description: 'User not found.' })
+  reactivate(@Param('uuid') uuid: string, @CurrentUser() actor: CurrentUserType) {
+    return this.usersService.reactivateUser(uuid, actor);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
   @Roles('SUPER_ADMIN', 'ADMIN')
   @Permissions('users.update')
   @Patch(':uuid/roles')
+  @ApiOperation({
+    summary: 'Assign roles to a user',
+    description: 'Updates the list of roles assigned to a specific user.',
+  })
+  @ApiResponse({ status: 200, description: 'Roles updated successfully.' })
+  @ApiResponse({ status: 404, description: 'User not found.' })
   assignRoles(
     @Param('uuid') uuid: string,
     @Body() dto: AssignUserRolesDto,
@@ -109,6 +193,13 @@ export class UsersController {
   @Roles('SUPER_ADMIN')
   @Permissions('users.update')
   @Patch(':uuid/permissions/:permission/override')
+  @ApiOperation({
+    summary: 'Override user permission',
+    description:
+      'Manually allows or denies a specific permission for a user, bypassing their role-based permissions.',
+  })
+  @ApiResponse({ status: 200, description: 'Permission override applied.' })
+  @ApiResponse({ status: 404, description: 'User or permission not found.' })
   updatePermissionOverride(
     @Param('uuid') uuid: string,
     @Param('permission') permission: string,
@@ -142,6 +233,15 @@ export class UsersController {
       }),
     }),
   )
+  @ApiOperation({
+    summary: 'Bulk upload profile images',
+    description:
+      'Uploads multiple profile images and maps them to users based on a provided JSON mapping (filename to user UUID).',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Images uploaded and mapped successfully.',
+  })
   async bulkUploadImages(
     @UploadedFiles() files: Express.Multer.File[],
     @Body('mappings') mappings: string,
@@ -154,6 +254,16 @@ export class UsersController {
   @Roles('SUPER_ADMIN', 'ADMIN', 'BRANCH_MANAGER')
   @Permissions('users.transfer')
   @Post(':uuid/transfer-requests')
+  @ApiOperation({
+    summary: 'Request user transfer',
+    description:
+      'Initiates a request to transfer a user from their current working location or department to a new one.',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Transfer request created successfully.',
+  })
+  @ApiResponse({ status: 404, description: 'User or destination not found.' })
   requestTransfer(
     @Param('uuid') uuid: string,
     @Body() dto: RequestTransferDto,
@@ -166,6 +276,13 @@ export class UsersController {
   @Roles('SUPER_ADMIN', 'ADMIN', 'HQ_MANAGER')
   @Permissions('users.transfer')
   @Patch('transfer-requests/:uuid/approve')
+  @ApiOperation({
+    summary: 'Approve user transfer',
+    description:
+      "Approves an ongoing user transfer request and updates the user's location/department records.",
+  })
+  @ApiResponse({ status: 200, description: 'Transfer approved and executed.' })
+  @ApiResponse({ status: 404, description: 'Transfer request not found.' })
   approveTransfer(
     @Param('uuid') uuid: string,
     @CurrentUser() actor: CurrentUserType,
@@ -176,6 +293,12 @@ export class UsersController {
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
   @Roles('SUPER_ADMIN', 'ADMIN', 'HQ_MANAGER')
   @Patch('transfer-requests/:uuid/reject')
+  @ApiOperation({
+    summary: 'Reject user transfer',
+    description: 'Rejects a user transfer request with a provided reason.',
+  })
+  @ApiResponse({ status: 200, description: 'Transfer request rejected.' })
+  @ApiResponse({ status: 404, description: 'Transfer request not found.' })
   rejectTransfer(
     @Param('uuid') uuid: string,
     @Body() dto: RejectTransferDto,
@@ -185,6 +308,12 @@ export class UsersController {
   }
 
   @Get(':uuid/avatar')
+  @ApiOperation({
+    summary: 'Get user avatar URL',
+    description: "Returns the public URL for a user's profile image.",
+  })
+  @ApiResponse({ status: 200, description: 'Avatar URL returned.' })
+  @ApiResponse({ status: 404, description: 'User not found.' })
   async getAvatar(@Param('uuid') uuid: string) {
     const avatarUrl = await this.usersService.getAvatarUrl(uuid);
     return { avatar_url: avatarUrl };

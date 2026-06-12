@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { Subject } from 'rxjs';
 import { PrismaService } from '../prisma/prisma.service';
 import { generateUUID } from '../common/utils/uuid.util';
 
@@ -14,13 +15,41 @@ export interface CreateNotificationDto {
 
 @Injectable()
 export class NotificationsService {
+  private clients = new Map<string, Subject<MessageEvent>>();
+
   constructor(private readonly prisma: PrismaService) {}
+
+  // Called by controller to register a new SSE connection
+  addClient(userId: string): Subject<MessageEvent> {
+    const subject = new Subject<MessageEvent>();
+    this.clients.set(userId, subject);
+    return subject;
+  }
+
+  // Called by controller when connection closes
+  removeClient(userId: string) {
+    this.clients.delete(userId);
+  }
+
+  // Push to a specific user
+  private pushToUser(userId: string, payload: object) {
+    const subject = this.clients.get(userId);
+    if (subject) {
+      subject.next({ data: JSON.stringify(payload) } as MessageEvent);
+    }
+  }
+
+  broadcast(payload: object) {
+    this.clients.forEach((subject) => {
+      subject.next({ data: JSON.stringify(payload) } as MessageEvent);
+    });
+  }
 
   async create(dto: CreateNotificationDto) {
     const userId = dto.userId ? BigInt(dto.userId.toString()) : null;
     const senderId = dto.senderId ? BigInt(dto.senderId.toString()) : null;
 
-    return this.prisma.notifications.create({
+    const notification = await this.prisma.notifications.create({
       data: {
         uuid: generateUUID(),
         user_id: userId,
@@ -32,12 +61,27 @@ export class NotificationsService {
         metadata: dto.metadata,
       },
     });
+
+    //Push real-time SSE event immediately after saving
+    const serialized = {
+      ...notification,
+      id: notification.id.toString(),
+      user_id: notification.user_id?.toString(),
+      sender_id: notification.sender_id?.toString(),
+    };
+
+    if (dto.userId) {
+      // Push to specific user
+      this.pushToUser(dto.userId.toString(), serialized);
+    } else {
+      // null userId = admin/global notication, broadcast to all
+      this.broadcast(serialized);
+    }
+
+    return notification;
   }
 
   async notifyAdmins(dto: Omit<CreateNotificationDto, 'userId'>) {
-    // In a real app, you might want to find all admins and create multiple records,
-    // or just leave user_id as null to mean "for all admins".
-    // Let's use null for "Global/Admin" notifications.
     return this.create({ ...dto, userId: undefined });
   }
 
@@ -53,7 +97,6 @@ export class NotificationsService {
     if (manager) {
       return this.create({ ...dto, userId: manager.user_id });
     } else {
-      // Fallback to admin if no manager
       return this.notifyAdmins(dto);
     }
   }

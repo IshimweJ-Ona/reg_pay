@@ -38,4 +38,21 @@ export class SystemConfigController {
   updateBatch(@Body() dto: BatchUpdateConfigDto) {
     return this.systemConfigService.updateBatch(dto.configs);
   }
+
+  @Get('monthly-taxes/all')
+  getAllMonthlyTaxes() {
+    return this.systemConfigService.getAllMonthlyTaxes();
+  }
+
+  @Post('monthly-taxes')
+  @Roles('SUPER_ADMIN')
+  updateMonthlyTax(@Body() dto: { name: string; rate: number }) {
+    return this.systemConfigService.updateMonthlyTax(dto.name, dto.rate);
+  }
+
+  @Patch('monthly-taxes/:uuid/deactivate')
+  @Roles('SUPER_ADMIN')
+  deactivateMonthlyTax(@Param('uuid') uuid: string) {
+    return this.systemConfigService.deactivateMonthlyTax(uuid);
+  }
 }

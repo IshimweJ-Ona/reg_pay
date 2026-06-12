@@ -112,17 +112,26 @@ export class OrganizationService {
   }
 
   // Find all working locations with optional query filter and caching
-  async findWorkingLocations(qInput?: string) {
+  async findWorkingLocations(actor?: CurrentUserType, qInput?: string) {
     const q = normalizeSearch(qInput);
-    const cacheKey = q ? `working_locations_${q}` : 'working_locations';
+
+    // Unauthenticated callers (login page dropdown) get all locations , no cache ket by user
+    const isSuperAdmin = actor?.roles.includes('SUPER_ADMIN') ?? false;
+    const cacheKey = actor
+      ? q ? `working_locations_${actor.userId}_${q}` : `working_locations_${actor.userId}`
+      : q ? `working_locations_${q}`: `working_locations_public`;
 
     // Check if the result is already in cache
     const cached = await this.cacheManager.get(cacheKey);
     if (cached) return cached as any;
 
+
     const workingLocations = await this.prisma.working_locations.findMany({
       where: {
         deleted_at: null,
+        ...(actor && !isSuperAdmin && actor.working_location_id
+          ? { id: BigInt(actor.working_location_id) }
+          : {}),
         ...(q
           ? {
               OR: [{ name: { contains: q } }, { address: { contains: q } }],
@@ -299,13 +308,27 @@ export class OrganizationService {
   }
 
   // Find departments for a working location with optional query filter and caching
-  async findDepartments(workingLocationIdInput?: string, qInput?: string) {
-    const workingLocationId = workingLocationIdInput
-      ? await this.resolveWorkingLocationId(workingLocationIdInput)
-      : undefined;
+  async findDepartments(
+    actor?: CurrentUserType,
+    workingLocationIdInput?: string,
+    qInput?: string,
+  ) {
+    let workingLocationId: bigint | undefined;
+
+    if (workingLocationIdInput) {
+      workingLocationId = await this.resolveWorkingLocationId(
+        workingLocationIdInput,
+      );
+    } else if (
+      actor &&
+      !actor.roles.includes('SUPER_ADMIN') &&
+      actor.working_location_id
+    ) {
+      workingLocationId = BigInt(actor.working_location_id);
+    }
 
     const q = normalizeSearch(qInput);
-    const cacheKey = `departments_${workingLocationId}_${q}`;
+    const cacheKey = `departments_${workingLocationId ?? 'all'}_${q}`;
 
     // Check if the result is already in cache
     const cached = await this.cacheManager.get(cacheKey);
@@ -395,6 +418,82 @@ export class OrganizationService {
 
     await this.cacheManager.del('working_locations');
     return this.serializeDepartment(updated);
+  }
+
+  async deleteWorkingLocation(uuid: string, actor: CurrentUserType) {
+    if (!actor.roles.includes('SUPER_ADMIN')) {
+      throw new BadRequestException(
+        'Only SUPER_ADMIN can delete working locations.',
+      );
+    }
+
+    const current = await this.prisma.working_locations.findFirst({
+      where: { uuid, deleted_at: null },
+    });
+    if (!current) throw new NotFoundException('Working location not found.');
+
+    const deleted = await this.prisma.$transaction(async (tx) => {
+      await tx.working_locations.update({
+        where: { id: current.id },
+        data: { deleted_at: new Date(), deleted_by: BigInt(actor.userId) },
+      });
+
+      await tx.audit_logs.create({
+        data: {
+          user_id: BigInt(actor.userId),
+          entity_table: 'working_locations',
+          entity_id: current.id,
+          module_name: 'ORGANIZATION',
+          activity_type: ACTIVITY_TYPE.UPDATE,
+          activity_description: 'Soft deleted working location.',
+          action: AUDIT_ACTION.UPDATED,
+          new_values: { deleted_at: new Date().toISOString() },
+        },
+      });
+
+      return tx.working_locations.findUnique({ where: { id: current.id } });
+    });
+
+    await this.cacheManager.del('working_locations');
+    return this.serializeWorkingLocation(deleted as any);
+  }
+
+  async deleteDepartment(uuid: string, actor: CurrentUserType) {
+    if (!actor.roles.includes('SUPER_ADMIN')) {
+      throw new BadRequestException('Only SUPER_ADMIN can delete departments.');
+    }
+
+    const current = await this.prisma.departments.findUnique({
+      where: { uuid },
+    });
+    if (!current) throw new NotFoundException('Department not found.');
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.departments.updateMany({
+        where: {
+          code: current.code,
+          working_location_id: current.working_location_id,
+          status: 'ACTIVE',
+        },
+        data: { status: 'INACTIVE' },
+      });
+
+      await tx.audit_logs.create({
+        data: {
+          user_id: BigInt(actor.userId),
+          entity_table: 'departments',
+          entity_id: current.id,
+          module_name: 'ORGANIZATION',
+          activity_type: ACTIVITY_TYPE.UPDATE,
+          activity_description: 'Soft deleted department for working location.',
+          action: AUDIT_ACTION.UPDATED,
+          new_values: { status: 'INACTIVE' },
+        },
+      });
+    });
+
+    await this.cacheManager.del('working_locations');
+    return { message: 'Department deleted' };
   }
 
   async assignBranchManager(

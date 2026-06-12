@@ -2,6 +2,14 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateConfigDto } from './dto/update-config.dto';
 import { generateUUID } from '../common/utils/uuid.util';
+import dayjs from 'dayjs';
+import utc from 'dayjs/plugin/utc';
+import timezone from 'dayjs/plugin/timezone';
+
+dayjs.extend(utc);
+dayjs.extend(timezone);
+
+const RWANDA_TIMEZONE = 'Africa/Kigali';
 
 @Injectable()
 export class SystemConfigService {
@@ -55,5 +63,87 @@ export class SystemConfigService {
       results.push(result);
     }
     return results;
+  }
+
+  async getAllMonthlyTaxes() {
+    const taxes = await this.prisma.monthly_taxes.findMany({
+      where: { is_active: true },
+      orderBy: [{ name: 'asc' }, { effective_from: 'desc' }],
+    });
+
+    const uniqueTaxes: Record<string, any> = {};
+    taxes.forEach((t) => {
+      if (!uniqueTaxes[t.name]) {
+        uniqueTaxes[t.name] = {
+          ...t,
+          id: t.id.toString(),
+          rate: Number(t.rate),
+        };
+      }
+    });
+    return Object.values(uniqueTaxes);
+  }
+
+  async findMonthlyTaxesAtDate(date: Date) {
+    const taxes = await this.prisma.monthly_taxes.findMany({
+      where: {
+        is_active: true,
+        effective_from: { lte: date },
+      },
+      orderBy: [{ name: 'asc' }, { effective_from: 'desc' }],
+    });
+
+    const latestTaxes: Record<string, any> = {};
+    taxes.forEach((t) => {
+      if (!latestTaxes[t.name]) {
+        latestTaxes[t.name] = {
+          ...t,
+          id: t.id.toString(),
+          rate: Number(t.rate),
+        };
+      }
+    });
+
+    return Object.values(latestTaxes);
+  }
+
+  async updateMonthlyTax(name: string, rate: number) {
+    const now = dayjs().tz(RWANDA_TIMEZONE);
+    let effectiveFrom: Date;
+
+    if (now.date() === 1) {
+      effectiveFrom = now.startOf('day').toDate();
+    } else {
+      effectiveFrom = now.add(1, 'month').startOf('month').toDate();
+    }
+
+    const tax = await this.prisma.monthly_taxes.create({
+      data: {
+        uuid: generateUUID(),
+        name,
+        rate,
+        effective_from: effectiveFrom,
+        is_active: true,
+      },
+    });
+
+    return {
+      ...tax,
+      id: tax.id.toString(),
+      rate: Number(tax.rate),
+    };
+  }
+
+  async deactivateMonthlyTax(uuid: string) {
+    const tax = await this.prisma.monthly_taxes.update({
+      where: { uuid },
+      data: { is_active: false },
+    });
+
+    return {
+      ...tax,
+      id: tax.id.toString(),
+      rate: Number(tax.rate),
+    };
   }
 }

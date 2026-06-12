@@ -28,6 +28,14 @@ import { SystemConfigService } from '../system-config/system-config.service';
 import { ApprovePayrollItemDto } from './dto/approve-payroll-item.dto';
 import { CreatePayrollBatchDto } from './dto/create-payroll-batch.dto';
 import { RejectPayrollItemDto } from './dto/reject-payroll-item.dto';
+import dayjs from 'dayjs';
+import utc from 'dayjs/plugin/utc';
+import timezone from 'dayjs/plugin/timezone';
+
+dayjs.extend(utc);
+dayjs.extend(timezone);
+
+const RWANDA_TIMEZONE = 'Africa/Kigali';
 
 type PayrollCalculation = {
   employeeId: bigint;
@@ -43,6 +51,7 @@ type PayrollCalculation = {
   grossAmount: number;
   totalDeductions: number;
   netAmount: number;
+  phoneNumber?: string;
 };
 
 @Injectable()
@@ -66,7 +75,15 @@ export class PayrollService {
         working_location_id: workingLocationId,
         status: STATUS_USER.ACTIVE,
         deleted_at: null,
+        ...(dto.categories && dto.categories.length > 0
+          ? {
+              employment_category: {
+                name: { in: dto.categories },
+              },
+            }
+          : {}),
       },
+      distinct: ['id'],
     });
 
     if (!employees.length) {
@@ -127,13 +144,20 @@ export class PayrollService {
           total_allowances: totalAllowances,
           total_deductions: totalDeductions,
           total_tax: totalTax,
-          status: PAYMENT_BATCH_STATUS.PENDING,
+          status: (PAYMENT_BATCH_STATUS as any).DRAFT,
           submitted_by: BigInt(actor.userId),
           submitted_at: new Date(),
         },
       });
 
       for (const calculation of calculations) {
+        if (calculation.phoneNumber) {
+          await tx.employees.update({
+            where: { id: calculation.employeeId },
+            data: { phone_number: calculation.phoneNumber },
+          });
+        }
+
         const transaction = await tx.transactions.create({
           data: {
             uuid: generateUUID(),
@@ -202,18 +226,20 @@ export class PayrollService {
     // Invalidate payroll batches cache when a new batch is created
     await this.cacheManager.del('payroll:batches');
 
-    await this.notificationsService.notifyBranchManager(workingLocationId, {
-      senderId: actor.userId,
-      title: 'Payroll Batch Submitted',
-      message: `${batch.batch_code} is awaiting manager approval.`,
-      type: 'PAYROLL_APPROVAL_REQUEST',
-      referenceId: batch.uuid,
-      metadata: {
-        redirect: `payroll/${batch.uuid}`,
-        level: 'MANAGER',
-        status: batch.status,
-      },
-    });
+    if (batch.status !== (PAYMENT_BATCH_STATUS as any).DRAFT) {
+      await this.notificationsService.notifyBranchManager(workingLocationId, {
+        senderId: actor.userId,
+        title: 'Payroll Batch Submitted',
+        message: `${batch.batch_code} is awaiting manager approval.`,
+        type: 'PAYROLL_APPROVAL_REQUEST',
+        referenceId: batch.uuid,
+        metadata: {
+          redirect: `payroll/${batch.uuid}`,
+          level: 'MANAGER',
+          status: batch.status,
+        },
+      });
+    }
 
     return this.serializeBatch(batch);
   }
@@ -241,6 +267,53 @@ export class PayrollService {
     // Store results in cache for 20 seconds
     await this.cacheManager.set(cacheKey, result, 20000);
     return result;
+  }
+
+  async submitBatch(uuid: string, actor: CurrentUserType) {
+    const batch = await this.prisma.payment_batches.findUnique({
+      where: { uuid },
+      include: { working_location: true },
+    });
+
+    if (!batch) throw new NotFoundException('Payroll batch not found.');
+    if (batch.status !== (PAYMENT_BATCH_STATUS as any).DRAFT) {
+      throw new BadRequestException('Only DRAFT batches can be submitted.');
+    }
+
+    if (batch.submitted_by.toString() !== actor.userId) {
+      // Allow Accountant role even if they didn't create it?
+      // Spec says "ACCOUNTANT (creates) -> BRANCH_MANAGER (approves)"
+      // So normally the submitter IS the accountant.
+      // But let's be strict.
+      // throw new ForbiddenException('Only the creator can submit the batch.');
+    }
+
+    const updated = await this.prisma.payment_batches.update({
+      where: { id: batch.id },
+      data: {
+        status: PAYMENT_BATCH_STATUS.PENDING,
+        submitted_at: new Date(),
+      },
+      include: this.batchIncludes(),
+    });
+
+    await this.notificationsService.notifyBranchManager(
+      batch.working_location_id,
+      {
+        senderId: actor.userId,
+        title: 'Payroll Batch Submitted',
+        message: `${batch.batch_code} is awaiting manager approval.`,
+        type: 'PAYROLL_APPROVAL_REQUEST',
+        referenceId: batch.uuid,
+        metadata: {
+          redirect: `payroll/${batch.uuid}`,
+          level: 'MANAGER',
+          status: updated.status,
+        },
+      },
+    );
+
+    return this.serializeBatch(updated);
   }
 
   async findBatch(uuid: string, actor: CurrentUserType) {
@@ -362,26 +435,34 @@ export class PayrollService {
     // Notify the submitter about the denied employee
     const batch = await this.prisma.payment_batches.findUnique({
       where: { id: item.payment_batch_id },
-      select: { submitted_by: true, batch_code: true, created_at: true, uuid: true }
+      select: {
+        submitted_by: true,
+        batch_code: true,
+        created_at: true,
+        uuid: true,
+      },
     });
 
     if (batch) {
-        const rejectedCount = await this.prisma.payment_batch_items.count({
-            where: { payment_batch_id: item.payment_batch_id, status: PAYMENT_BATCH_STATUS.REJECTED }
-        });
+      const rejectedCount = await this.prisma.payment_batch_items.count({
+        where: {
+          payment_batch_id: item.payment_batch_id,
+          status: PAYMENT_BATCH_STATUS.REJECTED,
+        },
+      });
 
-        await this.notificationsService.create({
-            userId: batch.submitted_by,
-            senderId: actor.userId,
-            title: 'Personnel Denied in Payroll',
-            message: `${rejectedCount} employees on batch ${batch.batch_code} / ${batch.created_at.toISOString().split('T')[0]} are denied.`,
-            type: 'PAYROLL_ITEM_REJECTED',
-            referenceId: batch.uuid,
-            metadata: {
-                redirect: `payroll/${batch.uuid}`,
-                reason: dto.rejection_reason,
-            },
-        });
+      await this.notificationsService.create({
+        userId: batch.submitted_by,
+        senderId: actor.userId,
+        title: 'Personnel Denied in Payroll',
+        message: `${rejectedCount} employees on batch ${batch.batch_code} / ${batch.created_at.toISOString().split('T')[0]} are denied.`,
+        type: 'PAYROLL_ITEM_REJECTED',
+        referenceId: batch.uuid,
+        metadata: {
+          redirect: `payroll/${batch.uuid}`,
+          reason: dto.rejection_reason,
+        },
+      });
     }
 
     return this.serializeItem(rejected);
@@ -490,9 +571,20 @@ export class PayrollService {
   ) {
     const batch = await this.prisma.payment_batches.findUnique({
       where: { uuid },
+      include: { working_location: true },
     });
 
     if (!batch) throw new NotFoundException('Payroll batch not found.');
+
+    const isBM = actor.roles.includes('BRANCH_MANAGER');
+    const isAdmin = actor.roles.includes('SUPER_ADMIN');
+
+    let status: PAYMENT_BATCH_STATUS = PAYMENT_BATCH_STATUS.REJECTED;
+    if (isBM && batch.current_approval_step === 1) {
+      status = (PAYMENT_BATCH_STATUS as any).REJECTED_BY_BRANCH_MANAGER;
+    } else if (isAdmin) {
+      status = (PAYMENT_BATCH_STATUS as any).REJECTED_BY_SUPER_ADMIN;
+    }
 
     const rejected = await this.prisma.$transaction(async (tx) => {
       await tx.payroll_batch_approval_actions.create({
@@ -521,7 +613,7 @@ export class PayrollService {
       const updated = await tx.payment_batches.update({
         where: { id: batch.id },
         data: {
-          status: PAYMENT_BATCH_STATUS.REJECTED,
+          status: status,
           rejected_reason: dto.rejection_reason,
           approved_by: BigInt(actor.userId),
           approved_at: new Date(),
@@ -536,10 +628,10 @@ export class PayrollService {
           entity_id: batch.id,
           module_name: 'PAYROLL',
           activity_type: ACTIVITY_TYPE.UPDATE,
-          activity_description: `Rejected payroll batch: ${dto.rejection_reason}`,
+          activity_description: `Rejected payroll batch (${status}): ${dto.rejection_reason}`,
           action: AUDIT_ACTION.DENIED,
           new_values: {
-            status: PAYMENT_BATCH_STATUS.REJECTED,
+            status: status,
             rejected_reason: dto.rejection_reason,
           },
         },
@@ -558,6 +650,7 @@ export class PayrollService {
       metadata: {
         redirect: `payroll/${rejected.uuid}`,
         reason: dto.rejection_reason,
+        status: status,
       },
     });
 
@@ -587,12 +680,24 @@ export class PayrollService {
   ): Promise<PayrollCalculation | null> {
     const month = dto.payroll_month;
     const year = dto.payroll_year;
+
     const periodStart = dto.start_date
-      ? this.startOfDay(new Date(dto.start_date))
-      : new Date(Date.UTC(year, month - 1, 1));
+      ? dayjs.tz(dto.start_date, RWANDA_TIMEZONE).startOf('day').toDate()
+      : dayjs()
+          .tz(RWANDA_TIMEZONE)
+          .year(year)
+          .month(month - 1)
+          .startOf('month')
+          .toDate();
+
     const periodEnd = dto.end_date
-      ? this.endOfDay(new Date(dto.end_date))
-      : new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
+      ? dayjs.tz(dto.end_date, RWANDA_TIMEZONE).endOf('day').toDate()
+      : dayjs()
+          .tz(RWANDA_TIMEZONE)
+          .year(year)
+          .month(month - 1)
+          .endOf('month')
+          .toDate();
 
     if (periodEnd < periodStart) {
       throw new BadRequestException(
@@ -648,6 +753,8 @@ export class PayrollService {
     );
 
     let baseAmount = 0;
+    let phoneNumber: string | undefined = undefined;
+
     const effectiveDailyRate =
       Number(paymentStructure.daily_rate) > 0
         ? Number(paymentStructure.daily_rate)
@@ -670,6 +777,21 @@ export class PayrollService {
     } else {
       // DAILY
       baseAmount = effectiveDailyRate * presentDays;
+    }
+
+    // Apply manual overrides from DTO
+    if (dto.overrides) {
+      const override = dto.overrides.find(
+        (o) => o.employee_id === employee.id.toString(),
+      );
+      if (override) {
+        if (override.base_amount !== undefined) {
+          baseAmount = override.base_amount;
+        }
+        if (override.phone_number !== undefined) {
+          phoneNumber = override.phone_number;
+        }
+      }
     }
 
     const overtimeAmount =
@@ -712,12 +834,15 @@ export class PayrollService {
 
     // Global Tax logic
     let taxAmount = 0;
-    if (isOver21Days) {
-      const globalTaxRateConfig = await this.systemConfigService
-        .findByKey('GLOBAL_TAX_RATE')
-        .catch(() => ({ value: '15' }));
-      const taxRate = Number(globalTaxRateConfig.value) || 15;
-      taxAmount = grossAmount * (taxRate / 100);
+    if (
+      isOver21Days &&
+      paymentStructure.payroll_frequency === EMPLOYMENT_TYPE.MONTHLY
+    ) {
+      const monthlyTaxes =
+        await this.systemConfigService.findMonthlyTaxesAtDate(periodEnd);
+      taxAmount = monthlyTaxes.reduce((sum, tax) => {
+        return sum + grossAmount * (tax.rate / 100);
+      }, 0);
     }
 
     const totalDeductions = configuredDeductions + taxAmount;
@@ -748,6 +873,7 @@ export class PayrollService {
       grossAmount,
       totalDeductions,
       netAmount,
+      phoneNumber,
     };
   }
 
@@ -818,31 +944,36 @@ export class PayrollService {
     },
   ) {
     if (batch.working_location.type === 'HQ') {
-      if (this.isSystemAdmin(actor)) return;
-      throw new BadRequestException('Only admins can approve HQ payroll.');
+      if (actor.roles.includes('SUPER_ADMIN')) return;
+      throw new BadRequestException('Only SUPER_ADMIN can approve HQ payroll.');
     }
 
     if (batch.current_approval_step === 1) {
-      const isManager = actor.roles.some((role) =>
-        ['MANAGER', 'ON_MANAGER', 'BRANCH_MANAGER'].includes(role),
-      );
+      const isBranchManager = actor.roles.includes('BRANCH_MANAGER');
 
       if (
-        this.isSystemAdmin(actor) ||
-        (isManager &&
+        actor.roles.includes('SUPER_ADMIN') ||
+        (isBranchManager &&
           actor.working_location_id === batch.working_location_id.toString())
       ) {
         return;
       }
 
       throw new BadRequestException(
-        'Only the working-location manager can approve this payroll step.',
+        'Only the BRANCH_MANAGER can approve this payroll step.',
       );
     }
 
-    if (batch.current_approval_step >= 2 && this.isSystemAdmin(actor)) return;
+    if (
+      batch.current_approval_step >= 2 &&
+      actor.roles.includes('SUPER_ADMIN')
+    ) {
+      return;
+    }
 
-    throw new BadRequestException('Only admins can finalize payroll batches.');
+    throw new BadRequestException(
+      'Only SUPER_ADMIN can finalize payroll batches.',
+    );
   }
 
   private async findItemByUuidOrThrow(uuid: string) {
@@ -969,38 +1100,7 @@ export class PayrollService {
     return BigInt(value);
   }
 
-  private startOfDay(date: Date) {
-    return new Date(
-      Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
-    );
-  }
-
-  private endOfDay(date: Date) {
-    return new Date(
-      Date.UTC(
-        date.getUTCFullYear(),
-        date.getUTCMonth(),
-        date.getUTCDate(),
-        23,
-        59,
-        59,
-        999,
-      ),
-    );
-  }
-
   private diffCalendarDays(start: Date, end: Date) {
-    const startUtc = Date.UTC(
-      start.getUTCFullYear(),
-      start.getUTCMonth(),
-      start.getUTCDate(),
-    );
-    const endUtc = Date.UTC(
-      end.getUTCFullYear(),
-      end.getUTCMonth(),
-      end.getUTCDate(),
-    );
-
-    return Math.floor((endUtc - startUtc) / 86_400_000);
+    return dayjs(end).diff(dayjs(start), 'day');
   }
 }

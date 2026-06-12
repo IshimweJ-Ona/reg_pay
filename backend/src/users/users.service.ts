@@ -220,7 +220,7 @@ export class UsersService {
             }
           : {}),
       },
-
+      distinct: ['uuid'],
       include: this.userIncludes(),
 
       orderBy: {
@@ -274,7 +274,7 @@ export class UsersService {
             }
           : {}),
       },
-
+      distinct: ['uuid'],
       include: this.userIncludes(),
 
       orderBy: {
@@ -552,11 +552,9 @@ export class UsersService {
 
       const suspended = await tx.users.update({
         where: { id: user.id },
-
         data: {
           status: STATUS_USER.SUSPENDED,
         },
-
         include: this.userIncludes(),
       });
 
@@ -566,6 +564,23 @@ export class UsersService {
     return {
       message: 'User suspended successfully.',
       user: this.serializeUser(updatedUser),
+    };
+  }
+
+  async reactivateUser(uuid: string, actor: CurrentUserType) {
+    const user = await this.findUserByUuidOrThrow(uuid);
+
+    const reactivated = await this.prisma.users.update({
+      where: { id: user.id },
+      data: {
+        status: STATUS_USER.ACTIVE,
+      },
+      include: this.userIncludes(),
+    });
+
+    return {
+      message: 'User account reactivated.',
+      user: this.serializeUser(reactivated),
     };
   }
 
@@ -612,7 +627,9 @@ export class UsersService {
       if (!targetIdentifier) continue;
 
       const user = await this.prisma.users.findFirst({
-        where: { OR: [{ email: targetIdentifier }, { uuid: targetIdentifier }] },
+        where: {
+          OR: [{ email: targetIdentifier }, { uuid: targetIdentifier }],
+        },
       });
 
       if (user) {

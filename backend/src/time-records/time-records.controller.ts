@@ -5,6 +5,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -20,7 +21,17 @@ import { UpdateTimeRecordDto } from './dto/update-time-record.dto';
 import { TimeRecordsService } from './time-records.service';
 
 @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
-@Roles('SUPER_ADMIN', 'ADMIN', 'HR_MANAGER', 'DEPARTMENT_MANAGER')
+@Roles(
+  'SUPER_ADMIN',
+  'ADMIN',
+  'BRANCH_MANAGER',
+  'HR',
+  'HR_MANAGER',
+  'ACCOUNTANT',
+  'FINANCE',
+  'ATTENDANT',
+  'DEPARTMENT_MANAGER',
+)
 @Controller('time-records')
 export class TimeRecordsController {
   constructor(private readonly timeRecordsService: TimeRecordsService) {}
@@ -32,6 +43,15 @@ export class TimeRecordsController {
     @CurrentUser() actor: CurrentUserType,
   ) {
     return this.timeRecordsService.create(dto, actor);
+  }
+
+  @Permissions('attendance.create')
+  @Post('batch-sync')
+  batchSync(
+    @Body() dto: { records: CreateTimeRecordDto[] },
+    @CurrentUser() actor: CurrentUserType,
+  ) {
+    return this.timeRecordsService.batchSync(dto, actor);
   }
 
   @Permissions('attendance.create')
@@ -61,6 +81,20 @@ export class TimeRecordsController {
     @CurrentUser() actor: CurrentUserType,
   ) {
     return this.timeRecordsService.approve(uuid, dto, actor);
+  }
+
+  @Permissions('attendance.read')
+  @Get('today')
+  findToday(
+    @Query('working_location_id') workingLocationId?: string,
+    @Query('category') category?: string,
+    @CurrentUser() actor?: CurrentUserType,
+  ) {
+    return this.timeRecordsService.findToday(
+      workingLocationId,
+      category,
+      actor,
+    );
   }
 
   @Permissions('attendance.read')

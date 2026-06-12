@@ -551,6 +551,30 @@ async function main() {
   }
 
   // ─────────────────────────────────────────────────────────────────
+  // PHASE 1.7 — MONTHLY TAXES
+  console.log('\n   Seeding monthly taxes...');
+  const monthlyTaxes = [
+    { name: 'PAYE (Income Tax)', rate: 15 },
+    { name: 'RSSB Pension', rate: 3 },
+    { name: 'Maternity Leave Fund', rate: 0.3 },
+  ];
+
+  for (const tax of monthlyTaxes) {
+    await prisma.monthly_taxes.upsert({
+      where: { uuid: crypto.randomUUID() }, // Placeholder since name isn't unique in schema yet, but for seed we use unique names
+      update: {},
+      create: {
+        uuid: generateUUID(),
+        name: tax.name,
+        rate: tax.rate,
+        effective_from: new Date(Date.UTC(2024, 0, 1)), // Jan 1st 2024
+        is_active: true,
+      },
+    });
+    console.log(`    Tax: ${tax.name} (${tax.rate}%)`);
+  }
+
+  // ─────────────────────────────────────────────────────────────────
   // PHASE 2 — SUPER ADMIN BOOTSTRAP
   // ─────────────────────────────────────────────────────────────────
   console.log('\n');
