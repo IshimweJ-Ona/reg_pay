@@ -15,33 +15,50 @@ export interface CreateNotificationDto {
 
 @Injectable()
 export class NotificationsService {
-  private clients = new Map<string, Subject<MessageEvent>>();
+  private clients = new Map<string, Set<Subject<MessageEvent>>>();
 
   constructor(private readonly prisma: PrismaService) {}
 
   // Called by controller to register a new SSE connection
   addClient(userId: string): Subject<MessageEvent> {
     const subject = new Subject<MessageEvent>();
-    this.clients.set(userId, subject);
+    
+    let userClients = this.clients.get(userId);
+    if (!userClients) {
+      userClients = new Set();
+      this.clients.set(userId, userClients);
+    }
+    
+    userClients.add(subject);
     return subject;
   }
 
   // Called by controller when connection closes
-  removeClient(userId: string) {
-    this.clients.delete(userId);
+  removeClient(userId: string, subject: Subject<MessageEvent>) {
+    const userClients = this.clients.get(userId);
+    if (userClients) {
+      userClients.delete(subject);
+      if (userClients.size === 0) {
+        this.clients.delete(userId);
+      }
+    }
   }
 
   // Push to a specific user
   private pushToUser(userId: string, payload: object) {
-    const subject = this.clients.get(userId);
-    if (subject) {
-      subject.next({ data: JSON.stringify(payload) } as MessageEvent);
+    const userClients = this.clients.get(userId);
+    if (userClients) {
+      userClients.forEach((subject) => {
+        subject.next({ data: JSON.stringify(payload) } as MessageEvent);
+      });
     }
   }
 
   broadcast(payload: object) {
-    this.clients.forEach((subject) => {
-      subject.next({ data: JSON.stringify(payload) } as MessageEvent);
+    this.clients.forEach((userClients) => {
+      userClients.forEach((subject) => {
+        subject.next({ data: JSON.stringify(payload) } as MessageEvent);
+      });
     });
   }
 

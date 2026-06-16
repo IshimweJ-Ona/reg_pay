@@ -13,13 +13,18 @@ import { ApproveTimeRecordDto } from './dto/approve-time-record.dto';
 import { CreateTimeRecordDto } from './dto/create-time-record.dto';
 import { UpdateTimeRecordDto } from './dto/update-time-record.dto';
 
+import { NotificationsService } from '../notifications/notifications.service';
+
 @Injectable()
 export class TimeRecordsService {
   private readonly overtimeThresholdHours = Number(
     process.env.OVERTIME_THRESHOLD_HOURS ?? 1,
   );
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationsService: NotificationsService,
+  ) {}
 
   async create(dto: CreateTimeRecordDto, actor: CurrentUserType) {
     const employeeId = this.toBigInt(dto.employee_id, 'employee_id');
@@ -69,6 +74,9 @@ export class TimeRecordsService {
 
       return created;
     });
+
+    this.notificationsService.broadcast({ type: 'attendance_updated' });
+    this.notificationsService.broadcast({ type: 'employees_updated' });
 
     return this.serialize(record);
   }
@@ -160,6 +168,9 @@ export class TimeRecordsService {
 
       return syncedRecords;
     });
+
+    this.notificationsService.broadcast({ type: 'attendance_updated' });
+    this.notificationsService.broadcast({ type: 'employees_updated' });
 
     return { success: true, count: results.length };
   }

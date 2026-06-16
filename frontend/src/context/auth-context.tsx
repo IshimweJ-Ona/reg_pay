@@ -12,7 +12,6 @@ import {
   saveTokens,
 } from '@/api/auth';
 import { User, UserRole } from '@/types/auth';
-import { expandPermissions } from '@/lib/permissions';
 
 type RegisterInput = {
   first_name: string;
@@ -30,9 +29,9 @@ interface AuthContextType {
   login: (email: string, password: string) => Promise<void>;
   register: (input: RegisterInput) => Promise<void>;
   logout: () => Promise<void>;
-  updateUserPermissions: (userId: string, permissions: string[]) => void;
   isLoading: boolean;
   hasPermission: (permission: string) => boolean;
+  accessToken: string | null;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -77,6 +76,7 @@ function mapJwtUser(token: string): User | null {
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
+  const [accessToken, setAccessToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const router = useRouter();
 
@@ -88,6 +88,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
+      setAccessToken(token);
       const tokenUser = mapJwtUser(token);
       setUser(tokenUser);
 
@@ -113,6 +114,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } catch {
         clearTokens();
         setUser(null);
+        setAccessToken(null);
       } finally {
         setIsLoading(false);
       }
@@ -124,6 +126,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const login = async (email: string, password: string) => {
     const response = await loginRequest({ identifier: email, password });
     saveTokens(response);
+    setAccessToken(response.access_token);
     const nextUser = mapJwtUser(response.access_token);
     setUser(nextUser);
     
@@ -143,23 +146,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     clearTokens();
     setUser(null);
+    setAccessToken(null);
     router.push('/auth/login');
-  };
-
-  const updateUserPermissions = (userId: string, newPermissions: string[]) => {
-    if (user && user.id === userId) {
-      setUser({ ...user, permissions: newPermissions });
-    }
   };
 
   const hasPermission = (permission: string) => {
     if (!user) return false;
     if (user.roles?.some((role) => ['SUPER_ADMIN', 'ADMIN'].includes(role))) return true;
-    return expandPermissions(user.permissions).has(permission);
+    return user.permissions.includes(permission);
   };
 
   return (
-    <AuthContext.Provider value={{ user, login, register, logout, updateUserPermissions, isLoading, hasPermission }}>
+    <AuthContext.Provider value={{ user, login, register, logout, isLoading, hasPermission, accessToken }}>
       {children}
     </AuthContext.Provider>
   );

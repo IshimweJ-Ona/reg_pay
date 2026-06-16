@@ -12,51 +12,6 @@ import type { CurrentUserType } from '../types/current-user.type';
 export class PermissionsGuard implements CanActivate {
   constructor(private readonly reflector: Reflector) {}
 
-  private readonly impliedPermissions: Record<string, string[]> = {
-    'employees.create': [
-      'employees.read',
-      'employees.update',
-      'employees.suspend',
-      'employees.transfer',
-    ],
-    'attendance.create': [
-      'attendance.read',
-      'attendance.update',
-      'attendance.approve',
-    ],
-    'payroll.create': ['payroll.read', 'payroll.manage'],
-    'payroll.manage': ['payroll.read', 'payroll.create', 'payroll.approve'],
-    'payment-structures.create': [
-      'payment-structures.read',
-      'payment-structures.update',
-      'payment-structures.delete',
-    ],
-    'users.create': [
-      'users.read',
-      'users.update',
-      'users.approve',
-      'users.suspend',
-    ],
-    'permissions.manage': [
-      'permissions.read',
-      'permissions.create',
-      'permissions.assign',
-    ],
-    'branches.manage': ['departments.manage', 'branch-manager.manage'],
-    'branch-manager.manage': [
-      'users.read',
-      'users.update',
-      'permissions.read',
-      'permissions.assign',
-      'departments.manage',
-      'employees.create',
-      'employees.read',
-      'employees.update',
-      'attendance.read',
-      'payroll.read',
-    ],
-  };
-
   canActivate(context: ExecutionContext): boolean {
     const requiredPermissions = this.reflector.getAllAndOverride<string[]>(
       PERMISSIONS_KEY,
@@ -99,9 +54,9 @@ export class PermissionsGuard implements CanActivate {
       return true;
     }
 
-    const expandedPermissions = this.expandPermissions(user?.permissions ?? []);
+    const userPermissions = new Set(user?.permissions ?? []);
     const hasPermission = requiredPermissions.some((permission) =>
-      expandedPermissions.has(permission),
+      userPermissions.has(permission),
     );
 
     if (!hasPermission) {
@@ -109,15 +64,5 @@ export class PermissionsGuard implements CanActivate {
     }
 
     return true;
-  }
-
-  private expandPermissions(permissions: string[]) {
-    const expanded = new Set(permissions);
-    for (const permission of permissions) {
-      for (const implied of this.impliedPermissions[permission] ?? []) {
-        expanded.add(implied);
-      }
-    }
-    return expanded;
   }
 }

@@ -21,16 +21,37 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
     const ctx = host.switchToHttp();
 
-    const httpStatus =
+    let httpStatus =
       exception instanceof HttpException
         ? exception.getStatus()
         : HttpStatus.INTERNAL_SERVER_ERROR;
+
+    let message = exception?.response?.message || exception?.message || 'Internal server error';
+
+    // Handle Prisma Client Errors
+    if (exception.code?.startsWith('P')) {
+      httpStatus = HttpStatus.BAD_REQUEST;
+      switch (exception.code) {
+        case 'P2002':
+          message = `Duplicate entry: A record with this ${exception.meta?.target || 'value'} already exists.`;
+          break;
+        case 'P2003':
+          message = 'Foreign key constraint failed: A related record is missing or protected.';
+          break;
+        case 'P2025':
+          httpStatus = HttpStatus.NOT_FOUND;
+          message = 'Record not found.';
+          break;
+        default:
+          message = `Database Error [${exception.code}]: ${exception.message}`;
+      }
+    }
 
     const responseBody = {
       statusCode: httpStatus,
       timestamp: new Date().toISOString(),
       path: httpAdapter.getRequestUrl(ctx.getRequest()),
-      message: exception?.response?.message || exception?.message || 'Internal server error',
+      message,
     };
 
     // LOG THE ERROR TO TERMINAL

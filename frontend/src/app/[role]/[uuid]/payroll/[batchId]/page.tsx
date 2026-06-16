@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/dialog";
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
-import { approvePayrollBatch, getPayrollBatch, rejectPayrollBatch, submitPayrollBatch } from '@/api/payroll';
+import { approvePayrollBatch, getPayrollBatch, rejectPayrollBatch, submitPayrollBatch, rejectPayrollItem } from '@/api/payroll';
 import { PermissionGate } from '@/components/auth/permission-gate';
 import { useAuth } from '@/context/auth-context';
 
@@ -63,7 +63,9 @@ export default function PayrollBatchDetailsPage() {
       await loadBatch();
       toast({
         title: type === 'APPROVE' ? "Batch Approved" : type === 'REJECT' ? "Batch Rejected" : "Batch Submitted",
-        description: `Payroll cycle ${batch?.batch_code ?? batchId} has been updated.`
+        description: type === 'APPROVE' && rows.some((r: any) => r.status === 'REJECTED')
+          ? "Batch approved. Rejected employees have been moved to a new batch."
+          : `Payroll cycle ${batch?.batch_code ?? batchId} has been updated.`
       });
       setComment('');
     } catch (error: any) {
@@ -75,6 +77,23 @@ export default function PayrollBatchDetailsPage() {
     }
   };
 
+  const handleRejectItem = async (itemUuid: string) => {
+    const reason = window.prompt('Please provide a reason for rejecting this employee:');
+    if (!reason) return;
+
+    try {
+      await rejectPayrollItem(itemUuid, reason);
+      await loadBatch();
+      toast({ title: 'Employee Rejected', description: 'The employee has been marked as rejected in this batch.' });
+    } catch (error: any) {
+      toast({
+        variant: 'destructive',
+        title: 'Action failed',
+        description: error?.response?.data?.message ?? 'Could not reject employee.',
+      });
+    }
+  };
+
   if (!batch) return <div className="p-8 text-sm text-muted-foreground">Loading payroll batch...</div>;
 
   const roles = user?.roles ?? [];
@@ -82,10 +101,12 @@ export default function PayrollBatchDetailsPage() {
   const isBranchManager = roles.includes('BRANCH_MANAGER');
   const isSuperAdmin = roles.includes('SUPER_ADMIN');
 
-  const canSubmit = (batch.status === 'DRAFT' || batch.status.startsWith('REJECTED')) && isAccountant;
+  const isTerminal = batch.status === 'APPROVED' || batch.status === 'REJECTED';
+
+  const canSubmit = !isTerminal && (batch.status === 'DRAFT' || batch.status.startsWith('REJECTED')) && isAccountant;
   
-  const canApproveBM = batch.status === 'PENDING' && (isBranchManager || isSuperAdmin);
-  const canApproveAdmin = batch.status === 'MANAGER_APPROVED' && isSuperAdmin;
+  const canApproveBM = !isTerminal && batch.status === 'PENDING' && (isBranchManager || isSuperAdmin);
+  const canApproveAdmin = !isTerminal && batch.status === 'MANAGER_APPROVED' && isSuperAdmin;
   const canApprove = canApproveBM || canApproveAdmin;
 
   return (
@@ -228,7 +249,25 @@ export default function PayrollBatchDetailsPage() {
                       <TableCell className="text-rose-600">-{formatRwf(Number(item.transaction?.total_deductions ?? 0))}</TableCell>
                       <TableCell className="text-right font-bold text-primary">{formatRwf(Number(item.transaction?.net_amount ?? 0))}</TableCell>
                       <TableCell>
-                        <Badge variant="secondary" className="bg-amber-100 text-amber-700">{item.status}</Badge>
+                        <div className="flex items-center gap-2">
+                          <Badge 
+                            variant="secondary" 
+                            className={item.status === 'REJECTED' ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-700"}
+                          >
+                            {item.status}
+                          </Badge>
+                          {canApprove && item.status !== 'REJECTED' && (
+                            <Button 
+                              variant="ghost" 
+                              size="icon" 
+                              className="h-8 w-8 text-destructive hover:bg-destructive/10"
+                              onClick={() => handleRejectItem(item.uuid)}
+                              title="Reject this employee"
+                            >
+                              <XCircle className="h-4 w-4" />
+                            </Button>
+                          )}
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}

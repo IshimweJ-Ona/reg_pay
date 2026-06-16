@@ -7,7 +7,8 @@ import {
   Sse,
   Req,
 } from '@nestjs/common';
-import { Observable, Subject } from 'rxjs';
+import { Observable, Subject, merge, interval } from 'rxjs';
+import { map } from 'rxjs/operators';
 import { NotificationsService } from './notifications.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -24,9 +25,13 @@ export class NotificationsController {
     const userId = req.user.uuid;
     const subject = this.notificationsService.addClient(userId);
 
-    req.on('close', () => this.notificationsService.removeClient(userId));
+    req.on('close', () => this.notificationsService.removeClient(userId, subject));
 
-    return subject.asObservable();
+    const heartbeat$ = interval(30000).pipe(
+      map(() => ({ data: JSON.stringify({ type: 'heartbeat' }) } as MessageEvent)),
+    );
+
+    return merge(subject.asObservable(), heartbeat$);
   }
 
   @Get()

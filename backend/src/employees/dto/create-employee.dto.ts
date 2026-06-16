@@ -107,4 +107,34 @@ export class CreateEmployeeDto {
   @IsOptional()
   @IsString()
   employment_category_id?: string;
+
+  // Unified update fields
+  @ApiPropertyOptional({ example: '500000', description: 'Basic salary or daily rate' })
+  @IsOptional()
+  @IsString()
+  basic_salary?: string;
+
+  @ApiPropertyOptional({ example: '0', description: 'Daily rate for daily/custom categories' })
+  @IsOptional()
+  @IsString()
+  daily_rate?: string;
+
+  @ApiPropertyOptional({ example: '0', description: 'Tax percentage override' })
+  @IsOptional()
+  @IsString()
+  tax_percentage?: string;
+
+  @ApiPropertyOptional({ example: 30, description: 'Custom work days for contract' })
+  @IsOptional()
+  custom_work_days?: number;
+
+  @ApiPropertyOptional({ example: 'Transport Allowance', description: 'Main allowance title' })
+  @IsOptional()
+  @IsString()
+  allowance_title?: string;
+
+  @ApiPropertyOptional({ example: '50000', description: 'Main allowance amount' })
+  @IsOptional()
+  @IsString()
+  allowance_amount?: string;
 }

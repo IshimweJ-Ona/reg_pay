@@ -389,7 +389,7 @@ function UsersManagementContent() {
                 </div>
               </div>
 
-              {currentUser?.role === 'SUPER_ADMIN' && (
+              {['SUPER_ADMIN', 'ADMIN'].includes(currentUser?.role || '') && (
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
                     <Label className="text-base font-bold">Security Overrides</Label>
@@ -419,7 +419,16 @@ function UsersManagementContent() {
                                 } else {
                                   newOverrides.push({ permission_id: perm.uuid, permission_key: perm.permission_key, is_allowed: !isAllowed });
                                 }
-                                setSelectedUser({ ...selectedUser, permission_overrides: newOverrides });
+                                
+                                // Also update permissions list for immediate UI consistency
+                                let nextPermissions = [...selectedUser.permissions];
+                                if (!isAllowed) {
+                                    if (!nextPermissions.includes(perm.permission_key)) nextPermissions.push(perm.permission_key);
+                                } else {
+                                    nextPermissions = nextPermissions.filter(p => p !== perm.permission_key);
+                                }
+
+                                setSelectedUser({ ...selectedUser, permission_overrides: newOverrides, permissions: nextPermissions });
                               }}
                             />
                           </div>
@@ -427,6 +436,9 @@ function UsersManagementContent() {
                       })}
                     </div>
                   </ScrollArea>
+                  <p className="text-[10px] text-muted-foreground italic">
+                    * Overrides take precedence over role-based permissions. Denying a permission here will remove it even if it's granted by a role.
+                  </p>
                 </div>
               )}
 

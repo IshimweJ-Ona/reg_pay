@@ -53,6 +53,7 @@ export default function PayrollAdminPage() {
   const [batches, setBatches] = useState<PayrollBatch[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showReviewModal, setShowReviewModal] = useState(false);
+  const [activeTab, setActiveTab] = useState<'ACTIVE' | 'HISTORY'>('ACTIVE');
 
   const role = params.role as string;
   const uuid = params.uuid as string;
@@ -68,15 +69,21 @@ export default function PayrollAdminPage() {
 
   const stats = [
     { name: 'Total Batches', value: String(batches.length), icon: FileText, color: 'text-blue-600' },
-    { name: 'Active Batches', value: String(batches.filter(b => b.status === 'APPROVED' || b.status === 'MANAGER_APPROVED').length), icon: CheckCircle, color: 'text-emerald-600' },
-    { name: 'Pending Review', value: String(batches.filter(b => b.status === 'PENDING' || b.status === 'IN_REVIEW').length), icon: Clock, color: 'text-amber-600', action: 'review' },
+    { name: 'Active Batches', value: String(batches.filter(b => !['APPROVED', 'REJECTED'].includes(b.status)).length), icon: CheckCircle, color: 'text-emerald-600' },
+    { name: 'Pending Review', value: String(batches.filter(b => ['PENDING', 'IN_REVIEW', 'MANAGER_APPROVED'].includes(b.status)).length), icon: Clock, color: 'text-amber-600', action: 'review' },
     { name: 'Total Disbursed', value: formatRwf(batches.filter(b => b.status === 'APPROVED').reduce((sum, batch) => sum + batch.totalAmount, 0)), icon: Wallet, color: 'text-primary' },
   ];
 
-  const filteredBatches = batches.filter(b => 
-    b.batchId.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    b.location.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredBatches = batches.filter(b => {
+    const matchesSearch = b.batchId.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      b.location.toLowerCase().includes(searchTerm.toLowerCase());
+    
+    if (activeTab === 'ACTIVE') {
+      return matchesSearch && !['APPROVED', 'REJECTED'].includes(b.status);
+    } else {
+      return matchesSearch && ['APPROVED', 'REJECTED'].includes(b.status);
+    }
+  });
 
   const handleExport = (type: 'csv' | 'excel') => {
     const exportData = filteredBatches.map(b => ({
@@ -173,30 +180,47 @@ export default function PayrollAdminPage() {
         ))}
       </div>
 
-      <div className="flex items-center gap-4 bg-white p-4 rounded-2xl shadow-sm border">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input 
-            placeholder="Search batches by ID or Location..." 
-            className="pl-10 h-11 border-none bg-secondary/30 focus-visible:ring-1 focus-visible:ring-primary/20"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4">
+        <div className="flex bg-white p-1 rounded-xl border shadow-sm">
+          <Button 
+            variant={activeTab === 'ACTIVE' ? 'default' : 'ghost'} 
+            className="h-10 px-6 rounded-lg font-bold transition-all"
+            onClick={() => setActiveTab('ACTIVE')}
+          >
+            Pending Review
+          </Button>
+          <Button 
+            variant={activeTab === 'HISTORY' ? 'default' : 'ghost'} 
+            className="h-10 px-6 rounded-lg font-bold transition-all"
+            onClick={() => setActiveTab('HISTORY')}
+          >
+            Batch History
+          </Button>
         </div>
-        <Button variant="outline" className="h-11 gap-2 border-dashed">
-          <Filter className="h-4 w-4" /> Advanced filters
-        </Button>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="outline" className="h-11 gap-2">
-              <Download className="h-4 w-4" /> Export
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent>
-            <DropdownMenuItem onClick={() => handleExport('csv')}>Export as CSV</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => handleExport('excel')}>Export as Excel</DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+
+        <div className="flex items-center gap-4 bg-white p-1.5 px-3 rounded-xl shadow-sm border flex-1">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input 
+              placeholder={`Search ${activeTab === 'ACTIVE' ? 'pending' : 'historical'} batches...`} 
+              className="pl-10 h-9 border-none bg-transparent focus-visible:ring-0"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+          </div>
+          <div className="h-6 w-px bg-slate-200" />
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="sm" className="h-8 gap-2 text-muted-foreground">
+                <Download className="h-4 w-4" /> Export
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent>
+              <DropdownMenuItem onClick={() => handleExport('csv')}>Export as CSV</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handleExport('excel')}>Export as Excel</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       </div>
 
       <div className="bg-white rounded-2xl border shadow-sm overflow-hidden">
@@ -260,7 +284,11 @@ export default function PayrollAdminPage() {
               </TableRow>
             )) : (
               <TableRow>
-                <TableCell colSpan={8} className="text-center py-20 text-muted-foreground italic">No payroll batches found.</TableCell>
+                <TableCell colSpan={8} className="text-center py-20 text-muted-foreground italic">
+                  {activeTab === 'ACTIVE' 
+                    ? "No pending payroll cycles awaiting review." 
+                    : "No historical payroll records found in the archive."}
+                </TableCell>
               </TableRow>
             )}
           </TableBody>

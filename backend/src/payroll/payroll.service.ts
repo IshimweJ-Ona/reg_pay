@@ -92,9 +92,41 @@ export class PayrollService {
       );
     }
 
+    // Check for employees already in an active (non-Draft/Rejected) batch for the same period
+    const alreadyProcessedItems = await this.prisma.payment_batch_items.findMany({
+      where: {
+        batch: {
+          payroll_month: dto.payroll_month,
+          payroll_year: dto.payroll_year,
+          status: {
+            in: [
+              PAYMENT_BATCH_STATUS.PENDING,
+              PAYMENT_BATCH_STATUS.IN_REVIEW,
+              PAYMENT_BATCH_STATUS.MANAGER_APPROVED,
+              PAYMENT_BATCH_STATUS.APPROVED,
+            ],
+          },
+        },
+      },
+      select: { employee_id: true },
+    });
+
+    const processedEmployeeIds = new Set(
+      alreadyProcessedItems.map((i) => i.employee_id),
+    );
+    const eligibleEmployees = employees.filter(
+      (e) => !processedEmployeeIds.has(e.id),
+    );
+
+    if (!eligibleEmployees.length) {
+      throw new BadRequestException(
+        'All active employees for this period are already assigned to active payroll batches.',
+      );
+    }
+
     const calculations: PayrollCalculation[] = [];
 
-    for (const employee of employees) {
+    for (const employee of eligibleEmployees) {
       const calculation = await this.calculateEmployeePayroll(employee, dto);
 
       if (calculation) calculations.push(calculation);
@@ -126,29 +158,72 @@ export class PayrollService {
       (sum, item) => sum + item.taxAmount,
       0,
     );
-    const batchCode = `PAY-${dto.payroll_year}-${dto.payroll_month
-      .toString()
-      .padStart(2, '0')}-${Date.now()}`;
+    const existingDraft = await this.prisma.payment_batches.findFirst({
+      where: {
+        working_location_id: workingLocationId,
+        payroll_month: dto.payroll_month,
+        payroll_year: dto.payroll_year,
+        status: (PAYMENT_BATCH_STATUS as any).DRAFT,
+      },
+    });
+
+    if (existingDraft && (existingDraft.status === PAYMENT_BATCH_STATUS.APPROVED || existingDraft.status === PAYMENT_BATCH_STATUS.REJECTED)) {
+       throw new BadRequestException('Cannot update a finalized payroll batch.');
+    }
 
     const batch = await this.prisma.$transaction(async (tx) => {
-      const createdBatch = await tx.payment_batches.create({
-        data: {
-          uuid: generateUUID(),
-          batch_code: batchCode,
-          working_location_id: workingLocationId,
-          payroll_month: dto.payroll_month,
-          payroll_year: dto.payroll_year,
-          total_employees: calculations.length,
-          total_amount: totalAmount,
-          total_gross: totalGross,
-          total_allowances: totalAllowances,
-          total_deductions: totalDeductions,
-          total_tax: totalTax,
-          status: (PAYMENT_BATCH_STATUS as any).DRAFT,
-          submitted_by: BigInt(actor.userId),
-          submitted_at: new Date(),
-        },
-      });
+      let targetBatch;
+
+      if (existingDraft) {
+        // Clear existing items and transactions for this draft
+        const oldItems = await tx.payment_batch_items.findMany({
+          where: { payment_batch_id: existingDraft.id },
+        });
+        const oldTransactionIds = oldItems.map((item) => item.transaction_id);
+
+        await tx.payment_batch_items.deleteMany({
+          where: { payment_batch_id: existingDraft.id },
+        });
+        await tx.transactions.deleteMany({
+          where: { id: { in: oldTransactionIds } },
+        });
+
+        targetBatch = await tx.payment_batches.update({
+          where: { id: existingDraft.id },
+          data: {
+            total_employees: calculations.length,
+            total_amount: totalAmount,
+            total_gross: totalGross,
+            total_allowances: totalAllowances,
+            total_deductions: totalDeductions,
+            total_tax: totalTax,
+            submitted_at: new Date(),
+          },
+        });
+      } else {
+        const batchCode = `PAY-${dto.payroll_year}-${dto.payroll_month
+          .toString()
+          .padStart(2, '0')}-${Date.now()}`;
+
+        targetBatch = await tx.payment_batches.create({
+          data: {
+            uuid: generateUUID(),
+            batch_code: batchCode,
+            working_location_id: workingLocationId,
+            payroll_month: dto.payroll_month,
+            payroll_year: dto.payroll_year,
+            total_employees: calculations.length,
+            total_amount: totalAmount,
+            total_gross: totalGross,
+            total_allowances: totalAllowances,
+            total_deductions: totalDeductions,
+            total_tax: totalTax,
+            status: (PAYMENT_BATCH_STATUS as any).DRAFT,
+            submitted_by: BigInt(actor.userId),
+            submitted_at: new Date(),
+          },
+        });
+      }
 
       for (const calculation of calculations) {
         if (calculation.phoneNumber) {
@@ -185,7 +260,7 @@ export class PayrollService {
         await tx.payment_batch_items.create({
           data: {
             uuid: generateUUID(),
-            payment_batch_id: createdBatch.id,
+            payment_batch_id: targetBatch.id,
             employee_id: calculation.employeeId,
             transaction_id: transaction.id,
             status: PAYMENT_BATCH_STATUS.PENDING,
@@ -197,13 +272,15 @@ export class PayrollService {
         data: {
           user_id: BigInt(actor.userId),
           entity_table: 'payment_batches',
-          entity_id: createdBatch.id,
+          entity_id: targetBatch.id,
           module_name: 'PAYROLL',
           activity_type: ACTIVITY_TYPE.CREATE,
-          activity_description: 'Created payroll batch.',
+          activity_description: existingDraft
+            ? 'Updated payroll batch.'
+            : 'Created payroll batch.',
           action: AUDIT_ACTION.CREATED,
           new_values: {
-            batch_code: batchCode,
+            batch_code: targetBatch.batch_code,
             working_location_id: workingLocationId.toString(),
             payroll_month: dto.payroll_month,
             payroll_year: dto.payroll_year,
@@ -218,7 +295,7 @@ export class PayrollService {
       });
 
       return tx.payment_batches.findUniqueOrThrow({
-        where: { id: createdBatch.id },
+        where: { id: targetBatch.id },
         include: this.batchIncludes(),
       });
     });
@@ -276,6 +353,14 @@ export class PayrollService {
     });
 
     if (!batch) throw new NotFoundException('Payroll batch not found.');
+    
+    if (
+      batch.status === PAYMENT_BATCH_STATUS.APPROVED ||
+      batch.status === PAYMENT_BATCH_STATUS.REJECTED
+    ) {
+      throw new BadRequestException('Terminal batches cannot be modified.');
+    }
+
     if (batch.status !== (PAYMENT_BATCH_STATUS as any).DRAFT) {
       throw new BadRequestException('Only DRAFT batches can be submitted.');
     }
@@ -479,16 +564,31 @@ export class PayrollService {
     });
 
     if (!batch) throw new NotFoundException('Payroll batch not found.');
-    if (batch.status === PAYMENT_BATCH_STATUS.REJECTED) {
-      throw new BadRequestException('Rejected batches cannot be approved.');
+    
+    if (
+      batch.status === PAYMENT_BATCH_STATUS.APPROVED ||
+      batch.status === PAYMENT_BATCH_STATUS.REJECTED
+    ) {
+      throw new BadRequestException('Terminal batches cannot be modified.');
     }
-    this.ensureActorCanApproveBatch(actor, batch);
 
-    const finalStep = batch.working_location.type === 'HQ' ? 1 : 2;
-    const nextStep = batch.current_approval_step + 1;
+    await this.ensureActorCanApproveBatch(actor, batch);
+
+    const branchManager = await this.prisma.branch_managers.findFirst({
+      where: {
+        working_location_id: batch.working_location_id,
+        is_active: true,
+      },
+    });
+
+    const finalStep = branchManager ? 2 : 1;
     const isFinal = batch.current_approval_step >= finalStep;
+    const nextStep = batch.current_approval_step + 1;
 
     const approved = await this.prisma.$transaction(async (tx) => {
+      // Handle partial rejection split-off BEFORE updating the batch
+      await this.handlePartialRejectionSplit(tx, batch.id, actor);
+
       await tx.payroll_batch_approval_actions.create({
         data: {
           payment_batch_id: batch.id,
@@ -521,7 +621,9 @@ export class PayrollService {
           entity_id: batch.id,
           module_name: 'PAYROLL',
           activity_type: ACTIVITY_TYPE.UPDATE,
-          activity_description: `Approved payroll batch step ${batch.current_approval_step}.`,
+          activity_description: isFinal 
+            ? 'Fully approved payroll batch.' 
+            : `Approved payroll batch step ${batch.current_approval_step}.`,
           action: AUDIT_ACTION.APPROVED,
           new_values: {
             current_approval_step: updated.current_approval_step,
@@ -564,6 +666,131 @@ export class PayrollService {
     return this.serializeBatch(approved);
   }
 
+  private async handlePartialRejectionSplit(
+    tx: any,
+    batchId: bigint,
+    actor: CurrentUserType,
+  ) {
+    const rejectedItems = await tx.payment_batch_items.findMany({
+      where: {
+        payment_batch_id: batchId,
+        status: PAYMENT_BATCH_STATUS.REJECTED,
+      },
+      include: {
+        transaction: true,
+        employee: { include: { working_location: true } },
+      },
+    });
+
+    if (rejectedItems.length === 0) return;
+
+    const batch = await tx.payment_batches.findUnique({
+      where: { id: batchId },
+      include: { working_location: true },
+    });
+
+    const branchName = batch.working_location.name;
+    const month = batch.payroll_month;
+    const year = batch.payroll_year;
+    const newBatchCode = `Rejected-${branchName}-${month}/${year}-${Date.now()}`;
+
+    const newBatch = await tx.payment_batches.create({
+      data: {
+        uuid: generateUUID(),
+        batch_code: newBatchCode,
+        working_location_id: batch.working_location_id,
+        payroll_month: month,
+        payroll_year: year,
+        total_employees: rejectedItems.length,
+        total_amount: rejectedItems.reduce(
+          (sum, item) => sum + Number(item.transaction.net_amount),
+          0,
+        ),
+        total_gross: rejectedItems.reduce(
+          (sum, item) => sum + Number(item.transaction.gross_amount),
+          0,
+        ),
+        total_allowances: rejectedItems.reduce(
+          (sum, item) => sum + Number(item.transaction.allowance_amount),
+          0,
+        ),
+        total_deductions: rejectedItems.reduce(
+          (sum, item) => sum + Number(item.transaction.total_deductions),
+          0,
+        ),
+        total_tax: rejectedItems.reduce(
+          (sum, item) => sum + Number(item.transaction.tax_amount),
+          0,
+        ),
+        status: PAYMENT_BATCH_STATUS.DRAFT,
+        submitted_by: batch.submitted_by,
+        submitted_at: new Date(),
+      },
+    });
+
+    for (const item of rejectedItems) {
+      await tx.payment_batch_items.update({
+        where: { id: item.id },
+        data: {
+          payment_batch_id: newBatch.id,
+          status: PAYMENT_BATCH_STATUS.PENDING, // Reset to pending for the new batch
+        },
+      });
+    }
+
+    // Update original batch totals by subtracting the rejected items
+    await tx.payment_batches.update({
+      where: { id: batchId },
+      data: {
+        total_employees: { decrement: rejectedItems.length },
+        total_amount: {
+          decrement: rejectedItems.reduce(
+            (sum, item) => sum + Number(item.transaction.net_amount),
+            0,
+          ),
+        },
+        total_gross: {
+          decrement: rejectedItems.reduce(
+            (sum, item) => sum + Number(item.transaction.gross_amount),
+            0,
+          ),
+        },
+        total_allowances: {
+          decrement: rejectedItems.reduce(
+            (sum, item) => sum + Number(item.transaction.allowance_amount),
+            0,
+          ),
+        },
+        total_deductions: {
+          decrement: rejectedItems.reduce(
+            (sum, item) => sum + Number(item.transaction.total_deductions),
+            0,
+          ),
+        },
+        total_tax: {
+          decrement: rejectedItems.reduce(
+            (sum, item) => sum + Number(item.transaction.tax_amount),
+            0,
+          ),
+        },
+      },
+    });
+
+    // Notify creator about the split
+    await this.notificationsService.create({
+      userId: batch.submitted_by,
+      senderId: actor.userId,
+      title: 'Rejected Employees Split into New Batch',
+      message: `${rejectedItems.length} employees from batch ${batch.batch_code} were rejected and moved to a new batch: ${newBatchCode}.`,
+      type: 'PAYROLL_PARTIAL_REJECTION',
+      referenceId: newBatch.uuid,
+      metadata: {
+        redirect: `payroll/${newBatch.uuid}`,
+        originalBatchUuid: batch.uuid,
+      },
+    });
+  }
+
   async rejectBatch(
     uuid: string,
     dto: RejectPayrollItemDto,
@@ -576,15 +803,14 @@ export class PayrollService {
 
     if (!batch) throw new NotFoundException('Payroll batch not found.');
 
-    const isBM = actor.roles.includes('BRANCH_MANAGER');
-    const isAdmin = actor.roles.includes('SUPER_ADMIN');
-
-    let status: PAYMENT_BATCH_STATUS = PAYMENT_BATCH_STATUS.REJECTED;
-    if (isBM && batch.current_approval_step === 1) {
-      status = (PAYMENT_BATCH_STATUS as any).REJECTED_BY_BRANCH_MANAGER;
-    } else if (isAdmin) {
-      status = (PAYMENT_BATCH_STATUS as any).REJECTED_BY_SUPER_ADMIN;
+    if (
+      batch.status === PAYMENT_BATCH_STATUS.APPROVED ||
+      batch.status === PAYMENT_BATCH_STATUS.REJECTED
+    ) {
+      throw new BadRequestException('Terminal batches cannot be modified.');
     }
+
+    const isSuperAdmin = actor.roles.includes('SUPER_ADMIN');
 
     const rejected = await this.prisma.$transaction(async (tx) => {
       await tx.payroll_batch_approval_actions.create({
@@ -597,60 +823,91 @@ export class PayrollService {
         },
       });
 
-      await tx.payment_batch_items.updateMany({
-        where: {
-          payment_batch_id: batch.id,
-          status: PAYMENT_BATCH_STATUS.PENDING,
-        },
-        data: {
-          status: PAYMENT_BATCH_STATUS.REJECTED,
-          rejection_reason: dto.rejection_reason,
-          approved_by: BigInt(actor.userId),
-          approved_at: new Date(),
-        },
-      });
-
-      const updated = await tx.payment_batches.update({
-        where: { id: batch.id },
-        data: {
-          status: status,
-          rejected_reason: dto.rejection_reason,
-          approved_by: BigInt(actor.userId),
-          approved_at: new Date(),
-        },
-        include: this.batchIncludes(),
-      });
-
-      await tx.audit_logs.create({
-        data: {
-          user_id: BigInt(actor.userId),
-          entity_table: 'payment_batches',
-          entity_id: batch.id,
-          module_name: 'PAYROLL',
-          activity_type: ACTIVITY_TYPE.UPDATE,
-          activity_description: `Rejected payroll batch (${status}): ${dto.rejection_reason}`,
-          action: AUDIT_ACTION.DENIED,
-          new_values: {
-            status: status,
+      if (isSuperAdmin) {
+        // Super Admin rejection is terminal
+        const updated = await tx.payment_batches.update({
+          where: { id: batch.id },
+          data: {
+            status: PAYMENT_BATCH_STATUS.REJECTED,
             rejected_reason: dto.rejection_reason,
+            approved_by: BigInt(actor.userId),
+            approved_at: new Date(),
           },
-        },
-      });
+          include: this.batchIncludes(),
+        });
 
-      return updated;
+        await tx.audit_logs.create({
+          data: {
+            user_id: BigInt(actor.userId),
+            entity_table: 'payment_batches',
+            entity_id: batch.id,
+            module_name: 'PAYROLL',
+            activity_type: ACTIVITY_TYPE.UPDATE,
+            activity_description: `Super Admin permanently rejected payroll batch: ${dto.rejection_reason}.`,
+            action: AUDIT_ACTION.DENIED,
+            new_values: {
+              status: PAYMENT_BATCH_STATUS.REJECTED,
+              rejected_reason: dto.rejection_reason,
+            },
+          },
+        });
+
+        return updated;
+      } else {
+        // Branch Manager rejection returns to DRAFT for corrections
+        await tx.payment_batch_items.updateMany({
+          where: { payment_batch_id: batch.id },
+          data: {
+            status: PAYMENT_BATCH_STATUS.PENDING,
+            rejection_reason: null,
+          },
+        });
+
+        const updated = await tx.payment_batches.update({
+          where: { id: batch.id },
+          data: {
+            status: (PAYMENT_BATCH_STATUS as any).DRAFT,
+            rejected_reason: dto.rejection_reason,
+            current_approval_step: 1,
+            approved_by: null,
+            approved_at: null,
+          },
+          include: this.batchIncludes(),
+        });
+
+        await tx.audit_logs.create({
+          data: {
+            user_id: BigInt(actor.userId),
+            entity_table: 'payment_batches',
+            entity_id: batch.id,
+            module_name: 'PAYROLL',
+            activity_type: ACTIVITY_TYPE.UPDATE,
+            activity_description: `Manager rejected payroll batch: ${dto.rejection_reason}. Returned to DRAFT.`,
+            action: AUDIT_ACTION.DENIED,
+            new_values: {
+              status: PAYMENT_BATCH_STATUS.DRAFT,
+              rejected_reason: dto.rejection_reason,
+            },
+          },
+        });
+
+        return updated;
+      }
     });
 
     await this.notificationsService.create({
       userId: rejected.submitted_by,
       senderId: actor.userId,
-      title: 'Payroll Batch Rejected',
-      message: `${rejected.batch_code} was rejected. Reason: ${dto.rejection_reason}`,
-      type: 'PAYROLL_REJECTED',
+      title: isSuperAdmin ? 'Payroll Batch Permanently Rejected' : 'Payroll Batch Returned for Corrections',
+      message: isSuperAdmin 
+        ? `${rejected.batch_code} was permanently rejected by HQ. Reason: ${dto.rejection_reason}`
+        : `${rejected.batch_code} was returned to you for updates. Reason: ${dto.rejection_reason}`,
+      type: isSuperAdmin ? 'PAYROLL_REJECTED_FINAL' : 'PAYROLL_REJECTED',
       referenceId: rejected.uuid,
       metadata: {
         redirect: `payroll/${rejected.uuid}`,
         reason: dto.rejection_reason,
-        status: status,
+        status: rejected.status,
       },
     });
 
@@ -705,6 +962,9 @@ export class PayrollService {
       );
     }
 
+    const periodCalendarDays =
+      dayjs.tz(periodEnd, RWANDA_TIMEZONE).startOf('day').diff(dayjs.tz(periodStart, RWANDA_TIMEZONE).startOf('day'), 'day') + 1;
+
     const paymentStructure = await this.prisma.payment_structures.findFirst({
       where: {
         employee_id: employee.id,
@@ -747,36 +1007,18 @@ export class PayrollService {
 
     const isOver21Days = daysWorked > 21;
 
-    const periodCalendarDays = Math.max(
-      1,
-      this.diffCalendarDays(periodStart, periodEnd) + 1,
-    );
-
     let baseAmount = 0;
     let phoneNumber: string | undefined = undefined;
 
-    const effectiveDailyRate =
-      Number(paymentStructure.daily_rate) > 0
-        ? Number(paymentStructure.daily_rate)
-        : Number(paymentStructure.basic_salary) / periodCalendarDays;
-
     if (paymentStructure.payroll_frequency === EMPLOYMENT_TYPE.MONTHLY) {
-      if (isOver21Days) {
-        baseAmount = Number(paymentStructure.basic_salary);
-      } else {
-        baseAmount = effectiveDailyRate * presentDays;
-      }
-    } else if (paymentStructure.payroll_frequency === EMPLOYMENT_TYPE.CUSTOM) {
-      if (isOver21Days) {
-        baseAmount =
-          Number(paymentStructure.basic_salary) ||
-          effectiveDailyRate * requestedWorkDays;
-      } else {
-        baseAmount = effectiveDailyRate * requestedWorkDays;
-      }
+      baseAmount = Number(paymentStructure.basic_salary);
     } else {
-      // DAILY
-      baseAmount = effectiveDailyRate * presentDays;
+      // DAILY or CUSTOM
+      const daysToPay =
+        paymentStructure.payroll_frequency === EMPLOYMENT_TYPE.CUSTOM
+          ? requestedWorkDays
+          : presentDays;
+      baseAmount = Number(paymentStructure.daily_rate) * daysToPay;
     }
 
     // Apply manual overrides from DTO
@@ -797,8 +1039,10 @@ export class PayrollService {
     const overtimeAmount =
       Number(paymentStructure.overtime_rate) * overtimeHours;
 
-    // Allowance only if > 21 days
-    const allowanceEligible = isOver21Days;
+    // Allowance: Always for monthly, or if > 21 days for others
+    const allowanceEligible =
+      isOver21Days ||
+      paymentStructure.payroll_frequency === EMPLOYMENT_TYPE.MONTHLY;
     const allowances = allowanceEligible
       ? await this.prisma.allowances.findMany({
           where: { employee_id: employee.id, is_active: true },
@@ -835,13 +1079,13 @@ export class PayrollService {
     // Global Tax logic
     let taxAmount = 0;
     if (
-      isOver21Days &&
+      isOver21Days ||
       paymentStructure.payroll_frequency === EMPLOYMENT_TYPE.MONTHLY
     ) {
       const monthlyTaxes =
         await this.systemConfigService.findMonthlyTaxesAtDate(periodEnd);
       taxAmount = monthlyTaxes.reduce((sum, tax) => {
-        return sum + grossAmount * (tax.rate / 100);
+        return sum + grossAmount * (Number(tax.rate) / 100);
       }, 0);
     }
 
@@ -935,45 +1179,44 @@ export class PayrollService {
     );
   }
 
-  private ensureActorCanApproveBatch(
+  private async ensureActorCanApproveBatch(
     actor: CurrentUserType,
     batch: {
       working_location_id: bigint;
       current_approval_step: number;
-      working_location: { type: string };
     },
   ) {
-    if (batch.working_location.type === 'HQ') {
-      if (actor.roles.includes('SUPER_ADMIN')) return;
-      throw new BadRequestException('Only SUPER_ADMIN can approve HQ payroll.');
-    }
+    const branchManager = await this.prisma.branch_managers.findFirst({
+      where: {
+        working_location_id: batch.working_location_id,
+        is_active: true,
+      },
+    });
 
-    if (batch.current_approval_step === 1) {
-      const isBranchManager = actor.roles.includes('BRANCH_MANAGER');
+    const isSuperAdmin = actor.roles.includes('SUPER_ADMIN');
+    const isBranchManager =
+      actor.roles.includes('BRANCH_MANAGER') &&
+      actor.working_location_id === batch.working_location_id.toString();
 
-      if (
-        actor.roles.includes('SUPER_ADMIN') ||
-        (isBranchManager &&
-          actor.working_location_id === batch.working_location_id.toString())
-      ) {
-        return;
+    if (branchManager) {
+      if (batch.current_approval_step === 1) {
+        if (isBranchManager || isSuperAdmin) return;
+        throw new BadRequestException(
+          'Only the BRANCH_MANAGER or SUPER_ADMIN can approve this payroll step.',
+        );
+      } else {
+        if (isSuperAdmin) return;
+        throw new BadRequestException(
+          'Only SUPER_ADMIN can finalize payroll batches.',
+        );
       }
-
+    } else {
+      // No branch manager, Super Admin handles it
+      if (isSuperAdmin) return;
       throw new BadRequestException(
-        'Only the BRANCH_MANAGER can approve this payroll step.',
+        'Only SUPER_ADMIN can approve this payroll.',
       );
     }
-
-    if (
-      batch.current_approval_step >= 2 &&
-      actor.roles.includes('SUPER_ADMIN')
-    ) {
-      return;
-    }
-
-    throw new BadRequestException(
-      'Only SUPER_ADMIN can finalize payroll batches.',
-    );
   }
 
   private async findItemByUuidOrThrow(uuid: string) {

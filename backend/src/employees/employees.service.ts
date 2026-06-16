@@ -6,10 +6,11 @@ import {
   Inject,
 } from '@nestjs/common';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
-import * as cacheManager from 'cache-manager';
+import type { Cache } from 'cache-manager';
 import {
   ACTION_TYPE,
   ACTIVITY_TYPE,
+  ATTENDANCE_STATUS,
   AUDIT_ACTION,
   APPROVAL_STATUS,
   STATUS_ACTIVE_INACTIVE,
@@ -21,6 +22,7 @@ import type { CurrentUserType } from '../auth/types/current-user.type';
 import { RejectTransferDto } from '../common/dto/reject-transfer.dto';
 import {
   isNumericId,
+  isUuid,
   normalizeSearch,
   requireUuidOrNumeric,
 } from '../common/utils/lookup.util';
@@ -31,14 +33,17 @@ import { SuspendEmployeeDto } from './dto/suspend-employee.dto';
 import { TransferEmployeeDto } from './dto/transfer-employee.dto';
 
 import { NotificationsService } from '../notifications/notifications.service';
+import { PaymentStructuresService } from '../payment-structures/payment-structures.service';
 
 @Injectable()
 export class EmployeesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
-    @Inject(CACHE_MANAGER) private cacheManager: cacheManager.Cache,
+    @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
+    private readonly paymentStructuresService: PaymentStructuresService,
   ) {}
+
 
   async create(dto: CreateEmployeeDto, actor?: CurrentUserType) {
     const managerScoped =
@@ -96,6 +101,40 @@ export class EmployeesService {
         include: this.employeeIncludes(),
       });
 
+      // Unified Salary Creation
+      if (categoryId && (dto.basic_salary || dto.daily_rate)) {
+        const category = await tx.employment_categories.findUnique({
+          where: { id: categoryId },
+        });
+        if (category) {
+          await tx.payment_structures.create({
+            data: {
+              uuid: generateUUID(),
+              employee_id: created.id,
+              payroll_frequency: category.payroll_frequency,
+              basic_salary: dto.basic_salary ?? '0',
+              daily_rate: dto.daily_rate ?? '0',
+              overtime_rate: '0',
+              tax_percentage: dto.tax_percentage ?? '0',
+              custom_work_days: dto.custom_work_days,
+              effective_from: new Date(),
+            },
+          });
+        }
+      }
+
+      // Unified Allowance Creation
+      if (dto.allowance_title && dto.allowance_amount) {
+        await tx.allowances.create({
+          data: {
+            uuid: generateUUID(),
+            employee_id: created.id,
+            title: dto.allowance_title,
+            amount: dto.allowance_amount,
+          },
+        });
+      }
+
       if (actor) {
         await tx.audit_logs.create({
           data: {
@@ -105,7 +144,7 @@ export class EmployeesService {
             entity_id: created.id,
             module_name: 'EMPLOYEES',
             activity_type: ACTIVITY_TYPE.CREATE,
-            activity_description: 'Created employee profile.',
+            activity_description: 'Created employee profile with salary and benefits.',
             action: AUDIT_ACTION.CREATED,
             new_values: {
               working_location_id: workingLocationId?.toString() ?? null,
@@ -119,9 +158,32 @@ export class EmployeesService {
       return created;
     });
 
-    await this.cacheManager.del('employees:all');
+    await this.clearEmployeeCache();
+    this.notificationsService.broadcast({ type: 'employees_updated' });
 
     return this.serializeEmployee(employee);
+  }
+
+  // Helper to clear all employee-related caches
+  private async clearEmployeeCache() {
+    try {
+      // In cache-manager v5+, store.keys() returns all keys. 
+      // We use (this.cacheManager as any) to bypass strict typing on the store property.
+      const store = (this.cacheManager as any).store;
+      if (store && typeof store.keys === 'function') {
+        const keys = await store.keys();
+        for (const key of keys) {
+          if (typeof key === 'string' && key.startsWith('employees:all')) {
+            await this.cacheManager.del(key);
+          }
+        }
+      } else {
+        await this.cacheManager.del('employees:all');
+      }
+    } catch (err) {
+      // Fallback to primary key if store.keys() is not supported
+      await this.cacheManager.del('employees:all');
+    }
   }
 
   async findAll(actor: CurrentUserType, qInput?: string) {
@@ -228,6 +290,7 @@ export class EmployeesService {
       : undefined;
 
     const updated = await this.prisma.$transaction(async (tx) => {
+      // 1. Update Profile
       const saved = await tx.employees.update({
         where: { id: employee.id },
         data: {
@@ -245,6 +308,80 @@ export class EmployeesService {
         include: this.employeeIncludes(),
       });
 
+      // 2. Update Salary (Payment Structure) if provided
+      if (dto.employment_category_id && (dto.basic_salary || dto.daily_rate)) {
+        const category = await tx.employment_categories.findUnique({
+          where: { id: categoryId },
+        });
+
+        if (category) {
+          const currentStructure = await tx.payment_structures.findFirst({
+            where: { employee_id: employee.id, effective_to: null },
+          });
+
+          const structureData = {
+            payroll_frequency: category.payroll_frequency,
+            basic_salary: dto.basic_salary ?? '0',
+            daily_rate: dto.daily_rate ?? '0',
+            overtime_rate: '0',
+            tax_percentage: dto.tax_percentage ?? '0',
+            custom_work_days: dto.custom_work_days,
+          };
+
+          if (
+            currentStructure &&
+            currentStructure.payroll_frequency === category.payroll_frequency
+          ) {
+            // Update existing
+            await tx.payment_structures.update({
+              where: { id: currentStructure.id },
+              data: structureData,
+            });
+          } else {
+            // Close old and create new
+            await tx.payment_structures.updateMany({
+              where: { employee_id: employee.id, effective_to: null },
+              data: { effective_to: new Date() },
+            });
+
+            await tx.payment_structures.create({
+              data: {
+                ...structureData,
+                uuid: generateUUID(),
+                employee_id: employee.id,
+                effective_from: new Date(),
+              },
+            });
+          }
+        }
+      }
+
+      // 3. Update Allowance if provided
+      if (dto.allowance_title && dto.allowance_amount) {
+        const existingAllowance = await tx.allowances.findFirst({
+          where: { employee_id: employee.id },
+        });
+
+        if (existingAllowance) {
+          await tx.allowances.update({
+            where: { id: existingAllowance.id },
+            data: {
+              title: dto.allowance_title,
+              amount: dto.allowance_amount,
+            },
+          });
+        } else {
+          await tx.allowances.create({
+            data: {
+              uuid: generateUUID(),
+              employee_id: employee.id,
+              title: dto.allowance_title,
+              amount: dto.allowance_amount,
+            },
+          });
+        }
+      }
+
       // Log the update activity for auditing
       await tx.audit_logs.create({
         data: {
@@ -254,7 +391,8 @@ export class EmployeesService {
           entity_id: saved.id,
           module_name: 'EMPLOYEES',
           activity_type: ACTIVITY_TYPE.UPDATE,
-          activity_description: 'Updated employee profile details.',
+          activity_description:
+            'Updated employee profile, salary, and benefits in a unified operation.',
           action: AUDIT_ACTION.UPDATED,
           old_values: this.serializeEmployee(employee),
           new_values: this.serializeEmployee(saved),
@@ -263,6 +401,9 @@ export class EmployeesService {
 
       return saved;
     });
+
+    await this.clearEmployeeCache();
+    this.notificationsService.broadcast({ type: 'employees_updated' });
 
     return this.serializeEmployee(updated);
   }
@@ -462,6 +603,9 @@ export class EmployeesService {
         referenceId: request.uuid,
       });
 
+      await this.clearEmployeeCache();
+      this.notificationsService.broadcast({ type: 'employees_updated' });
+
       return this.serializeEmployee(updated);
     }
 
@@ -605,6 +749,9 @@ export class EmployeesService {
       return changed;
     });
 
+    await this.clearEmployeeCache();
+    this.notificationsService.broadcast({ type: 'employees_updated' });
+
     return this.serializeEmployee(updated);
   }
 
@@ -744,10 +891,24 @@ export class EmployeesService {
         orderBy: { effective_from: 'desc' as const },
         take: 1,
       },
+      // Include recent attendance for rate calculation
+      time_records: {
+        orderBy: { attendance_date: 'desc' as const },
+        take: 30,
+      },
     };
   }
 
   private serializeEmployee(employee: Record<string, any>) {
+    const timeRecords = employee.time_records || [];
+    const presentCount = timeRecords.filter(
+      (r) => r.attendance_status === ATTENDANCE_STATUS.PRESENT,
+    ).length;
+    const attendanceRate = timeRecords.length
+      ? Math.round((presentCount / timeRecords.length) * 100)
+      : 0;
+    const latestRecord = timeRecords[0];
+
     return {
       ...employee,
       id: employee.id.toString(),
@@ -756,6 +917,12 @@ export class EmployeesService {
       working_location_id: employee.working_location_id?.toString() ?? null,
       employment_category_id:
         employee.employment_category_id?.toString() ?? null,
+      attendance_stats: {
+        rate: attendanceRate,
+        last_status: latestRecord?.attendance_status ?? null,
+        last_date: latestRecord?.attendance_date ?? null,
+        record_count: timeRecords.length,
+      },
     };
   }
 

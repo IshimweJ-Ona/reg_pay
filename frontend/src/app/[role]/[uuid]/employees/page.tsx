@@ -43,8 +43,6 @@ import { useToast } from '@/hooks/use-toast';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Employee } from '@/types/employee';
 import { getEmployees, suspendEmployee, createEmployee, updateEmployee } from '@/api/employees';
-import { getTimeRecords } from '@/api/attendance';
-import { getWorkingLocations, getDepartments } from '@/api/working_locations';
 import { getAvatarUrl } from '@/lib/utils';
 import { 
   createAllowance, 
@@ -63,15 +61,9 @@ import { Download } from 'lucide-react';
 
 const formatRwf = (value: number) => `RWF ${value.toLocaleString()}`;
 
-function mapApiEmployee(item: any, attendanceByEmployee = new Map<string, any[]>()): Employee {
+function mapApiEmployee(item: any): Employee {
   const structure = item.payment_structures?.[0] || {};
-  const timeRecords = attendanceByEmployee.get(String(item.id)) ?? [];
-  const presentCount = timeRecords.filter((record) => record.attendance_status === 'PRESENT').length;
-  const latestRecord = [...timeRecords].sort(
-    (a, b) =>
-      new Date(b.attendance_date ?? b.created_at).getTime() -
-      new Date(a.attendance_date ?? a.created_at).getTime(),
-  )[0];
+  const stats = item.attendance_stats || {};
 
   return {
     id: item.uuid || '',
@@ -83,9 +75,9 @@ function mapApiEmployee(item: any, attendanceByEmployee = new Map<string, any[]>
     location: item.working_location?.name ?? 'Unassigned',
     salary: Number(structure.basic_salary ?? structure.daily_rate ?? 0),
     status: item.status || 'ACTIVE',
-    attendanceRate: timeRecords.length ? Math.round((presentCount / timeRecords.length) * 100) : 0,
-    lastAttendanceDate: latestRecord?.attendance_date,
-    lastAttendanceStatus: latestRecord?.attendance_status,
+    attendanceRate: stats.rate ?? 0,
+    lastAttendanceDate: stats.last_date,
+    lastAttendanceStatus: stats.last_status,
     employmentCategory: item.employment_category?.name ?? 'Unassigned',
     email: item.email ?? '',
     avatar_url: item.avatar_url,
@@ -160,24 +152,12 @@ export default function EmployeeDirectoryPage() {
   const loadEmployees = async () => {
     setIsLoading(true);
     try {
-      const [response, timeRecords] = await Promise.all([
-        getEmployees(),
-        getTimeRecords().catch(() => []),
-      ]);
+      const response = await getEmployees();
       const employeeList = response.employees || (Array.isArray(response) ? response : []);
-      const attendanceByEmployee = new Map<string, any[]>();
-
-      (Array.isArray(timeRecords) ? timeRecords : []).forEach((record: any) => {
-        const employeeId = String(record.employee_id ?? record.employee?.id ?? '');
-        if (!employeeId) return;
-        const existing = attendanceByEmployee.get(employeeId) ?? [];
-        existing.push(record);
-        attendanceByEmployee.set(employeeId, existing);
-      });
-
+      
       const uniqueEmployees = new Map<string, Employee>();
       employeeList.forEach((item: any) => {
-        const employee = mapApiEmployee(item, attendanceByEmployee);
+        const employee = mapApiEmployee(item);
         if (employee.uuid) uniqueEmployees.set(employee.uuid, employee);
       });
 
@@ -206,6 +186,17 @@ export default function EmployeeDirectoryPage() {
   useEffect(() => {
     loadEmployees();
     loadMetadata();
+
+    // Listen for global system updates (via SSE) to refresh data instantly
+    const handleSystemUpdate = (event: any) => {
+      if (event.detail?.type === 'employees_updated') {
+        console.log('Instant sync: Refreshing employee database...');
+        loadEmployees();
+      }
+    };
+
+    window.addEventListener('system_update', handleSystemUpdate);
+    return () => window.removeEventListener('system_update', handleSystemUpdate);
   }, []);
 
   const handleEditClick = async (emp: Employee) => {
@@ -327,13 +318,6 @@ export default function EmployeeDirectoryPage() {
   const handleUpdate = async () => {
     if (!editingEmployee) return;
     try {
-      const selectedCategory = paymentCategories.find(
-        (category) =>
-          category.id === newEmployee.employment_category_id ||
-          category.uuid === newEmployee.employment_category_id,
-      );
-      const selectedFrequency = selectedCategory?.payroll_frequency;
-      
       const submissionData = {
         first_name: newEmployee.first_name,
         last_name: newEmployee.last_name,
@@ -344,54 +328,26 @@ export default function EmployeeDirectoryPage() {
         department_id: newEmployee.department_id || undefined,
         working_location_id: newEmployee.working_location_id || undefined,
         employment_category_id: newEmployee.employment_category_id || undefined,
+        // Unified fields
+        basic_salary: newEmployee.basic_salary,
+        daily_rate: newEmployee.daily_rate,
+        tax_percentage: newEmployee.tax_percentage,
+        custom_work_days: newEmployee.custom_work_days ? Number(newEmployee.custom_work_days) : undefined,
+        allowance_title: newEmployee.allowance_title,
+        allowance_amount: newEmployee.allowance_amount,
       };
 
+      // Atomic update of Profile, Salary, and Benefits
       await updateEmployee(editingEmployee.id, submissionData);
 
-      if (selectedFrequency) {
-        await createPaymentStructure({
-          employee_id: editingEmployee.bigIntId,
-          payroll_frequency: selectedFrequency,
-          basic_salary: newEmployee.basic_salary || '0',
-          daily_rate: newEmployee.daily_rate || '0',
-          overtime_rate: '0',
-          tax_percentage: newEmployee.tax_percentage || '0',
-          custom_work_days: newEmployee.custom_work_days ? Number(newEmployee.custom_work_days) : undefined,
-          effective_from: new Date().toISOString().slice(0, 10),
-        });
-
-        const canAssignAllowance =
-          selectedFrequency === 'MONTHLY' ||
-          (selectedFrequency === 'CUSTOM' &&
-            Number(newEmployee.custom_work_days) > 21);
-
-        if (canAssignAllowance && newEmployee.allowance_title && newEmployee.allowance_amount) {
-          const currentAllowances = await getAllowances(editingEmployee.bigIntId!);
-          if (currentAllowances.length > 0) {
-             await updateAllowance(currentAllowances[0].uuid, {
-               title: newEmployee.allowance_title,
-               amount: newEmployee.allowance_amount,
-               description: newEmployee.allowance_description || undefined,
-             });
-          } else {
-            await createAllowance({
-              employee_id: editingEmployee.bigIntId!,
-              title: newEmployee.allowance_title,
-              amount: newEmployee.allowance_amount,
-              description: newEmployee.allowance_description || undefined,
-            });
-          }
-        }
-      }
-
       await loadEmployees();
-      toast({ title: "Employee Updated", description: "Record has been successfully synchronized." });
+      toast({ title: "Employee Updated", description: "All records have been successfully synchronized in a single operation." });
       setEditingEmployee(null);
     } catch (error: any) {
       toast({
         variant: "destructive",
         title: "Update failed",
-        description: error?.response?.data?.message || "Could not update employee.",
+        description: error?.response?.data?.message || "Could not synchronize employee records.",
       });
     }
   };
@@ -403,20 +359,11 @@ export default function EmployeeDirectoryPage() {
     }
 
     try {
-      const selectedCategory = paymentCategories.find(
-        (category) =>
-          category.id === newEmployee.employment_category_id ||
-          category.uuid === newEmployee.employment_category_id,
-      );
-      const selectedFrequency = selectedCategory?.payroll_frequency;
       const isLocationScopedManager =
         user?.roles?.some((role) =>
           ['MANAGER', 'ON_MANAGER', 'BRANCH_MANAGER'].includes(role),
         ) && !user?.roles?.some((role) => ['SUPER_ADMIN', 'ADMIN'].includes(role));
-      const canAssignAllowance =
-        selectedFrequency === 'MONTHLY' ||
-        (selectedFrequency === 'CUSTOM' &&
-          Number(newEmployee.custom_work_days) > 21);
+
       const submissionData = {
         first_name: newEmployee.first_name,
         last_name: newEmployee.last_name,
@@ -427,33 +374,20 @@ export default function EmployeeDirectoryPage() {
         department_id: newEmployee.department_id || undefined,
         employment_category_id: newEmployee.employment_category_id || undefined,
         ...(isLocationScopedManager ? {} : { working_location_id: newEmployee.working_location_id || undefined }),
+        // Unified fields
+        basic_salary: newEmployee.basic_salary,
+        daily_rate: newEmployee.daily_rate,
+        tax_percentage: newEmployee.tax_percentage,
+        custom_work_days: newEmployee.custom_work_days ? Number(newEmployee.custom_work_days) : undefined,
+        allowance_title: newEmployee.allowance_title,
+        allowance_amount: newEmployee.allowance_amount,
       };
-      const created = await createEmployee(submissionData);
-      const createdEmployee = created?.employee ?? created;
 
-      if (createdEmployee?.id && selectedFrequency) {
-        await createPaymentStructure({
-          employee_id: createdEmployee.id,
-          payroll_frequency: selectedFrequency,
-          basic_salary: newEmployee.basic_salary || '0',
-          daily_rate: newEmployee.daily_rate || '0',
-          overtime_rate: '0',
-          tax_percentage: newEmployee.tax_percentage || '0',
-          custom_work_days: newEmployee.custom_work_days ? Number(newEmployee.custom_work_days) : undefined,
-          effective_from: new Date().toISOString().slice(0, 10),
-        });
-
-        if (canAssignAllowance && newEmployee.allowance_title && newEmployee.allowance_amount) {
-          await createAllowance({
-            employee_id: createdEmployee.id,
-            title: newEmployee.allowance_title,
-            amount: newEmployee.allowance_amount,
-            description: newEmployee.allowance_description || undefined,
-          });
-        }
-      }
+      // Atomic creation
+      await createEmployee(submissionData);
+      
       await loadEmployees();
-      toast({ title: "Employee Created", description: "New employee has been added to the system." });
+      toast({ title: "Employee Created", description: "New employee with full salary profile has been added." });
       setIsAddingEmployee(false);
       setNewEmployee({
         first_name: '',
@@ -699,7 +633,7 @@ export default function EmployeeDirectoryPage() {
             <TableRow>
               <TableHead className="font-bold">Identity</TableHead>
               <TableHead className="font-bold">Affiliation</TableHead>
-              <TableHead className="font-bold">Compensation</TableHead>
+              <TableHead className="font-bold">Salary</TableHead>
               <TableHead className="font-bold">Attendance</TableHead>
               <TableHead className="font-bold">Status</TableHead>
               <TableHead className="w-[80px]"></TableHead>
@@ -918,18 +852,69 @@ export default function EmployeeDirectoryPage() {
 
             {selectedFrequency === 'MONTHLY' && (
               <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
-                <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label>Monthly Salary (RWF)</Label>
+                  <Input
+                    type="number"
+                    value={newEmployee.basic_salary}
+                    onChange={e => setNewEmployee(p => ({ ...p, basic_salary: e.target.value }))}
+                    placeholder="e.g. 500000"
+                  />
+                  <p className="text-[10px] text-muted-foreground italic mt-1">* Fixed monthly payment. Taxes and benefits apply automatically.</p>
+                </div>
+
+                <div className="p-3 bg-emerald-50 border border-emerald-100 rounded-xl space-y-3">
+                  <p className="text-[10px] font-bold text-emerald-700 uppercase tracking-widest">Employee Benefits (Allowances)</p>
                   <div className="space-y-2">
-                    <Label>Monthly Salary (RWF)</Label>
+                    <Label className="text-emerald-800">Allowance Title</Label>
                     <Input
-                      type="number"
-                      value={newEmployee.basic_salary}
-                      onChange={e => setNewEmployee(p => ({ ...p, basic_salary: e.target.value }))}
-                      placeholder="e.g. 500000"
+                      placeholder="e.g. Transport Allowance"
+                      value={newEmployee.allowance_title}
+                      onChange={e => setNewEmployee(p => ({ ...p, allowance_title: e.target.value }))}
+                      className="bg-white border-emerald-200"
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label>Work Days (Est.)</Label>
+                    <Label className="text-emerald-800">Allowance Amount (RWF)</Label>
+                    <Input
+                      type="number"
+                      placeholder="e.g. 50000"
+                      value={newEmployee.allowance_amount}
+                      onChange={e => setNewEmployee(p => ({ ...p, allowance_amount: e.target.value }))}
+                      className="bg-white border-emerald-200"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {selectedFrequency === 'DAILY' && (
+              <div className="space-y-2 animate-in fade-in slide-in-from-top-2">
+                <Label>Daily Rate (RWF)</Label>
+                <Input
+                  type="number"
+                  value={newEmployee.daily_rate}
+                  onChange={e => setNewEmployee(p => ({ ...p, daily_rate: e.target.value }))}
+                  placeholder="e.g. 5000"
+                />
+                <p className="text-[10px] text-muted-foreground italic mt-1">* Payment calculated as: Daily Rate × Days Worked.</p>
+              </div>
+            )}
+
+            {selectedFrequency === 'CUSTOM' && (
+              <div className="space-y-4 animate-in fade-in slide-in-from-top-2">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label>Daily Rate (RWF)</Label>
+                    <Input
+                      type="number"
+                      value={newEmployee.daily_rate}
+                      onChange={e => setNewEmployee(p => ({ ...p, daily_rate: e.target.value }))}
+                      placeholder="e.g. 10000"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Contracted Days</Label>
                     <Input
                       type="number"
                       value={newEmployee.custom_work_days}
@@ -938,14 +923,14 @@ export default function EmployeeDirectoryPage() {
                     />
                   </div>
                 </div>
-                
+
                 {Number(newEmployee.custom_work_days) > 21 ? (
                   <div className="p-3 bg-emerald-50 border border-emerald-100 rounded-xl space-y-3">
                     <p className="text-[10px] font-bold text-emerald-700 uppercase tracking-widest">Full Benefits Applied (&gt; 21 Days)</p>
                     <div className="space-y-2">
                       <Label className="text-emerald-800">Allowance Title</Label>
                       <Input
-                        placeholder="e.g. Transport Allowance"
+                        placeholder="e.g. Performance Bonus"
                         value={newEmployee.allowance_title}
                         onChange={e => setNewEmployee(p => ({ ...p, allowance_title: e.target.value }))}
                         className="bg-white border-emerald-200"
@@ -963,46 +948,8 @@ export default function EmployeeDirectoryPage() {
                     </div>
                   </div>
                 ) : (
-                  <div className="p-3 bg-amber-50 border border-amber-100 rounded-xl">
-                    <p className="text-[10px] font-bold text-amber-700 uppercase tracking-widest">Mid-Month Joiner (Daily Rate Applies)</p>
-                    <p className="text-[11px] text-amber-600 mt-1">Tax and allowances are automatically disabled for work under 21 days.</p>
-                  </div>
+                  <p className="text-[10px] text-amber-600 italic">* Benefits and taxes are only applied for contracts over 21 days.</p>
                 )}
-              </div>
-            )}
-
-            {selectedFrequency === 'DAILY' && (
-              <div className="space-y-2 animate-in fade-in slide-in-from-top-2">
-                <Label>Daily Rate (RWF)</Label>
-                <Input
-                  type="number"
-                  value={newEmployee.daily_rate}
-                  onChange={e => setNewEmployee(p => ({ ...p, daily_rate: e.target.value }))}
-                  placeholder="e.g. 5000"
-                />
-              </div>
-            )}
-
-            {selectedFrequency === 'CUSTOM' && (
-              <div className="space-y-4 animate-in fade-in slide-in-from-top-2">
-                <div className="space-y-2">
-                  <Label>Contracted Work Days</Label>
-                  <Input
-                    type="number"
-                    value={newEmployee.custom_work_days}
-                    onChange={e => setNewEmployee(p => ({ ...p, custom_work_days: e.target.value }))}
-                    placeholder="e.g. 5"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Agreed Daily Rate (RWF)</Label>
-                  <Input
-                    type="number"
-                    value={newEmployee.daily_rate}
-                    onChange={e => setNewEmployee(p => ({ ...p, daily_rate: e.target.value }))}
-                    placeholder="e.g. 10000"
-                  />
-                </div>
               </div>
             )}
           </div>

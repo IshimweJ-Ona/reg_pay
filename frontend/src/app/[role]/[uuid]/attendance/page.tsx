@@ -32,6 +32,8 @@ export default function AttendanceMonitoringPage() {
   const [activeTab, setActiveTab] = useState('ALL');
   const [viewMode, setViewMode] = useState<'LOG' | 'HISTORY'>('LOG');
   const [loading, setLoading] = useState(false);
+  const { toast } = useToast();
+  const { user, hasPermission } = useAuth();
   const { startSync, syncState, pendingSync, setPendingSync } = useAttendanceSync();
   const fileInputRef = useRef<HTMLInputElement>(null);
   

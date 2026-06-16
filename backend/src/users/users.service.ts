@@ -21,6 +21,7 @@ import { RegisterDto } from '../auth/dto/register.dto';
 import { hashPassword } from '../auth/utils/password.util';
 import {
   isNumericId,
+  isUuid,
   normalizeSearch,
   requireUuidOrNumeric,
 } from '../common/utils/lookup.util';
@@ -1217,7 +1218,7 @@ export class UsersService {
         OR: values.map((value) =>
           isNumericId(value)
             ? { id: BigInt(value) }
-            : value.length >= 16
+            : isUuid(value)
               ? { uuid: value }
               : { permission_key: value },
         ),
@@ -1240,7 +1241,7 @@ export class UsersService {
         OR: values.map((value) =>
           isNumericId(value)
             ? { id: BigInt(value) }
-            : value.length >= 16
+            : isUuid(value)
               ? { uuid: value }
               : { name: value },
         ),
@@ -1374,6 +1375,7 @@ export class UsersService {
   private serializeEffectivePermissions(user: Record<string, any>) {
     const permissionMap = new Map<string, Record<string, any>>();
 
+    // 1. Collect direct and role-based permissions
     for (const userRole of user.roles ?? []) {
       for (const rolePermission of userRole.role?.role_permissions ?? []) {
         const permission = rolePermission.permission;
@@ -1398,6 +1400,32 @@ export class UsersService {
       });
     }
 
+    // 2. Expand implied permissions
+    const impliedMap: Record<string, string[]> = {
+      'employees.create': ['employees.read', 'employees.update', 'employees.suspend', 'employees.transfer'],
+      'attendance.create': ['attendance.read', 'attendance.update', 'attendance.approve'],
+      'payroll.create': ['payroll.read', 'payroll.manage'],
+      'payroll.manage': ['payroll.read', 'payroll.create', 'payroll.approve'],
+      'payment-structures.create': ['payment-structures.read', 'payment-structures.update', 'payment-structures.delete'],
+      'users.create': ['users.read', 'users.update', 'users.approve', 'users.suspend'],
+      'permissions.manage': ['permissions.read', 'permissions.create', 'permissions.assign'],
+      'branches.manage': ['departments.manage', 'branch-manager.manage'],
+    };
+
+    const initialPermissions = Array.from(permissionMap.values());
+    for (const p of initialPermissions) {
+      for (const impliedKey of impliedMap[p.permission_key] ?? []) {
+        if (!permissionMap.has(impliedKey)) {
+          permissionMap.set(impliedKey, {
+            permission_key: impliedKey,
+            name: impliedKey.split('.').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' '),
+            source: 'implied',
+          });
+        }
+      }
+    }
+
+    // 3. Apply overrides (EXPLICIT DENY takes precedence)
     for (const override of user.permission_overrides ?? []) {
       const permissionKey = override.permission?.permission_key;
       if (!permissionKey) continue;
@@ -1422,7 +1450,7 @@ export class UsersService {
     const permission = await this.prisma.permissions.findFirst({
       where: isNumericId(value)
         ? { id: BigInt(value) }
-        : value.length >= 16
+        : isUuid(value)
           ? { uuid: value }
           : { permission_key: value },
       select: {

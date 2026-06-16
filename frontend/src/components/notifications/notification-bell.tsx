@@ -141,7 +141,7 @@ export function NotificationBell({ type }: { type: 'admin' | 'user' }) {
   const handleMarkAllRead = async () => {
     try {
       await markAllAsRead();
-      setUnreadCount(0);
+      setSSEUnreadCount(0);
       await loadNotifications();
     } catch (error) {
       console.error('Failed to mark all as read:', error);

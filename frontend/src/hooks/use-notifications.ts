@@ -15,24 +15,45 @@ export interface Notification {
 export function useNotifications(token: string) {
     const [notifications, setNotifications] = useState<Notification[]>([]);
     const [unreadCount, setUnreadCount] = useState(0);
+    const [retryTrigger, setRetryTrigger] = useState(0);
     const retryCount = useRef(0);
     const maxRetries = 5;
 
-    const connect = useCallback(() => {
+    useEffect(() => {
         if (!token) return;
 
-        const url = `${process.env.NEXT_PUBLIC_API_URL}/notifications/stream?token=${token}`;
+        const encodedToken = encodeURIComponent(token);
+        const url = `${process.env.NEXT_PUBLIC_API_URL}/notifications/stream?token=${encodedToken}`;
+        
+        console.log('Connecting to SSE...');
         const es = new EventSource(url);
 
         es.onopen = () => {
-            console.log('SSE connected');
+            console.log('SSE connected successfully');
             retryCount.current = 0;
         };
 
         es.onmessage = (event) => {
             try {
-                const notification: Notification = JSON.parse(event.data);
-                setNotifications((prev) => [notification, ...prev]);
+                const data = JSON.parse(event.data);
+                
+                // 1. Ignore heartbeats
+                if (data.type === 'heartbeat') return;
+
+                // 2. Handle System-Wide Update Events (Atomic Sync)
+                if (data.type === 'employees_updated' || data.type === 'attendance_updated') {
+                    console.log('System sync event received:', data.type);
+                    window.dispatchEvent(new CustomEvent('system_update', { detail: data }));
+                    return;
+                }
+
+                // 3. Handle Standard Notifications
+                const notification: Notification = data;
+                setNotifications((prev) => {
+                    // Avoid duplicates
+                    if (prev.some(n => n.id === notification.id)) return prev;
+                    return [notification, ...prev];
+                });
                 if (!notification.is_read) {
                     setUnreadCount((prev) => prev + 1);
                 }
@@ -42,30 +63,29 @@ export function useNotifications(token: string) {
         };
 
         es.onerror = (err) => {
-            console.error('SSE error:', err);
+            console.error('SSE connection error. ReadyState:', es.readyState, err);
             es.close();
 
             if (retryCount.current < maxRetries) {
                 const delay = Math.pow(2, retryCount.current) * 1000;
-                console.log(`Retrying SSE in ${delay}ms...`);
-                setTimeout(() => {
+                console.log(`Retrying SSE in ${delay}ms... (Attempt ${retryCount.current + 1}/${maxRetries})`);
+                
+                const timer = setTimeout(() => {
                     retryCount.current++;
-                    connect();
+                    setRetryTrigger(prev => prev + 1);
                 }, delay);
+
+                return () => clearTimeout(timer);
             } else {
                 console.error('Max SSE retries reached');
             }
         };
 
-        return es;
-    }, [token]);
-
-    useEffect(() => {
-        const es = connect();
         return () => {
-            es?.close();
+            console.log('Closing SSE connection');
+            es.close();
         };
-    }, [connect]);
+    }, [token, retryTrigger]);
 
     return { notifications, unreadCount, setUnreadCount };
 }

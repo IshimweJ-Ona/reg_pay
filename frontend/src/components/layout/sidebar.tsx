@@ -53,7 +53,6 @@ export function Sidebar({ type }: SidebarProps) {
     { name: 'Attendance', href: `${basePath}/attendance`, icon: Calendar, permission: 'attendance.read' },
     { name: 'Payroll Engine', href: `${basePath}/payroll`, icon: FileText, permission: 'payroll.read' },
     { name: 'Tax Setup', href: `${basePath}/payments`, icon: Percent, roles: ['SUPER_ADMIN'] },
-    { name: 'Access Control', href: `${basePath}/permissions`, icon: ShieldCheck, roles: ['SUPER_ADMIN'] },
     { name: 'Notifications', href: `${basePath}/notifications`, icon: Bell },
     { name: 'Profile', href: `${basePath}/profile`, icon: UserCircle },
     { name: 'Settings', href: `${basePath}/settings`, icon: Settings },
