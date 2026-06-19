@@ -93,23 +93,24 @@ export class PayrollService {
     }
 
     // Check for employees already in an active (non-Draft/Rejected) batch for the same period
-    const alreadyProcessedItems = await this.prisma.payment_batch_items.findMany({
-      where: {
-        batch: {
-          payroll_month: dto.payroll_month,
-          payroll_year: dto.payroll_year,
-          status: {
-            in: [
-              PAYMENT_BATCH_STATUS.PENDING,
-              PAYMENT_BATCH_STATUS.IN_REVIEW,
-              PAYMENT_BATCH_STATUS.MANAGER_APPROVED,
-              PAYMENT_BATCH_STATUS.APPROVED,
-            ],
+    const alreadyProcessedItems =
+      await this.prisma.payment_batch_items.findMany({
+        where: {
+          batch: {
+            payroll_month: dto.payroll_month,
+            payroll_year: dto.payroll_year,
+            status: {
+              in: [
+                PAYMENT_BATCH_STATUS.PENDING,
+                PAYMENT_BATCH_STATUS.IN_REVIEW,
+                PAYMENT_BATCH_STATUS.MANAGER_APPROVED,
+                PAYMENT_BATCH_STATUS.APPROVED,
+              ],
+            },
           },
         },
-      },
-      select: { employee_id: true },
-    });
+        select: { employee_id: true },
+      });
 
     const processedEmployeeIds = new Set(
       alreadyProcessedItems.map((i) => i.employee_id),
@@ -167,8 +168,12 @@ export class PayrollService {
       },
     });
 
-    if (existingDraft && (existingDraft.status === PAYMENT_BATCH_STATUS.APPROVED || existingDraft.status === PAYMENT_BATCH_STATUS.REJECTED)) {
-       throw new BadRequestException('Cannot update a finalized payroll batch.');
+    if (
+      existingDraft &&
+      (existingDraft.status === PAYMENT_BATCH_STATUS.APPROVED ||
+        existingDraft.status === PAYMENT_BATCH_STATUS.REJECTED)
+    ) {
+      throw new BadRequestException('Cannot update a finalized payroll batch.');
     }
 
     const batch = await this.prisma.$transaction(async (tx) => {
@@ -312,7 +317,7 @@ export class PayrollService {
         referenceId: batch.uuid,
         metadata: {
           redirect: `payroll/${batch.uuid}`,
-          level: 'MANAGER',
+          level: 'BRANCH_MANAGER',
           status: batch.status,
         },
       });
@@ -353,7 +358,7 @@ export class PayrollService {
     });
 
     if (!batch) throw new NotFoundException('Payroll batch not found.');
-    
+
     if (
       batch.status === PAYMENT_BATCH_STATUS.APPROVED ||
       batch.status === PAYMENT_BATCH_STATUS.REJECTED
@@ -392,7 +397,7 @@ export class PayrollService {
         referenceId: batch.uuid,
         metadata: {
           redirect: `payroll/${batch.uuid}`,
-          level: 'MANAGER',
+          level: 'BRANCH_MANAGER',
           status: updated.status,
         },
       },
@@ -564,7 +569,7 @@ export class PayrollService {
     });
 
     if (!batch) throw new NotFoundException('Payroll batch not found.');
-    
+
     if (
       batch.status === PAYMENT_BATCH_STATUS.APPROVED ||
       batch.status === PAYMENT_BATCH_STATUS.REJECTED
@@ -621,8 +626,8 @@ export class PayrollService {
           entity_id: batch.id,
           module_name: 'PAYROLL',
           activity_type: ACTIVITY_TYPE.UPDATE,
-          activity_description: isFinal 
-            ? 'Fully approved payroll batch.' 
+          activity_description: isFinal
+            ? 'Fully approved payroll batch.'
             : `Approved payroll batch step ${batch.current_approval_step}.`,
           action: AUDIT_ACTION.APPROVED,
           new_values: {
@@ -644,7 +649,7 @@ export class PayrollService {
         referenceId: approved.uuid,
         metadata: {
           redirect: `payroll/${approved.uuid}`,
-          level: 'ADMIN',
+          level: 'SUPER_ADMIN',
           status: approved.status,
         },
       });
@@ -898,8 +903,10 @@ export class PayrollService {
     await this.notificationsService.create({
       userId: rejected.submitted_by,
       senderId: actor.userId,
-      title: isSuperAdmin ? 'Payroll Batch Permanently Rejected' : 'Payroll Batch Returned for Corrections',
-      message: isSuperAdmin 
+      title: isSuperAdmin
+        ? 'Payroll Batch Permanently Rejected'
+        : 'Payroll Batch Returned for Corrections',
+      message: isSuperAdmin
         ? `${rejected.batch_code} was permanently rejected by HQ. Reason: ${dto.rejection_reason}`
         : `${rejected.batch_code} was returned to you for updates. Reason: ${dto.rejection_reason}`,
       type: isSuperAdmin ? 'PAYROLL_REJECTED_FINAL' : 'PAYROLL_REJECTED',
@@ -963,7 +970,10 @@ export class PayrollService {
     }
 
     const periodCalendarDays =
-      dayjs.tz(periodEnd, RWANDA_TIMEZONE).startOf('day').diff(dayjs.tz(periodStart, RWANDA_TIMEZONE).startOf('day'), 'day') + 1;
+      dayjs
+        .tz(periodEnd, RWANDA_TIMEZONE)
+        .startOf('day')
+        .diff(dayjs.tz(periodStart, RWANDA_TIMEZONE).startOf('day'), 'day') + 1;
 
     const paymentStructure = await this.prisma.payment_structures.findFirst({
       where: {
@@ -1157,7 +1167,7 @@ export class PayrollService {
   }
 
   private isSystemAdmin(actor: CurrentUserType) {
-    return actor.roles.some((role) => ['SUPER_ADMIN', 'ADMIN'].includes(role));
+    return actor.roles.some((role) => ['SUPER_ADMIN'].includes(role));
   }
 
   private batchScopeWhere(actor: CurrentUserType) {

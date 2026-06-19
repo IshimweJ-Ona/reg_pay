@@ -21,12 +21,10 @@ import { CreateDepartmentDto } from './dto/create-department.dto';
 import { CreateWorkingLocationDto } from './dto/create-working-location.dto';
 import { OrganizationService } from './organization.service';
 
-
 @Controller('organization')
 @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
 export class OrganizationController {
   constructor(private readonly organizationService: OrganizationService) {}
-
 
   @Roles('SUPER_ADMIN')
   @Permissions('branches.manage')
@@ -58,7 +56,6 @@ export class OrganizationController {
     return this.organizationService.updateWorkingLocation(uuid, dto, actor);
   }
 
-
   @Roles('SUPER_ADMIN')
   @Permissions('branches.manage')
   @Patch('working-locations/:uuid/delete')
@@ -69,7 +66,6 @@ export class OrganizationController {
     return this.organizationService.deleteWorkingLocation(uuid, actor);
   }
 
-  
   @Roles('SUPER_ADMIN')
   @Permissions('departments.manage')
   @Post('departments')
@@ -80,7 +76,6 @@ export class OrganizationController {
     return this.organizationService.createDepartment(dto, actor);
   }
 
-  
   @Public()
   @Get('departments')
   findDepartments(
@@ -95,7 +90,6 @@ export class OrganizationController {
     );
   }
 
-  
   @Roles('SUPER_ADMIN')
   @Permissions('departments.manage')
   @Patch('departments/:uuid')
@@ -107,7 +101,6 @@ export class OrganizationController {
     return this.organizationService.updateDepartment(uuid, dto, actor);
   }
 
-  
   @Roles('SUPER_ADMIN')
   @Permissions('departments.manage')
   @Patch('departments/:uuid/delete')
@@ -118,7 +111,6 @@ export class OrganizationController {
     return this.organizationService.deleteDepartment(uuid, actor);
   }
 
-  
   @Roles('SUPER_ADMIN')
   @Permissions('branches.manage')
   @Patch('working-locations/:uuid/manager')
@@ -130,8 +122,7 @@ export class OrganizationController {
     return this.organizationService.assignBranchManager(uuid, dto, actor);
   }
 
-  
-  @Roles('SUPER_ADMIN', 'ADMIN')
+  @Roles('SUPER_ADMIN', 'BRANCH_MANAGER')
   @Permissions('departments.manage')
   @Patch('departments/:uuid/manager')
   assignDepartmentManager(

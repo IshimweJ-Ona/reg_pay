@@ -6,7 +6,11 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import { ACTIVITY_TYPE, AUDIT_ACTION, STATUS_USER } from '@prisma/client';
 import { compareHash, hashValue } from '../common/utils/hash.util';
-import { isNumericId, isUuid, requireUuidOrNumeric } from '../common/utils/lookup.util';
+import {
+  isNumericId,
+  isUuid,
+  requireUuidOrNumeric,
+} from '../common/utils/lookup.util';
 import { generateUUID } from '../common/utils/uuid.util';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -110,7 +114,7 @@ export class AuthService {
         reference_id: user.uuid,
         metadata: {
           redirect: 'users', // Use relative or tokenized paths
-          level: localApprover ? 'MANAGER' : 'ADMIN',
+          level: localApprover ? 'BRANCH_MANAGER' : 'SUPER_ADMIN',
         },
       },
     });
@@ -191,12 +195,8 @@ export class AuthService {
       let rolePath = 'users';
       if (roles.includes('SUPER_ADMIN')) {
         rolePath = 'super_admin';
-      } else if (
-        roles.includes('BRANCH_MANAGER') ||
-        roles.includes('MANAGER') ||
-        roles.includes('ON_MANAGER')
-      ) {
-        rolePath = 'manager';
+      } else if (roles.includes('BRANCH_MANAGER')) {
+        rolePath = 'branch_manager';
       } else if (
         roles.includes('HR') ||
         roles.includes('HR_MANAGER') ||
@@ -398,7 +398,7 @@ export class AuthService {
         roles: {
           some: {
             role: {
-              name: { in: ['SUPER_ADMIN', 'ADMIN'] },
+              name: { in: ['SUPER_ADMIN'] },
             },
           },
         },
@@ -505,13 +505,35 @@ export class AuthService {
 
     // 2. Expand implied permissions
     const impliedMap: Record<string, string[]> = {
-      'employees.create': ['employees.read', 'employees.update', 'employees.suspend', 'employees.transfer'],
-      'attendance.create': ['attendance.read', 'attendance.update', 'attendance.approve'],
+      'employees.create': [
+        'employees.read',
+        'employees.update',
+        'employees.suspend',
+        'employees.transfer',
+      ],
+      'attendance.create': [
+        'attendance.read',
+        'attendance.update',
+        'attendance.approve',
+      ],
       'payroll.create': ['payroll.read', 'payroll.manage'],
       'payroll.manage': ['payroll.read', 'payroll.create', 'payroll.approve'],
-      'payment-structures.create': ['payment-structures.read', 'payment-structures.update', 'payment-structures.delete'],
-      'users.create': ['users.read', 'users.update', 'users.approve', 'users.suspend'],
-      'permissions.manage': ['permissions.read', 'permissions.create', 'permissions.assign'],
+      'payment-structures.create': [
+        'payment-structures.read',
+        'payment-structures.update',
+        'payment-structures.delete',
+      ],
+      'users.create': [
+        'users.read',
+        'users.update',
+        'users.approve',
+        'users.suspend',
+      ],
+      'permissions.manage': [
+        'permissions.read',
+        'permissions.create',
+        'permissions.assign',
+      ],
       'branches.manage': ['departments.manage', 'branch-manager.manage'],
     };
 
@@ -521,7 +543,10 @@ export class AuthService {
         if (!permissionMap.has(impliedKey)) {
           permissionMap.set(impliedKey, {
             key: impliedKey,
-            name: impliedKey.split('.').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' '),
+            name: impliedKey
+              .split('.')
+              .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
+              .join(' '),
             source: 'implied',
             granted_at: p.granted_at,
           });
@@ -609,13 +634,35 @@ export class AuthService {
 
     // 2. Expand implied permissions
     const impliedMap: Record<string, string[]> = {
-      'employees.create': ['employees.read', 'employees.update', 'employees.suspend', 'employees.transfer'],
-      'attendance.create': ['attendance.read', 'attendance.update', 'attendance.approve'],
+      'employees.create': [
+        'employees.read',
+        'employees.update',
+        'employees.suspend',
+        'employees.transfer',
+      ],
+      'attendance.create': [
+        'attendance.read',
+        'attendance.update',
+        'attendance.approve',
+      ],
       'payroll.create': ['payroll.read', 'payroll.manage'],
       'payroll.manage': ['payroll.read', 'payroll.create', 'payroll.approve'],
-      'payment-structures.create': ['payment-structures.read', 'payment-structures.update', 'payment-structures.delete'],
-      'users.create': ['users.read', 'users.update', 'users.approve', 'users.suspend'],
-      'permissions.manage': ['permissions.read', 'permissions.create', 'permissions.assign'],
+      'payment-structures.create': [
+        'payment-structures.read',
+        'payment-structures.update',
+        'payment-structures.delete',
+      ],
+      'users.create': [
+        'users.read',
+        'users.update',
+        'users.approve',
+        'users.suspend',
+      ],
+      'permissions.manage': [
+        'permissions.read',
+        'permissions.create',
+        'permissions.assign',
+      ],
       'branches.manage': ['departments.manage', 'branch-manager.manage'],
     };
 

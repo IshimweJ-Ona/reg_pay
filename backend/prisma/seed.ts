@@ -129,8 +129,8 @@ const ROLE_PERMISSIONS: Record<string, string[]> = {
   BRANCH_MANAGER: [
     'users.read',
     'users.create',
-    'users.approve',
     'users.update',
+    'users.approve',
     'users.suspend',
     'users.transfer',
     'branch-manager.manage',

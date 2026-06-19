@@ -6,7 +6,11 @@ import {
   UseGuards,
   Sse,
   Req,
+  UsePipes,
+  ValidationPipe,
+  Query,
 } from '@nestjs/common';
+import { StreamQueryDto } from './dto/stream-query.dto';
 import { Observable, Subject, merge, interval } from 'rxjs';
 import { map } from 'rxjs/operators';
 import { NotificationsService } from './notifications.service';
@@ -21,14 +25,24 @@ export class NotificationsController {
   constructor(private readonly notificationsService: NotificationsService) {}
 
   @Sse('stream')
+  @UsePipes(
+    new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: false,
+    }),
+  )
   stream(@Req() req): Observable<MessageEvent> {
     const userId = req.user.uuid;
     const subject = this.notificationsService.addClient(userId);
 
-    req.on('close', () => this.notificationsService.removeClient(userId, subject));
+    req.on('close', () =>
+      this.notificationsService.removeClient(userId, subject),
+    );
 
     const heartbeat$ = interval(30000).pipe(
-      map(() => ({ data: JSON.stringify({ type: 'heartbeat' }) } as MessageEvent)),
+      map(
+        () => ({ data: JSON.stringify({ type: 'heartbeat' }) }) as MessageEvent,
+      ),
     );
 
     return merge(subject.asObservable(), heartbeat$);

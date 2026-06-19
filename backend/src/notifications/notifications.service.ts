@@ -22,13 +22,13 @@ export class NotificationsService {
   // Called by controller to register a new SSE connection
   addClient(userId: string): Subject<MessageEvent> {
     const subject = new Subject<MessageEvent>();
-    
+
     let userClients = this.clients.get(userId);
     if (!userClients) {
       userClients = new Set();
       this.clients.set(userId, userClients);
     }
-    
+
     userClients.add(subject);
     return subject;
   }
@@ -127,7 +127,7 @@ export class NotificationsService {
       });
 
       const roles = user?.roles.map((r) => r.role.name) || [];
-      const isAdmin = roles.includes('ADMIN') || roles.includes('SUPER_ADMIN');
+      const isAdmin = roles.includes('SUPER_ADMIN');
 
       const orConditions: any[] = [{ user_id: user?.id }];
 

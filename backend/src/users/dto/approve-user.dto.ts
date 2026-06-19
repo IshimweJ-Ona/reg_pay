@@ -8,7 +8,7 @@ export class ApproveUserDto {
   })
   @IsOptional()
   @IsString()
-  working_location_id: string;
+  working_location_id!: string;
 
   @ApiPropertyOptional({
     example: 'c3d4e5f6-a7b8-9012-cdef-123456789012',
@@ -16,7 +16,7 @@ export class ApproveUserDto {
   })
   @IsOptional()
   @IsString()
-  department_id: string;
+  department_id!: string;
 
   @ApiPropertyOptional({
     example: ['d4e5f6a7-8901-bcde-f123-456789012345'],

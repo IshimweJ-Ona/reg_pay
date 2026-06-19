@@ -30,12 +30,12 @@ export class RegisterDto {
 
   @ApiProperty({
     example: 'jean.mugisha1@gmail.com',
-    description: 'Must be a valid @gmail.com or @reg.rw address.',
+    description: 'Must be a valid @gmail.com, @yahoo.com or @reg.rw address.',
   })
   @IsString()
   @IsNotEmpty()
-  @Matches(/^[a-zA-Z0-9._%+-]+@(gmail\.com|reg\.com)$/, {
-    message: 'Email must be a valid @gmail.com or @reg.com address.',
+  @Matches(/^[a-zA-Z0-9._%+-]+@(gmail\.com|reg\.com|yahoo\.com|reg\.rw)$/, {
+    message: 'Email must be a valid @gmail.com, @yahoo.com or @reg.rw address.',
   })
   email: string;
 

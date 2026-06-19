@@ -5,5 +5,5 @@ export class AssignUserRolesDto {
   @ArrayNotEmpty()
   @ArrayUnique()
   @IsString({ each: true })
-  role_ids: string[];
+  role_ids!: string[];
 }

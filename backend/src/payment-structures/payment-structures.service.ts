@@ -7,6 +7,7 @@ import { ACTIVITY_TYPE, AUDIT_ACTION, EMPLOYMENT_TYPE } from '@prisma/client';
 import type { CurrentUserType } from '../auth/types/current-user.type';
 import { generateUUID } from '../common/utils/uuid.util';
 import { PrismaService } from '../prisma/prisma.service';
+import { calculateRwandaPaye } from '../common/utils/tax.util';
 
 // DTOs
 import { CreatePaymentStructureDto } from './dto/create-payment-structure.dto';
@@ -183,6 +184,15 @@ export class PaymentStructuresService {
       ...category,
       id: category.id.toString(),
     }));
+  }
+
+  calculatePayeTax(grossSalary: number) {
+    const tax = calculateRwandaPaye(grossSalary);
+    return {
+      gross_salary: grossSalary,
+      paye_tax: tax,
+      net_after_paye: grossSalary - tax,
+    };
   }
 
   private async findByUuidOrThrow(uuid: string) {

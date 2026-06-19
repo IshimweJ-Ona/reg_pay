@@ -27,6 +27,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import type { CurrentUserType } from '../auth/types/current-user.type';
 import { RejectTransferDto } from '../common/dto/reject-transfer.dto';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
+import { UpdateEmployeeDto } from './dto/update-employee.dto';
 import { SuspendEmployeeDto } from './dto/suspend-employee.dto';
 import { TransferEmployeeDto } from './dto/transfer-employee.dto';
 import {
@@ -193,7 +194,7 @@ export class EmployeesController {
   @ApiResponse({ status: 404, description: 'Employee not found.' })
   update(
     @Param('uuid') uuid: string,
-    @Body() dto: Partial<CreateEmployeeDto>,
+    @Body() dto: UpdateEmployeeDto,
     @CurrentUser() actor: CurrentUserType,
   ) {
     return this.employeesService.update(uuid, dto, actor);

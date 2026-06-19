@@ -296,7 +296,7 @@ export class PermissionsService {
   }
 
   private isSystemAdmin(actor: CurrentUserType) {
-    return actor.roles.some((role) => ['SUPER_ADMIN', 'ADMIN'].includes(role));
+    return actor.roles.some((role) => ['SUPER_ADMIN'].includes(role));
   }
 
   private async ensureActorCanGrantUserPermission(

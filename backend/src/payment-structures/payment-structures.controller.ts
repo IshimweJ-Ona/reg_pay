@@ -5,6 +5,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -24,7 +25,14 @@ import { UpdateEmployeeDeductionDto } from './dto/update-employee-deduction.dto'
 import { CreateAllowanceDto } from './dto/create-allowance.dto';
 
 @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
-@Roles('SUPER_ADMIN', 'ADMIN', 'HR', 'HR_MANAGER', 'ACCOUNTANT', 'FINANCE')
+@Roles(
+  'SUPER_ADMIN',
+  'HR',
+  'HR_MANAGER',
+  'ACCOUNTANT',
+  'FINANCE',
+  'BRANCH_MANAGER',
+)
 @Controller('payment-structures')
 export class PaymentStructuresController {
   constructor(
@@ -59,6 +67,12 @@ export class PaymentStructuresController {
   @Get('deduction-types')
   findDeductionTypes() {
     return this.paymentStructuresService.findDeductionTypes();
+  }
+
+  @Permissions('payment-structures.read')
+  @Get('calculate-paye')
+  calculatePaye(@Query('gross') gross: string) {
+    return this.paymentStructuresService.calculatePayeTax(Number(gross || 0));
   }
 
   @Permissions('payment-structures.update')

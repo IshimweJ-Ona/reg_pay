@@ -21,16 +21,7 @@ import { RejectPayrollItemDto } from './dto/reject-payroll-item.dto';
 import { PayrollService } from './payroll.service';
 
 @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
-@Roles(
-  'SUPER_ADMIN',
-  'ADMIN',
-  'ACCOUNTANT',
-  'FINANCE',
-  'MANAGER',
-  'ON_MANAGER',
-  'BRANCH_MANAGER',
-  'HQ_MANAGER',
-)
+@Roles('SUPER_ADMIN', 'BRANCH_MANAGER', 'ACCOUNTANT', 'FINANCE')
 @Controller('payroll')
 export class PayrollController {
   constructor(private readonly payrollService: PayrollService) {}

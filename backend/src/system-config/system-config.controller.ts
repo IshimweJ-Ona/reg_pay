@@ -15,7 +15,7 @@ import { BatchUpdateConfigDto, UpdateConfigDto } from './dto/update-config.dto';
 
 @Controller('system-config')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles('SUPER_ADMIN', 'ADMIN')
+@Roles('SUPER_ADMIN', 'BRANCH_MANAGER')
 export class SystemConfigController {
   constructor(private readonly systemConfigService: SystemConfigService) {}
 

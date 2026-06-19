@@ -7,7 +7,12 @@ import { EmployeesService } from './employees.service';
 import { PaymentStructuresModule } from '../payment-structures/payment-structures.module';
 
 @Module({
-  imports: [AuthModule, PrismaModule, NotificationsModule, PaymentStructuresModule],
+  imports: [
+    AuthModule,
+    PrismaModule,
+    NotificationsModule,
+    PaymentStructuresModule,
+  ],
   controllers: [EmployeesController],
   providers: [EmployeesService],
   exports: [EmployeesService],

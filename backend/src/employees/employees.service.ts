@@ -44,11 +44,10 @@ export class EmployeesService {
     private readonly paymentStructuresService: PaymentStructuresService,
   ) {}
 
-
   async create(dto: CreateEmployeeDto, actor?: CurrentUserType) {
     const managerScoped =
       actor?.roles?.some((role) =>
-        ['BRANCH_MANAGER', 'MANAGER', 'ON_MANAGER'].includes(role),
+        ['BRANCH_MANAGER'].includes(role),
       ) && !this.isSystemAdmin(actor);
     const effectiveWorkingLocationInput =
       managerScoped && actor?.working_location_id
@@ -82,6 +81,44 @@ export class EmployeesService {
     );
 
     const employee = await this.prisma.$transaction(async (tx) => {
+      // Duplicate checks
+      if (dto.email) {
+        const existing = await tx.employees.findFirst({
+          where: { email: dto.email, deleted_at: null },
+          select: { uuid: true },
+        });
+        if (existing) {
+          throw new BadRequestException(
+            `An employee with email "${dto.email}" already exists (uuid: ${existing.uuid}).`,
+          );
+        }
+      }
+
+      if (dto.phone_number) {
+        const existing = await tx.employees.findFirst({
+          where: { phone_number: dto.phone_number, deleted_at: null },
+          select: { uuid: true },
+        });
+        if (existing) {
+          throw new BadRequestException(
+            `An employee with phone number "${dto.phone_number}" already exists (uuid: ${existing.uuid}).`,
+          );
+        }
+      }
+
+      if (dto.national_id) {
+        const existing = await tx.employees.findFirst({
+          where: { national_id: dto.national_id, deleted_at: null },
+          select: { uuid: true },
+        });
+        if (existing) {
+          throw new BadRequestException(
+            `An employee with national ID "${dto.national_id}" already exists (uuid: ${existing.uuid}).`,
+          );
+        }
+      }
+
+
       const created = await tx.employees.create({
         data: {
           uuid: generateUUID(),
@@ -144,7 +181,8 @@ export class EmployeesService {
             entity_id: created.id,
             module_name: 'EMPLOYEES',
             activity_type: ACTIVITY_TYPE.CREATE,
-            activity_description: 'Created employee profile with salary and benefits.',
+            activity_description:
+              'Created employee profile with salary and benefits.',
             action: AUDIT_ACTION.CREATED,
             new_values: {
               working_location_id: workingLocationId?.toString() ?? null,
@@ -167,7 +205,7 @@ export class EmployeesService {
   // Helper to clear all employee-related caches
   private async clearEmployeeCache() {
     try {
-      // In cache-manager v5+, store.keys() returns all keys. 
+      // In cache-manager v5+, store.keys() returns all keys.
       // We use (this.cacheManager as any) to bypass strict typing on the store property.
       const store = (this.cacheManager as any).store;
       if (store && typeof store.keys === 'function') {
@@ -290,28 +328,86 @@ export class EmployeesService {
       : undefined;
 
     const updated = await this.prisma.$transaction(async (tx) => {
-      // 1. Update Profile
+      if (dto.email) {
+        const existing = await tx.employees.findFirst({
+          where: {
+            email: dto.email,
+            deleted_at: null,
+            NOT: { id: employee.id },
+          },
+          select: { uuid: true },
+        });
+        if (existing) {
+          throw new BadRequestException(
+            `Another employee with email "${dto.email}" already exists (uuid: ${existing.uuid}).`,
+          );
+        }
+      }
+
+      if (dto.phone_number) {
+        const existing = await tx.employees.findFirst({
+          where: {
+            phone_number: dto.phone_number,
+            deleted_at: null,
+            NOT: { id: employee.id },
+          },
+          select: { uuid: true },
+        });
+        if (existing) {
+          throw new BadRequestException(
+            `Another employee with phone number "${dto.phone_number}" already exists (uuid: ${existing.uuid}).`,
+          );
+        }
+      }
+
+      if (dto.national_id) {
+        const existing = await tx.employees.findFirst({
+          where: {
+            national_id: dto.national_id,
+            deleted_at: null,
+            NOT: { id: employee.id },
+          },
+          select: { uuid: true },
+        });
+        if (existing) {
+          throw new BadRequestException(
+            `Another employee with national ID "${dto.national_id}" already exists (uuid: ${existing.uuid}).`,
+          );
+        }
+      }
+
+      // 1. Update Profile (Only include provided fields)
+      const employeeUpdateData: any = {};
+      if (dto.first_name !== undefined)
+        employeeUpdateData.first_name = dto.first_name;
+      if (dto.last_name !== undefined)
+        employeeUpdateData.last_name = dto.last_name;
+      if (dto.email !== undefined) employeeUpdateData.email = dto.email;
+      if (dto.phone_number !== undefined)
+        employeeUpdateData.phone_number = dto.phone_number;
+      if (dto.national_id !== undefined)
+        employeeUpdateData.national_id = dto.national_id;
+      if (dto.gender !== undefined) employeeUpdateData.gender = dto.gender;
+      if (dto.hire_date !== undefined)
+        employeeUpdateData.hire_date = new Date(dto.hire_date);
+      if (departmentId !== undefined)
+        employeeUpdateData.department_id = departmentId;
+      if (workingLocationId !== undefined)
+        employeeUpdateData.working_location_id = workingLocationId;
+      if (categoryId !== undefined)
+        employeeUpdateData.employment_category_id = categoryId;
+
       const saved = await tx.employees.update({
         where: { id: employee.id },
-        data: {
-          first_name: dto.first_name,
-          last_name: dto.last_name,
-          email: dto.email,
-          phone_number: dto.phone_number,
-          national_id: dto.national_id,
-          gender: dto.gender,
-          hire_date: dto.hire_date ? new Date(dto.hire_date) : undefined,
-          department_id: departmentId,
-          working_location_id: workingLocationId,
-          employment_category_id: categoryId,
-        },
+        data: employeeUpdateData,
         include: this.employeeIncludes(),
       });
 
       // 2. Update Salary (Payment Structure) if provided
-      if (dto.employment_category_id && (dto.basic_salary || dto.daily_rate)) {
+      const targetCategoryId = categoryId ?? employee.employment_category_id;
+      if (targetCategoryId && (dto.basic_salary || dto.daily_rate)) {
         const category = await tx.employment_categories.findUnique({
-          where: { id: categoryId },
+          where: { id: targetCategoryId },
         });
 
         if (category) {
@@ -321,11 +417,14 @@ export class EmployeesService {
 
           const structureData = {
             payroll_frequency: category.payroll_frequency,
-            basic_salary: dto.basic_salary ?? '0',
-            daily_rate: dto.daily_rate ?? '0',
-            overtime_rate: '0',
-            tax_percentage: dto.tax_percentage ?? '0',
-            custom_work_days: dto.custom_work_days,
+            basic_salary:
+              dto.basic_salary ?? currentStructure?.basic_salary ?? '0',
+            daily_rate: dto.daily_rate ?? currentStructure?.daily_rate ?? '0',
+            overtime_rate: currentStructure?.overtime_rate ?? '0',
+            tax_percentage:
+              dto.tax_percentage ?? currentStructure?.tax_percentage ?? '0',
+            custom_work_days:
+              dto.custom_work_days ?? currentStructure?.custom_work_days,
           };
 
           if (
@@ -357,7 +456,10 @@ export class EmployeesService {
       }
 
       // 3. Update Allowance if provided
-      if (dto.allowance_title && dto.allowance_amount) {
+      if (
+        dto.allowance_title !== undefined ||
+        dto.allowance_amount !== undefined
+      ) {
         const existingAllowance = await tx.allowances.findFirst({
           where: { employee_id: employee.id },
         });
@@ -366,11 +468,11 @@ export class EmployeesService {
           await tx.allowances.update({
             where: { id: existingAllowance.id },
             data: {
-              title: dto.allowance_title,
-              amount: dto.allowance_amount,
+              title: dto.allowance_title ?? existingAllowance.title,
+              amount: dto.allowance_amount ?? existingAllowance.amount,
             },
           });
-        } else {
+        } else if (dto.allowance_title && dto.allowance_amount) {
           await tx.allowances.create({
             data: {
               uuid: generateUUID(),
@@ -475,11 +577,11 @@ export class EmployeesService {
         message: `A transfer request has been initiated for employee ${employee.first_name} ${employee.last_name}.`,
         type: 'TRANSFER_REQUEST',
         referenceId: request.uuid,
-        metadata: { level: 'ADMIN' },
+        metadata: { level: 'SUPER_ADMIN' },
       });
       await this.prisma.transfer_requests.update({
         where: { id: request.id },
-        data: { current_level: 'ADMIN' },
+        data: { current_level: 'SUPER_ADMIN' },
       });
     }
 
@@ -495,7 +597,7 @@ export class EmployeesService {
 
     const isAdmin = this.isSystemAdmin(actor);
     const isBM = actor.roles.some((role) =>
-      ['BRANCH_MANAGER', 'MANAGER', 'ON_MANAGER'].includes(role),
+      ['BRANCH_MANAGER'].includes(role),
     );
 
     if (request.current_level === 'BRANCH_MANAGER') {
@@ -508,7 +610,7 @@ export class EmployeesService {
       const updated = await this.prisma.transfer_requests.update({
         where: { id: request.id },
         data: {
-          current_level: 'ADMIN',
+          current_level: 'SUPER_ADMIN',
           history: ((request.history as any[]) || []).concat([
             {
               level: 'BRANCH_MANAGER',
@@ -527,13 +629,13 @@ export class EmployeesService {
           'An employee transfer request has been approved by the Branch Manager and requires final admin approval.',
         type: 'TRANSFER_REQUEST',
         referenceId: request.uuid,
-        metadata: { level: 'ADMIN' },
+        metadata: { level: 'SUPER_ADMIN' },
       });
 
       return this.serializeTransferRequest(updated);
     }
 
-    if (request.current_level === 'ADMIN') {
+    if (request.current_level === 'SUPER_ADMIN') {
       if (!isAdmin) {
         throw new ForbiddenException(
           'Only an Admin can finalize this transfer.',
@@ -581,7 +683,7 @@ export class EmployeesService {
             current_level: 'FINALIZED',
             history: ((request.history as any[]) || []).concat([
               {
-                level: 'ADMIN',
+                level: 'SUPER_ADMIN',
                 action: 'APPROVED',
                 by: actor.userId,
                 at: new Date().toISOString(),
@@ -891,22 +993,28 @@ export class EmployeesService {
         orderBy: { effective_from: 'desc' as const },
         take: 1,
       },
-      // Include recent attendance for rate calculation
+      // Include all attendance for accurate rate calculation
       time_records: {
         orderBy: { attendance_date: 'desc' as const },
-        take: 30,
       },
     };
   }
 
   private serializeEmployee(employee: Record<string, any>) {
     const timeRecords = employee.time_records || [];
+
+    // Improved Attendance Logic:
+    // 1. If we have NO records at all, rate is 0%.
+    // 2. If we have records, calculate present percentage.
+
     const presentCount = timeRecords.filter(
       (r) => r.attendance_status === ATTENDANCE_STATUS.PRESENT,
     ).length;
+
     const attendanceRate = timeRecords.length
       ? Math.round((presentCount / timeRecords.length) * 100)
       : 0;
+
     const latestRecord = timeRecords[0];
 
     return {
@@ -944,7 +1052,7 @@ export class EmployeesService {
 
   private isSystemAdmin(actor?: CurrentUserType) {
     return !!actor?.roles?.some((role) =>
-      ['SUPER_ADMIN', 'ADMIN'].includes(role),
+      ['SUPER_ADMIN'].includes(role),
     );
   }
 
@@ -959,13 +1067,17 @@ export class EmployeesService {
       where.working_location_id = BigInt(actor.working_location_id);
     }
 
+    const isBranchManager = actor.roles.some((role) =>
+      ['BRANCH_MANAGER'].includes(role),
+    );
+
     const isAttendanceActor =
       actor.permissions.includes('attendance.create') ||
       actor.permissions.includes('attendance.read') ||
       actor.permissions.includes('attendance.update') ||
       actor.permissions.includes('attendance.approve');
 
-    if (isAttendanceActor && actor.department_id) {
+    if (!isBranchManager && isAttendanceActor && actor.department_id) {
       where.department_id = BigInt(actor.department_id);
     }
 
@@ -992,13 +1104,18 @@ export class EmployeesService {
       );
     }
 
-    const isAttendanceActor =
-      actor.permissions.includes('attendance.create') ||
-      actor.permissions.includes('attendance.read') ||
-      actor.permissions.includes('attendance.update') ||
-      actor.permissions.includes('attendance.approve');
+    const isBranchManager = actor.roles.some((role) =>
+      ['BRANCH_MANAGER'].includes(role),
+    );
+
+    const isAttendanceActor = 
+        actor.permissions.includes('attendance.create') ||
+        actor.permissions.includes('attendance.read') ||
+        actor.permissions.includes('attendance.update') ||
+        actor.permissions.includes('attendance.approve');
 
     if (
+      !isBranchManager &&
       isAttendanceActor &&
       actor.department_id &&
       employee.department_id?.toString() !== actor.department_id
@@ -1028,11 +1145,16 @@ export class EmployeesService {
       );
     }
 
-    const isAttendanceActor =
-      actor.permissions.includes('attendance.create') ||
-      actor.permissions.includes('attendance.update');
+    const isBranchManager = actor.roles.some((role) =>
+      ['BRANCH_MANAGER'].includes(role),
+    );
 
+    const isAttendanceActor =
+        actor.permissions.includes('attendance.create') ||
+        actor.permissions.includes('attendance.update');
+    
     if (
+      !isBranchManager &&
       isAttendanceActor &&
       actor.department_id &&
       departmentId?.toString() !== actor.department_id

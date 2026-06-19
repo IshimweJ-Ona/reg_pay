@@ -26,7 +26,10 @@ export class AllExceptionsFilter implements ExceptionFilter {
         ? exception.getStatus()
         : HttpStatus.INTERNAL_SERVER_ERROR;
 
-    let message = exception?.response?.message || exception?.message || 'Internal server error';
+    let message =
+      exception?.response?.message ||
+      exception?.message ||
+      'Internal server error';
 
     // Handle Prisma Client Errors
     if (exception.code?.startsWith('P')) {
@@ -36,7 +39,8 @@ export class AllExceptionsFilter implements ExceptionFilter {
           message = `Duplicate entry: A record with this ${exception.meta?.target || 'value'} already exists.`;
           break;
         case 'P2003':
-          message = 'Foreign key constraint failed: A related record is missing or protected.';
+          message =
+            'Foreign key constraint failed: A related record is missing or protected.';
           break;
         case 'P2025':
           httpStatus = HttpStatus.NOT_FOUND;
@@ -58,7 +62,9 @@ export class AllExceptionsFilter implements ExceptionFilter {
     this.logger.error(
       `[${httpStatus}] ${httpAdapter.getRequestMethod(ctx.getRequest())} ${httpAdapter.getRequestUrl(ctx.getRequest())}`,
     );
-    this.logger.error(exception instanceof Error ? exception.stack : JSON.stringify(exception));
+    this.logger.error(
+      exception instanceof Error ? exception.stack : JSON.stringify(exception),
+    );
 
     httpAdapter.reply(ctx.getResponse(), responseBody, httpStatus);
   }

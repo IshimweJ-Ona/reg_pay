@@ -44,7 +44,7 @@ export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
-  @Roles('SUPER_ADMIN', 'ADMIN', 'BRANCH_MANAGER')
+  @Roles('SUPER_ADMIN', 'BRANCH_MANAGER')
   @Permissions('users.create')
   @Post()
   @ApiOperation({
@@ -67,7 +67,7 @@ export class UsersController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
-  @Roles('SUPER_ADMIN', 'ADMIN', 'BRANCH_MANAGER')
+  @Roles('SUPER_ADMIN', 'BRANCH_MANAGER')
   @Permissions('users.read')
   @Get()
   @ApiOperation({
@@ -88,7 +88,7 @@ export class UsersController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
-  @Roles('SUPER_ADMIN', 'ADMIN', 'BRANCH_MANAGER')
+  @Roles('SUPER_ADMIN', 'BRANCH_MANAGER')
   @Permissions('users.read')
   @Get('pending')
   @ApiOperation({
@@ -100,12 +100,12 @@ export class UsersController {
     status: 200,
     description: 'List of pending users returned successfully.',
   })
-  findPending(@Query('q') q?: string) {
-    return this.usersService.findPendingApproval(q);
+  findPending(@CurrentUser() actor: CurrentUserType, @Query('q') q?: string) {
+    return this.usersService.findPendingApproval(actor, q);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
-  @Roles('SUPER_ADMIN', 'ADMIN', 'BRANCH_MANAGER')
+  @Roles('SUPER_ADMIN', 'BRANCH_MANAGER')
   @Permissions('users.approve')
   @Patch(':uuid/approve')
   @ApiOperation({
@@ -124,7 +124,7 @@ export class UsersController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
-  @Roles('SUPER_ADMIN', 'ADMIN', 'BRANCH_MANAGER')
+  @Roles('SUPER_ADMIN', 'BRANCH_MANAGER')
   @Permissions('users.approve')
   @Patch(':uuid/reject')
   @ApiOperation({
@@ -143,7 +143,7 @@ export class UsersController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
-  @Roles('SUPER_ADMIN', 'ADMIN', 'BRANCH_MANAGER')
+  @Roles('SUPER_ADMIN', 'BRANCH_MANAGER')
   @Permissions('users.suspend')
   @Patch(':uuid/suspend')
   @ApiOperation({
@@ -158,7 +158,7 @@ export class UsersController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
-  @Roles('SUPER_ADMIN', 'ADMIN', 'BRANCH_MANAGER')
+  @Roles('SUPER_ADMIN', 'BRANCH_MANAGER')
   @Permissions('users.suspend')
   @Patch(':uuid/reactivate')
   @ApiOperation({
@@ -167,12 +167,15 @@ export class UsersController {
   })
   @ApiResponse({ status: 200, description: 'User account reactivated.' })
   @ApiResponse({ status: 404, description: 'User not found.' })
-  reactivate(@Param('uuid') uuid: string, @CurrentUser() actor: CurrentUserType) {
+  reactivate(
+    @Param('uuid') uuid: string,
+    @CurrentUser() actor: CurrentUserType,
+  ) {
     return this.usersService.reactivateUser(uuid, actor);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
-  @Roles('SUPER_ADMIN', 'ADMIN')
+  @Roles('SUPER_ADMIN', 'BRANCH_MANAGER')
   @Permissions('users.update')
   @Patch(':uuid/roles')
   @ApiOperation({
@@ -215,7 +218,7 @@ export class UsersController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
-  @Roles('SUPER_ADMIN', 'ADMIN')
+  @Roles('SUPER_ADMIN', 'BRANCH_MANAGER')
   @Permissions('users.update')
   @Post('bulk-profile-images')
   @UseInterceptors(
@@ -251,7 +254,7 @@ export class UsersController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
-  @Roles('SUPER_ADMIN', 'ADMIN', 'BRANCH_MANAGER')
+  @Roles('SUPER_ADMIN', 'BRANCH_MANAGER')
   @Permissions('users.transfer')
   @Post(':uuid/transfer-requests')
   @ApiOperation({
@@ -273,7 +276,7 @@ export class UsersController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
-  @Roles('SUPER_ADMIN', 'ADMIN', 'HQ_MANAGER')
+  @Roles('SUPER_ADMIN', 'BRANCH_MANAGER')
   @Permissions('users.transfer')
   @Patch('transfer-requests/:uuid/approve')
   @ApiOperation({
@@ -291,7 +294,7 @@ export class UsersController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
-  @Roles('SUPER_ADMIN', 'ADMIN', 'HQ_MANAGER')
+  @Roles('SUPER_ADMIN', 'BRANCH_MANAGER')
   @Patch('transfer-requests/:uuid/reject')
   @ApiOperation({
     summary: 'Reject user transfer',

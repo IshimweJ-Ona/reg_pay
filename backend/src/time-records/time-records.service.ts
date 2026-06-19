@@ -445,9 +445,7 @@ export class TimeRecordsService {
   }
 
   private isSystemAdmin(actor?: CurrentUserType) {
-    return !!actor?.roles?.some((role) =>
-      ['SUPER_ADMIN', 'ADMIN'].includes(role),
-    );
+    return !!actor?.roles?.some((role) => ['SUPER_ADMIN'].includes(role));
   }
 
   private employeeScopeWhere(actor: CurrentUserType) {

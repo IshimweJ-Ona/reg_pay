@@ -23,7 +23,6 @@ import { TimeRecordsService } from './time-records.service';
 @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
 @Roles(
   'SUPER_ADMIN',
-  'ADMIN',
   'BRANCH_MANAGER',
   'HR',
   'HR_MANAGER',

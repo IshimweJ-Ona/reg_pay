@@ -25,7 +25,7 @@ export class RolesGuard implements CanActivate {
       user?: CurrentUserType;
     }>();
 
-    if (user?.roles?.some((role) => ['SUPER_ADMIN', 'ADMIN'].includes(role))) {
+    if (user?.roles?.some((role) => ['SUPER_ADMIN'].includes(role))) {
       return true;
     }
 

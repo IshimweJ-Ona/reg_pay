@@ -24,13 +24,17 @@ export class PermissionsGuard implements CanActivate {
       user?: CurrentUserType;
     }>();
 
-    if (user?.roles?.some((role) => ['SUPER_ADMIN', 'ADMIN'].includes(role))) {
+    if (user?.roles?.some((role) => ['SUPER_ADMIN'].includes(role))) {
       return true;
     }
 
     const branchManagerPermissions = new Set([
       'users.read',
+      'users.create',
       'users.update',
+      'users.suspend',
+      'users.approve',
+      'users.transfer',
       'permissions.read',
       'permissions.assign',
       'branches.manage',
@@ -39,14 +43,27 @@ export class PermissionsGuard implements CanActivate {
       'employees.read',
       'employees.update',
       'employees.suspend',
+      'employees.transfer',
+      'attendance.create',
       'attendance.read',
+      'attendance.update',
+      'attendance.approve',
+      'payment-structures.create',
+      'payment-structures.read',
+      'payment-structures.update',
+      'payment-structures.delete',
+      'allowances.manage',
+      'payroll.create',
       'payroll.read',
+      'payroll.manage',
+      'payroll.approve',
+      'payroll.reports',
+      'notifications.read',
+      'notifications.manage',
     ]);
 
     if (
-      user?.roles?.some((role) =>
-        ['BRANCH_MANAGER', 'MANAGER', 'ON_MANAGER'].includes(role),
-      ) &&
+      user?.roles?.some((role) => ['BRANCH_MANAGER'].includes(role)) &&
       requiredPermissions.some((permission) =>
         branchManagerPermissions.has(permission),
       )

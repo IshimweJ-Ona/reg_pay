@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
   Inject,
+  ForbiddenException,
 } from '@nestjs/common';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import * as cacheManager from 'cache-manager';
@@ -24,11 +25,13 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AssignManagerDto } from './dto/assign-manager.dto';
 import { CreateDepartmentDto } from './dto/create-department.dto';
 import { CreateWorkingLocationDto } from './dto/create-working-location.dto';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class OrganizationService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly notificationsService: NotificationsService,
     @Inject(CACHE_MANAGER) private cacheManager: cacheManager.Cache,
   ) {}
 
@@ -118,13 +121,16 @@ export class OrganizationService {
     // Unauthenticated callers (login page dropdown) get all locations , no cache ket by user
     const isSuperAdmin = actor?.roles.includes('SUPER_ADMIN') ?? false;
     const cacheKey = actor
-      ? q ? `working_locations_${actor.userId}_${q}` : `working_locations_${actor.userId}`
-      : q ? `working_locations_${q}`: `working_locations_public`;
+      ? q
+        ? `working_locations_${actor.userId}_${q}`
+        : `working_locations_${actor.userId}`
+      : q
+        ? `working_locations_${q}`
+        : `working_locations_public`;
 
     // Check if the result is already in cache
     const cached = await this.cacheManager.get(cacheKey);
     if (cached) return cached as any;
-
 
     const workingLocations = await this.prisma.working_locations.findMany({
       where: {
@@ -299,6 +305,7 @@ export class OrganizationService {
     });
 
     await this.cacheManager.del('working_locations');
+    this.notificationsService.broadcast({ type: 'departments_updated' });
 
     return {
       departments: departments.map((department) =>
@@ -315,15 +322,24 @@ export class OrganizationService {
   ) {
     let workingLocationId: bigint | undefined;
 
+    const isSuperAdmin = actor?.roles.includes('SUPER_ADMIN');
+
     if (workingLocationIdInput) {
       workingLocationId = await this.resolveWorkingLocationId(
         workingLocationIdInput,
       );
-    } else if (
-      actor &&
-      !actor.roles.includes('SUPER_ADMIN') &&
-      actor.working_location_id
-    ) {
+
+      if (
+        actor &&
+        !isSuperAdmin &&
+        actor.working_location_id &&
+        workingLocationId.toString() !== actor.working_location_id
+      ) {
+        throw new ForbiddenException(
+          'You can only access departments in your working location.',
+        );
+      }
+    } else if (actor && !isSuperAdmin && actor.working_location_id) {
       workingLocationId = BigInt(actor.working_location_id);
     }
 
@@ -417,6 +433,7 @@ export class OrganizationService {
     });
 
     await this.cacheManager.del('working_locations');
+    this.notificationsService.broadcast({ type: 'departments_updated' });
     return this.serializeDepartment(updated);
   }
 
@@ -493,6 +510,7 @@ export class OrganizationService {
     });
 
     await this.cacheManager.del('working_locations');
+    this.notificationsService.broadcast({ type: 'departments_updated' });
     return { message: 'Department deleted' };
   }
 
@@ -723,14 +741,12 @@ export class OrganizationService {
     actor: CurrentUserType,
     workingLocationId: bigint,
   ) {
-    if (actor.roles.some((role) => ['SUPER_ADMIN', 'ADMIN'].includes(role))) {
+    if (actor.roles.some((role) => ['SUPER_ADMIN'].includes(role))) {
       return;
     }
 
     if (
-      actor.roles.some((role) =>
-        ['BRANCH_MANAGER', 'MANAGER', 'ON_MANAGER'].includes(role),
-      ) &&
+      actor.roles.some((role) => ['BRANCH_MANAGER'].includes(role)) &&
       actor.working_location_id === workingLocationId.toString()
     ) {
       return;

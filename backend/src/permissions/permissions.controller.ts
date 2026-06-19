@@ -20,7 +20,7 @@ import { CreatePermissionDto } from './dto/create-permission.dto';
 import { PermissionsService } from './permissions.service';
 
 @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
-@Roles('SUPER_ADMIN', 'ADMIN')
+@Roles('SUPER_ADMIN', 'BRANCH_MANAGER')
 @Controller('permissions')
 export class PermissionsController {
   constructor(private readonly permissionsService: PermissionsService) {}

@@ -236,9 +236,9 @@ export class UsersService {
     return result;
   }
 
-  async findPendingApproval(qInput?: string) {
+  async findPendingApproval(actor: CurrentUserType, qInput?: string) {
     const q = normalizeSearch(qInput);
-    const cacheKey = `users:pending:${q ?? ''}`;
+    const cacheKey = `users:pending:${actor.userId}:${q ?? ''}`;
 
     const cached = await this.cacheManager.get(cacheKey);
     if (cached) return cached as any;
@@ -247,6 +247,7 @@ export class UsersService {
       where: {
         status: { in: [STATUS_USER.PENDING, STATUS_USER.INACTIVE] },
         deleted_at: null,
+        ...this.userScopeWhere(actor),
 
         ...(q
           ? {
@@ -322,30 +323,22 @@ export class UsersService {
       select: { name: true },
     });
 
-    const isManagerActor = actor.roles.some((r) =>
-      ['MANAGER', 'BRANCH_MANAGER', 'ON_MANAGER'].includes(r),
-    );
+    const isBranchManagerActor = actor.roles.includes('BRANCH_MANAGER');
     const isSuperAdminActor = actor.roles.includes('SUPER_ADMIN');
 
-    if (isManagerActor && !isSuperAdminActor) {
+    if (isBranchManagerActor && !isSuperAdminActor) {
       const isAssigningHighLevelRole = roles.some((r) =>
-        [
-          'MANAGER',
-          'BRANCH_MANAGER',
-          'ON_MANAGER',
-          'SUPER_ADMIN',
-          'ADMIN',
-        ].includes(r.name),
+        ['BRANCH_MANAGER', 'SUPER_ADMIN'].includes(r.name),
       );
       if (isAssigningHighLevelRole) {
         throw new BadRequestException(
-          'Managers cannot assign Manager or Admin roles.',
+          'Branch managers cannot assign Branch Manager or Super Admin roles.',
         );
       }
     }
 
     const isBranchManagerRole = roles.some((r) =>
-      ['BRANCH_MANAGER', 'MANAGER', 'ON_MANAGER'].includes(r.name),
+      ['BRANCH_MANAGER'].includes(r.name),
     );
 
     const departmentId = isBranchManagerRole
@@ -839,11 +832,11 @@ export class UsersService {
         message: `A transfer request has been initiated for ${user.first_name} ${user.last_name}.`,
         type: 'TRANSFER_REQUEST',
         referenceId: request.uuid,
-        metadata: { level: 'ADMIN' },
+        metadata: { level: 'SUPER_ADMIN' },
       });
       await this.prisma.transfer_requests.update({
         where: { id: request.id },
-        data: { current_level: 'ADMIN' },
+        data: { current_level: 'SUPER_ADMIN' },
       });
     }
 
@@ -873,7 +866,7 @@ export class UsersService {
       const updated = await this.prisma.transfer_requests.update({
         where: { id: request.id },
         data: {
-          current_level: 'ADMIN',
+          current_level: 'SUPER_ADMIN',
           history: ((request.history as any[]) || []).concat([
             {
               level: 'BRANCH_MANAGER',
@@ -892,13 +885,13 @@ export class UsersService {
           'A transfer request has been approved by the Branch Manager and requires final admin approval.',
         type: 'TRANSFER_REQUEST',
         referenceId: request.uuid,
-        metadata: { level: 'ADMIN' },
+        metadata: { level: 'SUPER_ADMIN' },
       });
 
       return this.serializeTransferRequest(updated);
     }
 
-    if (request.current_level === 'ADMIN') {
+    if (request.current_level === 'SUPER_ADMIN') {
       if (!isAdmin) {
         throw new ForbiddenException(
           'Only an Admin can finalize this transfer.',
@@ -923,7 +916,7 @@ export class UsersService {
             current_level: 'FINALIZED',
             history: ((request.history as any[]) || []).concat([
               {
-                level: 'ADMIN',
+                level: 'SUPER_ADMIN',
                 action: 'APPROVED',
                 by: actor.userId,
                 at: new Date().toISOString(),
@@ -1402,13 +1395,35 @@ export class UsersService {
 
     // 2. Expand implied permissions
     const impliedMap: Record<string, string[]> = {
-      'employees.create': ['employees.read', 'employees.update', 'employees.suspend', 'employees.transfer'],
-      'attendance.create': ['attendance.read', 'attendance.update', 'attendance.approve'],
+      'employees.create': [
+        'employees.read',
+        'employees.update',
+        'employees.suspend',
+        'employees.transfer',
+      ],
+      'attendance.create': [
+        'attendance.read',
+        'attendance.update',
+        'attendance.approve',
+      ],
       'payroll.create': ['payroll.read', 'payroll.manage'],
       'payroll.manage': ['payroll.read', 'payroll.create', 'payroll.approve'],
-      'payment-structures.create': ['payment-structures.read', 'payment-structures.update', 'payment-structures.delete'],
-      'users.create': ['users.read', 'users.update', 'users.approve', 'users.suspend'],
-      'permissions.manage': ['permissions.read', 'permissions.create', 'permissions.assign'],
+      'payment-structures.create': [
+        'payment-structures.read',
+        'payment-structures.update',
+        'payment-structures.delete',
+      ],
+      'users.create': [
+        'users.read',
+        'users.update',
+        'users.approve',
+        'users.suspend',
+      ],
+      'permissions.manage': [
+        'permissions.read',
+        'permissions.create',
+        'permissions.assign',
+      ],
       'branches.manage': ['departments.manage', 'branch-manager.manage'],
     };
 
@@ -1418,7 +1433,10 @@ export class UsersService {
         if (!permissionMap.has(impliedKey)) {
           permissionMap.set(impliedKey, {
             permission_key: impliedKey,
-            name: impliedKey.split('.').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' '),
+            name: impliedKey
+              .split('.')
+              .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
+              .join(' '),
             source: 'implied',
           });
         }
@@ -1494,33 +1512,29 @@ export class UsersService {
   }
 
   private isSystemAdmin(actor?: CurrentUserType) {
-    return !!actor?.roles?.some((role) =>
-      ['SUPER_ADMIN', 'ADMIN'].includes(role),
-    );
+    return !!actor?.roles?.some((role) => ['SUPER_ADMIN'].includes(role));
   }
 
   private isBranchManager(actor?: CurrentUserType) {
-    return !!actor?.roles?.some((role) =>
-      ['BRANCH_MANAGER', 'MANAGER', 'ON_MANAGER'].includes(role),
-    );
+    return !!actor?.roles?.some((role) => ['BRANCH_MANAGER'].includes(role));
   }
 
   private userScopeWhere(actor: CurrentUserType) {
+    if (this.isSystemAdmin(actor)) {
+      return {};
+    }
+
     const baseWhere: any = {
       roles: {
         none: {
           role: {
             name: {
-              in: ['SUPER_ADMIN', 'ADMIN'],
+              in: ['SUPER_ADMIN'],
             },
           },
         },
       },
     };
-
-    if (this.isSystemAdmin(actor)) {
-      return baseWhere;
-    }
 
     if (this.isBranchManager(actor) && actor.working_location_id) {
       return {

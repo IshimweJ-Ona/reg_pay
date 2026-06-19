@@ -30,12 +30,12 @@ export class CreateEmployeeDto {
 
   @ApiPropertyOptional({
     example: 'johnmugisha@gmail.com',
-    description: 'Must be a valid @gmail.com or @reg.rw address.',
+    description: 'Must be a valid @gmail.com, @yahoo.com or @reg.rw address.',
   })
   @IsOptional()
   @IsString()
-  @Matches(/^[a-zA-Z0-9._%+-]+@(gmail\.com|reg\.com)$/, {
-    message: 'Email must be a valid @gmail.com or @reg.com address.',
+  @Matches(/^[a-zA-Z0-9._%+-]+@(gmail\.com|reg\.com|yahoo\.com|reg\.rw)$/, {
+    message: 'Email must be a valid @gmail.com, @yahoo.com or @reg.rw address.',
   })
   email?: string;
 
@@ -109,12 +109,18 @@ export class CreateEmployeeDto {
   employment_category_id?: string;
 
   // Unified update fields
-  @ApiPropertyOptional({ example: '500000', description: 'Basic salary or daily rate' })
+  @ApiPropertyOptional({
+    example: '500000',
+    description: 'Basic salary or daily rate',
+  })
   @IsOptional()
   @IsString()
   basic_salary?: string;
 
-  @ApiPropertyOptional({ example: '0', description: 'Daily rate for daily/custom categories' })
+  @ApiPropertyOptional({
+    example: '0',
+    description: 'Daily rate for daily/custom categories',
+  })
   @IsOptional()
   @IsString()
   daily_rate?: string;
@@ -124,16 +130,25 @@ export class CreateEmployeeDto {
   @IsString()
   tax_percentage?: string;
 
-  @ApiPropertyOptional({ example: 30, description: 'Custom work days for contract' })
+  @ApiPropertyOptional({
+    example: 30,
+    description: 'Custom work days for contract',
+  })
   @IsOptional()
   custom_work_days?: number;
 
-  @ApiPropertyOptional({ example: 'Transport Allowance', description: 'Main allowance title' })
+  @ApiPropertyOptional({
+    example: 'Transport Allowance',
+    description: 'Main allowance title',
+  })
   @IsOptional()
   @IsString()
   allowance_title?: string;
 
-  @ApiPropertyOptional({ example: '50000', description: 'Main allowance amount' })
+  @ApiPropertyOptional({
+    example: '50000',
+    description: 'Main allowance amount',
+  })
   @IsOptional()
   @IsString()
   allowance_amount?: string;
