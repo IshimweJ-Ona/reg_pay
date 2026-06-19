@@ -55,7 +55,7 @@ export function Sidebar({ type }: SidebarProps) {
     { name: 'Tax Setup', href: `${basePath}/payments`, icon: Percent, roles: ['SUPER_ADMIN'] },
     { name: 'Notifications', href: `${basePath}/notifications`, icon: Bell },
     { name: 'Profile', href: `${basePath}/profile`, icon: UserCircle },
-    { name: 'Settings', href: `${basePath}/settings`, icon: Settings },
+    { name: 'Settings', href: `${basePath}/settings`, icon: Settings, roles: ['SUPER_ADMIN'] },
   ];
 
   const userMenuItems: SidebarMenuItem[] = [

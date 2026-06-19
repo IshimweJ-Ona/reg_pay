@@ -47,6 +47,13 @@ export interface ResetPasswordPayload {
     confirmPassword: string;
 }
 
+export interface UpdateProfilePayload {
+    first_name?: string;
+    last_name?: string;
+    email?: string;
+    password?: string;
+}
+
 export interface JwtUser {
     sub: string;
     uuid?: string;
@@ -91,6 +98,11 @@ export const resetPassword = async (
 
 export const getMyProfile = async () => {
     const response = await api.get("/auth/me");
+    return response.data;
+};
+
+export const updateProfile = async (payload: UpdateProfilePayload) => {
+    const response = await api.patch("/auth/profile", payload);
     return response.data;
 };
 

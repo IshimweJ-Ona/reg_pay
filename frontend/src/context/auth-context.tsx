@@ -8,6 +8,7 @@ import {
   getMyProfile,
   login as loginRequest,
   logout as logoutRequest,
+  refreshToken,
   registerUser,
   saveTokens,
 } from '@/api/auth';
@@ -32,6 +33,7 @@ interface AuthContextType {
   isLoading: boolean;
   hasPermission: (permission: string) => boolean;
   accessToken: string | null;
+  refreshSession: (options?: { reload?: boolean }) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -76,6 +78,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const router = useRouter();
 
+  const applyProfile = (profileUser: any, fallback: User | null) => {
+    setUser({
+      id: fallback?.id ?? profileUser.id ?? profileUser.uuid,
+      uuid: profileUser.uuid,
+      name: `${profileUser.first_name} ${profileUser.last_name}`.trim(),
+      email: profileUser.email,
+      role: (profileUser.roles?.[0] ?? fallback?.role ?? 'USER') as UserRole,
+      roles: profileUser.roles ?? fallback?.roles ?? ['USER'],
+      status: (profileUser.status === 'ACTIVE' ? 'APPROVED' : profileUser.status) as any,
+      avatar_url: profileUser.avatar_url,
+      permissions: profileUser.permissions?.map((permission: any) => permission.key) ?? fallback?.permissions ?? [],
+      department: profileUser.department?.name,
+      location: profileUser.working_location?.name,
+      createdAt: fallback?.createdAt ?? new Date().toISOString(),
+    });
+  };
+
   useEffect(() => {
     const loadUser = async () => {
       const token = localStorage.getItem('accessToken');
@@ -99,20 +118,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const profile = await getMyProfile();
         const profileUser = profile?.profile;
         if (profileUser) {
-          setUser({
-            id: tokenUser?.id ?? profileUser.uuid,
-            uuid: profileUser.uuid,
-            name: `${profileUser.first_name} ${profileUser.last_name}`.trim(),
-            email: profileUser.email,
-            role: (profileUser.roles?.[0] ?? tokenUser?.role ?? 'USER') as UserRole,
-            roles: profileUser.roles ?? tokenUser?.roles ?? ['USER'],
-            status: (profileUser.status === 'ACTIVE' ? 'APPROVED' : profileUser.status) as any,
-            avatar_url: profileUser.avatar_url,
-            permissions: profileUser.permissions?.map((permission: any) => permission.key) ?? tokenUser?.permissions ?? [],
-            department: profileUser.department?.name,
-            location: profileUser.working_location?.name,
-            createdAt: tokenUser?.createdAt ?? new Date().toISOString(),
-          });
+          applyProfile(profileUser, tokenUser);
         }
       } catch {
         clearTokens();
@@ -188,6 +194,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     router.push('/auth/login');
   };
 
+  const refreshSession = async (options?: { reload?: boolean }) => {
+    const currentRefreshToken = localStorage.getItem('refreshToken');
+    if (currentRefreshToken) {
+      const tokens = await refreshToken(currentRefreshToken);
+      saveTokens(tokens);
+      setAccessToken(tokens.access_token);
+    }
+
+    const profile = await getMyProfile();
+    if (profile?.profile) {
+      applyProfile(profile.profile, user);
+    }
+
+    if (options?.reload) {
+      window.location.reload();
+    }
+  };
+
   const hasPermission = (permission: string) => {
     if (!user) return false;
     if (user.roles?.some((role) => ['SUPER_ADMIN'].includes(role))) return true;
@@ -195,7 +219,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, login, register, logout, isLoading, hasPermission, accessToken }}>
+    <AuthContext.Provider value={{ user, login, register, logout, isLoading, hasPermission, accessToken, refreshSession }}>
       {children}
     </AuthContext.Provider>
   );
