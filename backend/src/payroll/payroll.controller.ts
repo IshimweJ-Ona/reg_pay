@@ -6,8 +6,10 @@ import {
   Patch,
   Post,
   Query,
+  Res,
   UseGuards,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Permissions } from '../auth/decorators/permissions.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -57,6 +59,22 @@ export class PayrollController {
     @CurrentUser() actor: CurrentUserType,
   ) {
     return this.payrollService.findBatch(uuid, actor);
+  }
+
+  @Permissions('payroll.read')
+  @Get('batches/:uuid/export')
+  async exportBatch(
+    @Param('uuid') uuid: string,
+    @CurrentUser() actor: CurrentUserType,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const exportFile = await this.payrollService.exportBatchCsv(uuid, actor);
+    response.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    response.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${exportFile.filename}"`,
+    );
+    return exportFile.content;
   }
 
   @Permissions('payroll.approve')

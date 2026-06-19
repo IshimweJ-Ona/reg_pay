@@ -3,21 +3,27 @@ import {
   Get,
   Patch,
   Param,
-  UseGuards,
-  Sse,
+  Query,
   Req,
+  Sse,
+  UseGuards,
   UsePipes,
   ValidationPipe,
-  Query,
 } from '@nestjs/common';
-import { StreamQueryDto } from './dto/stream-query.dto';
-import { Observable, Subject, merge, interval } from 'rxjs';
+import type { Request } from 'express';
+import { Observable, merge, interval } from 'rxjs';
 import { map } from 'rxjs/operators';
-import { NotificationsService } from './notifications.service';
+
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { CurrentUserType } from 'src/auth/types/current-user.type';
+import { StreamQueryDto } from './dto/stream-query.dto';
+import { NotificationsService } from './notifications.service';
+
+type AuthenticatedRequest = Request & {
+  user: CurrentUserType;
+};
 
 @Controller('notifications')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -25,14 +31,18 @@ export class NotificationsController {
   constructor(private readonly notificationsService: NotificationsService) {}
 
   @Sse('stream')
+  @UseGuards(JwtAuthGuard)
   @UsePipes(
     new ValidationPipe({
       whitelist: true,
       forbidNonWhitelisted: false,
     }),
   )
-  stream(@Req() req): Observable<MessageEvent> {
-    const userId = req.user.uuid;
+  stream(
+    @Query() _query: StreamQueryDto,
+    @Req() req: AuthenticatedRequest,
+  ): Observable<MessageEvent> {
+    const userId = req.user.userId;
     const subject = this.notificationsService.addClient(userId);
 
     req.on('close', () =>

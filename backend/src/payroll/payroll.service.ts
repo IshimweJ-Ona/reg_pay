@@ -305,8 +305,7 @@ export class PayrollService {
       });
     });
 
-    // Invalidate payroll batches cache when a new batch is created
-    await this.cacheManager.del('payroll:batches');
+    await this.clearPayrollCache();
 
     if (batch.status !== (PAYMENT_BATCH_STATUS as any).DRAFT) {
       await this.notificationsService.notifyBranchManager(workingLocationId, {
@@ -403,6 +402,7 @@ export class PayrollService {
       },
     );
 
+    await this.clearPayrollCache();
     return this.serializeBatch(updated);
   }
 
@@ -416,6 +416,70 @@ export class PayrollService {
     this.ensureActorCanUseWorkingLocation(actor, batch.working_location_id);
 
     return this.serializeBatch(batch);
+  }
+
+  async exportBatchCsv(uuid: string, actor: CurrentUserType) {
+    const batch = await this.prisma.payment_batches.findUnique({
+      where: { uuid },
+      include: this.batchIncludes(),
+    });
+
+    if (!batch) throw new NotFoundException('Payroll batch not found.');
+    this.ensureActorCanUseWorkingLocation(actor, batch.working_location_id);
+
+    const headers = [
+      'Batch Code',
+      'Period',
+      'Working Location',
+      'Employee Name',
+      'Phone Number',
+      'Department',
+      'Item Status',
+      'Gross Pay',
+      'Base Pay',
+      'Allowances',
+      'Tax',
+      'Deductions',
+      'Net Pay',
+      'Attendance Days',
+      'Payment Method',
+      'Transaction Status',
+    ];
+
+    const rows = batch.items.map((item) => {
+      const employeeName =
+        `${item.employee?.first_name ?? ''} ${item.employee?.last_name ?? ''}`.trim();
+      return [
+        batch.batch_code,
+        `${batch.payroll_month}/${batch.payroll_year}`,
+        batch.working_location?.name ?? batch.working_location_id.toString(),
+        employeeName,
+        item.employee?.phone_number ?? '',
+        item.employee?.department?.name ??
+          item.employee?.department_id?.toString() ??
+          '',
+        item.status,
+        item.transaction?.gross_amount?.toString() ?? '0',
+        item.transaction?.base_amount?.toString() ?? '0',
+        item.transaction?.allowance_amount?.toString() ?? '0',
+        item.transaction?.tax_amount?.toString() ?? '0',
+        item.transaction?.total_deductions?.toString() ?? '0',
+        item.transaction?.net_amount?.toString() ?? '0',
+        item.transaction?.attendance_days?.toString() ?? '0',
+        item.transaction?.payment_method ?? '',
+        item.transaction?.transaction_status ?? '',
+      ];
+    });
+
+    const content = [headers, ...rows]
+      .map((row) => row.map((value) => this.csvCell(value)).join(','))
+      .join('\r\n');
+    const date = new Date().toISOString().slice(0, 10);
+
+    return {
+      filename: `reg-pay-batch-${batch.uuid}-${date}.csv`,
+      content,
+    };
   }
 
   async approveItem(
@@ -463,6 +527,7 @@ export class PayrollService {
       return saved;
     });
 
+    await this.clearPayrollCache();
     return this.serializeItem(approved);
   }
 
@@ -555,6 +620,7 @@ export class PayrollService {
       });
     }
 
+    await this.clearPayrollCache();
     return this.serializeItem(rejected);
   }
 
@@ -593,6 +659,38 @@ export class PayrollService {
     const approved = await this.prisma.$transaction(async (tx) => {
       // Handle partial rejection split-off BEFORE updating the batch
       await this.handlePartialRejectionSplit(tx, batch.id, actor);
+
+      if (isFinal) {
+        const payableItems = await tx.payment_batch_items.findMany({
+          where: {
+            payment_batch_id: batch.id,
+            status: { not: PAYMENT_BATCH_STATUS.REJECTED },
+          },
+          select: { transaction_id: true },
+        });
+
+        await tx.payment_batch_items.updateMany({
+          where: {
+            payment_batch_id: batch.id,
+            status: { not: PAYMENT_BATCH_STATUS.REJECTED },
+          },
+          data: {
+            status: PAYMENT_BATCH_STATUS.APPROVED,
+            approved_by: BigInt(actor.userId),
+            approved_at: new Date(),
+          },
+        });
+
+        await tx.transactions.updateMany({
+          where: {
+            id: { in: payableItems.map((item) => item.transaction_id) },
+          },
+          data: {
+            transaction_status: TRANSACTION_STATUS.PAID,
+            approved_by: BigInt(actor.userId),
+          },
+        });
+      }
 
       await tx.payroll_batch_approval_actions.create({
         data: {
@@ -668,6 +766,7 @@ export class PayrollService {
       });
     }
 
+    await this.clearPayrollCache();
     return this.serializeBatch(approved);
   }
 
@@ -918,7 +1017,39 @@ export class PayrollService {
       },
     });
 
+    await this.clearPayrollCache();
     return this.serializeBatch(rejected);
+  }
+
+  private async clearPayrollCache() {
+    try {
+      const store = (this.cacheManager as any).store;
+      if (store && typeof store.keys === 'function') {
+        const keys = await store.keys();
+        for (const key of keys) {
+          if (typeof key === 'string' && key.startsWith('payroll:batches')) {
+            await this.cacheManager.del(key);
+          }
+        }
+      } else {
+        await this.cacheManager.del('payroll:batches');
+      }
+    } catch {
+      await this.cacheManager.del('payroll:batches');
+    }
+  }
+
+  private csvCell(value: unknown) {
+    const text =
+      value === null || value === undefined
+        ? ''
+        : typeof value === 'object'
+          ? JSON.stringify(value)
+          : String(value);
+    if (/[",\r\n]/.test(text)) {
+      return `"${text.replace(/"/g, '""')}"`;
+    }
+    return text;
   }
 
   private async resolveWorkingLocationId(value: string) {
@@ -1257,7 +1388,7 @@ export class PayrollService {
 
   private itemIncludes() {
     return {
-      employee: true,
+      employee: { include: { department: true } },
       transaction: true,
       approvedBy: true,
     };
@@ -1321,6 +1452,14 @@ export class PayrollService {
               item.employee.working_location_id?.toString() ?? null,
             employment_category_id:
               item.employee.employment_category_id?.toString() ?? null,
+            department: item.employee.department
+              ? {
+                  ...item.employee.department,
+                  id: item.employee.department.id.toString(),
+                  working_location_id:
+                    item.employee.department.working_location_id.toString(),
+                }
+              : null,
           }
         : undefined,
       transaction: item.transaction

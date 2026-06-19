@@ -23,7 +23,7 @@ export class ResetPasswordDto {
         'two digits, and one special character (@$!%*?&).',
     },
   )
-  password: string;
+  password!: string;
 
   @ApiProp4({
     example: 'MyNewP@ssw0rd1!',
@@ -31,5 +31,5 @@ export class ResetPasswordDto {
   })
   @Str4()
   @NotEmpty4()
-  confirmPassword: string;
+  confirmPassword!: string;
 }

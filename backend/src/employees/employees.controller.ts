@@ -36,7 +36,6 @@ import {
   TransferRequestEntity,
 } from './entities/employee.entity';
 import { EmployeesService } from './employees.service';
-import { CreateDeductionTypeDto } from 'src/payment-structures/dto/create-deduction-type.dto';
 
 @ApiTags('employees')
 @ApiBearerAuth()

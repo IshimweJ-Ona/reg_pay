@@ -9,7 +9,7 @@ export class LoginDto {
   })
   @IsString()
   @IsNotEmpty()
-  identifier: string;
+  identifier!: string;
 
   @ApiProperty({
     example: 'MyP@ssw0rd1!',
@@ -17,5 +17,5 @@ export class LoginDto {
   })
   @IsString()
   @IsNotEmpty()
-  password: string;
+  password!: string;
 }

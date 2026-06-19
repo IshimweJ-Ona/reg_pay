@@ -11,5 +11,5 @@ export class ForgotPasswordDto {
   })
   @Str3()
   @NotEmpty3()
-  identifier: string;
+  identifier!: string;
 }

@@ -46,9 +46,8 @@ export class EmployeesService {
 
   async create(dto: CreateEmployeeDto, actor?: CurrentUserType) {
     const managerScoped =
-      actor?.roles?.some((role) =>
-        ['BRANCH_MANAGER'].includes(role),
-      ) && !this.isSystemAdmin(actor);
+      actor?.roles?.some((role) => ['BRANCH_MANAGER'].includes(role)) &&
+      !this.isSystemAdmin(actor);
     const effectiveWorkingLocationInput =
       managerScoped && actor?.working_location_id
         ? actor.working_location_id
@@ -117,7 +116,6 @@ export class EmployeesService {
           );
         }
       }
-
 
       const created = await tx.employees.create({
         data: {
@@ -403,9 +401,16 @@ export class EmployeesService {
         include: this.employeeIncludes(),
       });
 
-      // 2. Update Salary (Payment Structure) if provided
+      // 2. Update Salary (Payment Structure) if salary/category fields changed
       const targetCategoryId = categoryId ?? employee.employment_category_id;
-      if (targetCategoryId && (dto.basic_salary || dto.daily_rate)) {
+      const hasSalaryPatch =
+        dto.basic_salary !== undefined ||
+        dto.daily_rate !== undefined ||
+        dto.tax_percentage !== undefined ||
+        dto.custom_work_days !== undefined ||
+        categoryId !== undefined;
+
+      if (targetCategoryId && hasSalaryPatch) {
         const category = await tx.employment_categories.findUnique({
           where: { id: targetCategoryId },
         });
@@ -415,16 +420,23 @@ export class EmployeesService {
             where: { employee_id: employee.id, effective_to: null },
           });
 
+          const isMonthly = category.payroll_frequency === 'MONTHLY';
+          const isCustom = category.payroll_frequency === 'CUSTOM';
+
           const structureData = {
             payroll_frequency: category.payroll_frequency,
-            basic_salary:
-              dto.basic_salary ?? currentStructure?.basic_salary ?? '0',
-            daily_rate: dto.daily_rate ?? currentStructure?.daily_rate ?? '0',
+            basic_salary: isMonthly
+              ? (dto.basic_salary ?? currentStructure?.basic_salary ?? '0')
+              : '0',
+            daily_rate: isMonthly
+              ? '0'
+              : (dto.daily_rate ?? currentStructure?.daily_rate ?? '0'),
             overtime_rate: currentStructure?.overtime_rate ?? '0',
             tax_percentage:
               dto.tax_percentage ?? currentStructure?.tax_percentage ?? '0',
-            custom_work_days:
-              dto.custom_work_days ?? currentStructure?.custom_work_days,
+            custom_work_days: isCustom
+              ? (dto.custom_work_days ?? currentStructure?.custom_work_days)
+              : null,
           };
 
           if (
@@ -501,7 +513,10 @@ export class EmployeesService {
         },
       });
 
-      return saved;
+      return tx.employees.findUniqueOrThrow({
+        where: { id: saved.id },
+        include: this.employeeIncludes(),
+      });
     });
 
     await this.clearEmployeeCache();
@@ -596,9 +611,7 @@ export class EmployeesService {
     }
 
     const isAdmin = this.isSystemAdmin(actor);
-    const isBM = actor.roles.some((role) =>
-      ['BRANCH_MANAGER'].includes(role),
-    );
+    const isBM = actor.roles.some((role) => ['BRANCH_MANAGER'].includes(role));
 
     if (request.current_level === 'BRANCH_MANAGER') {
       if (!isBM && !isAdmin) {
@@ -1051,9 +1064,7 @@ export class EmployeesService {
   }
 
   private isSystemAdmin(actor?: CurrentUserType) {
-    return !!actor?.roles?.some((role) =>
-      ['SUPER_ADMIN'].includes(role),
-    );
+    return !!actor?.roles?.some((role) => ['SUPER_ADMIN'].includes(role));
   }
 
   private employeeScopeWhere(actor: CurrentUserType) {
@@ -1108,11 +1119,11 @@ export class EmployeesService {
       ['BRANCH_MANAGER'].includes(role),
     );
 
-    const isAttendanceActor = 
-        actor.permissions.includes('attendance.create') ||
-        actor.permissions.includes('attendance.read') ||
-        actor.permissions.includes('attendance.update') ||
-        actor.permissions.includes('attendance.approve');
+    const isAttendanceActor =
+      actor.permissions.includes('attendance.create') ||
+      actor.permissions.includes('attendance.read') ||
+      actor.permissions.includes('attendance.update') ||
+      actor.permissions.includes('attendance.approve');
 
     if (
       !isBranchManager &&
@@ -1150,9 +1161,9 @@ export class EmployeesService {
     );
 
     const isAttendanceActor =
-        actor.permissions.includes('attendance.create') ||
-        actor.permissions.includes('attendance.update');
-    
+      actor.permissions.includes('attendance.create') ||
+      actor.permissions.includes('attendance.update');
+
     if (
       !isBranchManager &&
       isAttendanceActor &&

@@ -5,17 +5,17 @@ export class RequestTransferDto {
   @ApiProperty({ example: 'loc-uuid' })
   @IsString()
   @IsNotEmpty()
-  working_location_id: string;
+  working_location_id!: string;
 
   @ApiPropertyOptional({ example: 'dept-uuid' })
   @IsOptional()
   @IsString()
-  department_id?: string;
+  department_id!: string;
 
   @ApiPropertyOptional({
     example: 'Rejected transfer emplyee has been suspended',
   })
   @IsOptional()
   @IsString()
-  reason?: string;
+  reason!: string;
 }

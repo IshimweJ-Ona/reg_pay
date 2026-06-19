@@ -152,6 +152,7 @@ CREATE TABLE `Roles` (
     `name` VARCHAR(100) NOT NULL,
     `description` TEXT NULL,
     `level_order` INTEGER NULL,
+    `is_system_role` BOOLEAN NOT NULL DEFAULT false,
     `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
 
     UNIQUE INDEX `Roles_uuid_key`(`uuid`),
@@ -286,6 +287,7 @@ CREATE TABLE `Employees` (
     INDEX `idx_employee_national_id`(`national_id`),
     INDEX `idx_employee_deleted_at`(`deleted_at`),
     INDEX `idx_employee_uuid`(`uuid`),
+    UNIQUE INDEX `Employees_first_name_last_name_working_location_id_departmen_key`(`first_name`, `last_name`, `working_location_id`, `department_id`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -467,7 +469,7 @@ CREATE TABLE `Payment_batches` (
     `total_allowances` DECIMAL(18, 2) NOT NULL DEFAULT 0.00,
     `total_deductions` DECIMAL(18, 2) NOT NULL DEFAULT 0.00,
     `total_tax` DECIMAL(18, 2) NOT NULL DEFAULT 0.00,
-    `status` ENUM('PENDING', 'IN_REVIEW', 'MANAGER_APPROVED', 'APPROVED', 'REJECTED') NOT NULL,
+    `status` ENUM('DRAFT', 'PENDING', 'IN_REVIEW', 'MANAGER_APPROVED', 'APPROVED', 'REJECTED', 'REJECTED_BY_BRANCH_MANAGER', 'REJECTED_BY_SUPER_ADMIN') NOT NULL,
     `current_approval_step` INTEGER NOT NULL DEFAULT 1,
     `rejected_reason` TEXT NULL,
     `submitted_by` BIGINT NOT NULL,
@@ -507,7 +509,7 @@ CREATE TABLE `Payment_batch_items` (
     `payment_batch_id` BIGINT NOT NULL,
     `employee_id` BIGINT NOT NULL,
     `transaction_id` BIGINT NOT NULL,
-    `status` ENUM('PENDING', 'IN_REVIEW', 'MANAGER_APPROVED', 'APPROVED', 'REJECTED') NOT NULL,
+    `status` ENUM('DRAFT', 'PENDING', 'IN_REVIEW', 'MANAGER_APPROVED', 'APPROVED', 'REJECTED', 'REJECTED_BY_BRANCH_MANAGER', 'REJECTED_BY_SUPER_ADMIN') NOT NULL,
     `rejection_reason` TEXT NULL,
     `approved_by` BIGINT NULL,
     `approved_at` DATETIME(3) NULL,
@@ -602,6 +604,22 @@ CREATE TABLE `Audit_logs` (
     INDEX `idx_audit_entity_id`(`entity_id`),
     INDEX `idx_audit_action`(`action`),
     INDEX `idx_audit_created`(`created_at`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `Monthly_taxes` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `uuid` CHAR(36) NOT NULL,
+    `name` VARCHAR(100) NOT NULL,
+    `rate` DECIMAL(5, 2) NOT NULL,
+    `effective_from` DATE NOT NULL,
+    `is_active` BOOLEAN NOT NULL DEFAULT true,
+    `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `updated_at` DATETIME(3) NOT NULL,
+
+    UNIQUE INDEX `Monthly_taxes_uuid_key`(`uuid`),
+    INDEX `idx_monthly_tax_active`(`is_active`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 

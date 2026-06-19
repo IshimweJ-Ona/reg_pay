@@ -85,7 +85,7 @@ export class RegisterDto {
   })
   @IsOptional()
   @IsString()
-  working_location_id?: string;
+  working_location_id!: string;
 
   @ApiPropertyOptional({
     example: ['b2c3d4e5-f6a7-8901-bcde-f12345678901'],
@@ -95,7 +95,7 @@ export class RegisterDto {
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
-  role_ids?: string[];
+  role_ids!: string[];
 
   @ApiPropertyOptional({
     example: ['d4e5f6a7-8901-bcde-f123-456789012345'],
@@ -105,5 +105,5 @@ export class RegisterDto {
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
-  permission_ids?: string[];
+  permission_ids!: string[];
 }

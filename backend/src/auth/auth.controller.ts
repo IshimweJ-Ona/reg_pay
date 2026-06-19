@@ -5,6 +5,7 @@ import {
   HttpCode,
   HttpStatus,
   Param,
+  Patch,
   Post,
   Req,
   UseGuards,
@@ -36,6 +37,12 @@ import {
 } from './entities/auth.entity';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import type { CurrentUserType } from './types/current-user.type';
+
+type UpdateProfileDto = {
+  first_name?: string;
+  last_name?: string;
+  password?: string;
+};
 
 /**
  * Handles all authentication and session management for Reg Pay.
@@ -285,8 +292,9 @@ export class AuthController {
     status: 400,
     description: 'Validation error — identifier field is missing or empty.',
   })
-  forgotPassword(@Body('identifier') identifier: string) {
-    return this.authService.forgotPassword(identifier);
+  @ApiBody({ type: ForgotPasswordDto })
+  forgotPassword(@Body() dto: ForgotPasswordDto) {
+    return this.authService.forgotPassword(dto.identifier);
   }
 
   // POST /auth/reset-password/:token
@@ -326,7 +334,28 @@ export class AuthController {
     description:
       'Reset token is invalid or has expired (tokens expire after 1 hour).',
   })
-  resetPassword(@Param('token') token: string, @Body() dto: any) {
+  @ApiBody({ type: ResetPasswordDto })
+  resetPassword(@Param('token') token: string, @Body() dto: ResetPasswordDto) {
     return this.authService.resetPassword(token, dto);
+  }
+
+  // PATCH /auth/profile
+  @Patch('profile')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Update current authenticated user name and/or password',
+    description:
+      'Allows users to update their first name, last name, and optionally reset/change their password.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Profile updated successfully.',
+  })
+  updateProfile(
+    @CurrentUser() user: CurrentUserType,
+    @Body() dto: UpdateProfileDto,
+  ) {
+    return this.authService.updateProfile(user.userId, dto);
   }
 }

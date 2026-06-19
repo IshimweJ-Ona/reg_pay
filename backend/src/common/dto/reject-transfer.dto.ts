@@ -5,5 +5,5 @@ export class RejectTransferDto {
   @ApiProperty({ example: 'Not eligible for transfer' })
   @IsString()
   @IsNotEmpty()
-  rejection_reason: string;
+  rejection_reason!: string;
 }

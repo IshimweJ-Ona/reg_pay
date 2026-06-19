@@ -413,6 +413,7 @@ model Roles {
   description String? @db.Text
 
   level_order Int?
+  is_system_role Boolean @default(false)
 
   created_at DateTime @default(now())
 

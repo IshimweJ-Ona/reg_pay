@@ -19,6 +19,7 @@ import {
 } from './constants/auth.constants';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
 import { JwtPayload } from './interfaces/jwt-payload.interface';
 import { comparePassword, hashPassword } from './utils/password.util';
 import {
@@ -36,6 +37,12 @@ type TokenPair = {
   access_token: string;
   refresh_token: string;
   expires_in: string;
+};
+
+type UpdateProfileDto = {
+  first_name?: string;
+  last_name?: string;
+  password?: string;
 };
 
 @Injectable()
@@ -265,7 +272,7 @@ export class AuthService {
     };
   }
 
-  async resetPassword(token: string, dto: any) {
+  async resetPassword(token: string, dto: ResetPasswordDto) {
     const user = await this.prisma.users.findFirst({
       where: {
         reset_password_token: token,
@@ -796,5 +803,46 @@ export class AuthService {
         ip_address: ipAddress,
       },
     });
+  }
+
+  async updateProfile(userId: string, dto: UpdateProfileDto) {
+    const data: any = {};
+    if (dto.first_name !== undefined) {
+      if (!dto.first_name.trim()) {
+        throw new ConflictException('First name cannot be empty.');
+      }
+      data.first_name = dto.first_name.trim();
+    }
+    if (dto.last_name !== undefined) {
+      if (!dto.last_name.trim()) {
+        throw new ConflictException('Last name cannot be empty.');
+      }
+      data.last_name = dto.last_name.trim();
+    }
+    if (dto.password) {
+      const passwordRegex =
+        /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{5,}$/;
+      if (!passwordRegex.test(dto.password)) {
+        throw new ConflictException(
+          'Password does not meet security requirements.',
+        );
+      }
+      data.password_hash = await hashPassword(dto.password);
+    }
+
+    const user = await this.prisma.users.update({
+      where: { id: BigInt(userId) },
+      data,
+    });
+
+    return {
+      message: 'Profile updated successfully',
+      user: {
+        uuid: user.uuid,
+        first_name: user.first_name,
+        last_name: user.last_name,
+        email: user.email,
+      },
+    };
   }
 }

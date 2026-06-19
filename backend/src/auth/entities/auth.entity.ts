@@ -8,7 +8,7 @@ export class TokenPairEntity {
       'Short-lived JWT access token. Include in Authorization header as: Bearer <token>. ' +
       'Express in 15 minutes.',
   })
-  access_token: string;
+  access_token!: string;
 
   @ApiProperty({
     example: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
@@ -16,10 +16,10 @@ export class TokenPairEntity {
       'Long-lived refresh token. Use POST /auth/refresh to obtain a new access token ' +
       'without re-entering credentials. Expires in 7 days.',
   })
-  refresh_token: string;
+  refresh_token!: string;
 
   @ApiProperty({ example: '15 minutes', description: 'Access token lifetime.' })
-  expires_in: string;
+  expires_in!: string;
 }
 
 //Login response with token pair and redirect metadata
@@ -31,7 +31,7 @@ export class LoginResponseEntity extends TokenPairEntity {
       'Possible prefixes: /super_admin, /manager, /hr, /finance, /attendant, /users. ' +
       'If the account is still `PENDING`, returns `/auth/pendind/<uuid>.`',
   })
-  redirectUrl: string;
+  redirectUrl!: string;
 
   @ApiProperty({
     example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
@@ -44,37 +44,37 @@ export class LoginResponseEntity extends TokenPairEntity {
     example: 'ACTIVE',
     description: 'Current account status at time of login.',
   })
-  status: string;
+  status!: string;
 }
 
 // Register response with usersnapshot and pending message
 class RegisteredUserSnapshot {
   @ApiProperty({ example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890' })
-  uuid: string;
+  uuid!: string;
 
   @ApiProperty({ example: 'Jean' })
-  first_name: string;
+  first_name!: string;
 
   @ApiProperty({ example: 'Mugisha' })
-  last_name: string;
+  last_name!: string;
 
   @ApiProperty({ example: 'jean.mugisha1@gmail.com' })
-  email: string;
+  email!: string;
 
   @ApiProperty({ example: '+250788123456' })
-  phone_number: string;
+  phone_number!: string;
 
   @ApiProperty({ enum: ['PENDING'], example: 'PENDING' })
-  status: string;
+  status!: string;
 
   @ApiProperty({ example: '2024-06-01T10:00:00.000Z' })
-  created_at: Date;
+  created_at!: Date;
 
   @ApiPropertyOptional({ example: { name: 'REG Musanze Branch' } })
-  working_location: { name: string } | null;
+  working_location!: { name: string } | null;
 
   @ApiPropertyOptional({ example: { name: 'Administration' } })
-  department: { name: string } | null;
+  department!: { name: string } | null;
 }
 
 export class RegisterResponseEntity {
@@ -84,82 +84,82 @@ export class RegisterResponseEntity {
       'and grant permission to you to operate on the system. Come back after 72hrs ' +
       'if not yet then contact this email {admin@reg.rw}. Thank you for registring.',
   })
-  message: string;
+  message!: string;
 
   @ApiProperty({ type: RegisteredUserSnapshot })
-  user: RegisteredUserSnapshot;
+  user!: RegisteredUserSnapshot;
 }
 
 // GET /auth/me
 class PermissionEntry {
   @ApiProperty({ example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890' })
-  uuid: string;
+  uuid!: string;
 
   @ApiProperty({ example: 'employees.create' })
-  key: string;
+  key!: string;
 
   @ApiProperty({ example: 'Create Employees' })
-  name: string;
+  name!: string;
 
   @ApiProperty({ example: 'EMPLOYEES' })
-  module_name: string;
+  module_name!: string;
 
   @ApiProperty({
     enum: ['role', 'direct', 'override'],
     example: 'role',
     description: 'How this permission was granted to the user.',
   })
-  source: string;
+  source!: string;
 
   @ApiProperty({ example: '2024-01-10T08:00:00.000Z' })
-  granted_at: Date;
+  granted_at!: Date;
 
   @ApiPropertyOptional({ description: 'Populated when source is "direct".' })
-  granted_by: { uuid: string; email: string; phone_number: string } | null;
+  granted_by!: { uuid: string; email: string; phone_number: string } | null;
 }
 
 class UserProfile {
   @ApiProperty({ example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890' })
-  uuid: string;
+  uuid!: string;
 
   @ApiProperty({ example: 'Jean' })
-  first_name: string;
+  first_name!: string;
 
   @ApiProperty({ example: 'Mugisha' })
-  last_name: string;
+  last_name!: string;
 
   @ApiProperty({ example: 'jean.mugisha1@gmail.com' })
-  email: string;
+  email!: string;
 
   @ApiProperty({ example: '+250788123456' })
-  phone_number: string;
+  phone_number!: string;
 
   @ApiProperty({ enum: ['MALE', 'FEMALE'], example: 'MALE' })
-  gender: string;
+  gender!: string;
 
   @ApiProperty({
     enum: ['ACTIVE', 'INACTIVE', 'SUSPENDED', 'PENDING', 'REJECTED'],
     example: 'ACTIVE',
   })
-  status: string;
+  status!: string;
 
   @ApiPropertyOptional({
     example: 'https://randomuser.me/api/portraits/men/1.jpg',
   })
-  avatar_url: string | null;
+  avatar_url!: string | null;
 
   @ApiPropertyOptional()
-  working_location: { uuid: string; name: string; type: string } | null;
+  working_location!: { uuid: string; name: string; type: string } | null;
 
   @ApiPropertyOptional()
-  department: { uuid: string; name: string; code: string } | null;
+  department!: { uuid: string; name: string; code: string } | null;
 
   @ApiProperty({
     type: [String],
     example: ['BRANCH_MANAGER'],
     description: 'All roles assigned to this user.',
   })
-  roles: string[];
+  roles!: string[];
 
   @ApiProperty({
     type: [PermissionEntry],
@@ -167,40 +167,40 @@ class UserProfile {
       'Effective permissions after merging role permissions, direct grants, ' +
       'and overrides. This is what the guards actually check.',
   })
-  permissions: PermissionEntry[];
+  permissions!: PermissionEntry[];
 }
 
 class AdminContact {
   @ApiProperty({ example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890' })
-  uuid: string;
+  uuid!: string;
 
   @ApiProperty({ example: 'System' })
-  first_name: string;
+  first_name!: string;
 
   @ApiProperty({ example: 'Administrator' })
-  last_name: string;
+  last_name!: string;
 
   @ApiProperty({ example: 'admin@reg.rw' })
-  email: string;
+  email!: string;
 
   @ApiProperty({ example: '+250788000000' })
-  phone_number: string;
+  phone_number!: string;
 }
 
 class ActivityLogEntry {
   @ApiProperty({ example: '42' })
-  id: string;
+  id!: string;
 
   @ApiProperty({ example: 'AUTH' })
-  module_name: string;
+  module_name!: string;
 
   @ApiProperty({
     enum: ['CREATE', 'UPDATE', 'DELETE', 'LOGIN', 'FAILED_LOGIN'],
   })
-  activity_type: string;
+  activity_type!: string;
 
   @ApiProperty({ example: 'User logged in.' })
-  activity_description: string;
+  activity_description!: string;
 
   @ApiProperty({
     enum: [
@@ -213,34 +213,34 @@ class ActivityLogEntry {
       'DENIED',
     ],
   })
-  action: string;
+  action!: string;
 
   @ApiProperty({ example: '2024-06-01T10:30:00.000Z' })
-  created_at: Date;
+  created_at!: Date;
 }
 
 export class MeResponseEntity {
   @ApiProperty({ type: UserProfile })
-  profile: UserProfile;
+  profile!: UserProfile;
 
   @ApiProperty({
     type: [AdminContact],
     description:
       'All active SUPER_ADMIN users shown for `PENDING` users to know who to contact.',
   })
-  admin_contacts: AdminContact[];
+  admin_contacts!: AdminContact[];
 
   @ApiProperty({
     type: [ActivityLogEntry],
     description: 'Last 100 audit lo entries for this user.',
   })
-  activity_history: ActivityLogEntry[];
+  activity_history!: ActivityLogEntry[];
 }
 
 //Forgot password response
 export class ForgotPasswordResponseEntity {
   @ApiProperty({ example: 'Reset token generated.' })
-  message: string;
+  message!: string;
 
   @ApiPropertyOptional({
     example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
@@ -249,17 +249,17 @@ export class ForgotPasswordResponseEntity {
       'delivery is not yet configured. In production this field will be removed ' +
       'and the token will be sent via email.',
   })
-  reset_token?: string;
+  reset_token!: string;
 
   @ApiPropertyOptional({
     example: 'Jean Mugisha',
     description: 'Full name of the user the token was generated for.',
   })
-  user_name?: string;
+  user_name!: string;
 }
 
 // eneric message response — logout, reset-password
 export class MessageResponseEntity {
   @ApiProperty({ example: 'Operation completed successfully.' })
-  message: string;
+  message!: string;
 }
