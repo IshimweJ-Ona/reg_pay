@@ -4,12 +4,13 @@ import React, { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
+import Link from 'next/link';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
-import { ShieldCheck, LogIn, UserPlus, Eye, EyeOff } from 'lucide-react';
+import { LogIn, UserPlus, Eye, EyeOff } from 'lucide-react';
 import Image from 'next/image';
 import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/hooks/use-toast';
@@ -218,7 +219,9 @@ export default function LoginPage() {
                         />
                         <label htmlFor="remember" className="text-sm font-medium text-[#1e1b4b] cursor-pointer">Remember me</label>
                       </div>
-                      <button type="button" className="text-sm font-medium text-red-600 hover:underline">Forgot password?</button>
+                      <Button asChild variant="link" className="h-auto p-0 text-sm font-medium text-red-600">
+                        <Link href="/auth/forgot-password">Forgot password?</Link>
+                      </Button>
                     </div>
                     <Button type="submit" className="w-full font-semibold h-11 bg-red-600 hover:bg-red-700 active:shadow-[0_0_15px_rgba(30,27,75,0.4)] transition-all" disabled={loginForm.formState.isSubmitting}>
                       <LogIn className="mr-2 h-4 w-4" /> Sign In

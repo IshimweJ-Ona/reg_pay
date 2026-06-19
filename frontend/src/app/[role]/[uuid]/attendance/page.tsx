@@ -4,11 +4,11 @@ import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { 
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow 
 } from "@/components/ui/table";
-import { Calendar, Search, Download, UserCheck, Clock, AlertTriangle, CheckCircle2, XCircle, FileSpreadsheet, Upload, History } from 'lucide-react';
+import { Search, Download, UserCheck, Clock, AlertTriangle, Upload, History } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { getTimeRecords, createTimeRecord, clockOutTimeRecord, bulkCreateTimeRecords, getTodayAttendance } from '@/api/attendance';
+import { getTimeRecords, bulkCreateTimeRecords, getTodayAttendance } from '@/api/attendance';
 import { getEmployees } from '@/api/employees';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { exportToCSV, exportToExcel } from '@/lib/export-utils';

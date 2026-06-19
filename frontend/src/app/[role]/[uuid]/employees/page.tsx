@@ -66,6 +66,11 @@ const formatRwf = (value: number) => `RWF ${value.toLocaleString()}`;
 
 function mapApiEmployee(item: any, attendanceByEmployee = new Map<string, any[]>()): Employee {
   const structure = item.payment_structures?.[0] || {};
+  const payrollFrequency = structure.payroll_frequency ?? item.employment_category?.payroll_frequency;
+  const salary =
+    payrollFrequency === 'MONTHLY'
+      ? Number(structure.basic_salary ?? 0)
+      : Number(structure.daily_rate ?? structure.basic_salary ?? 0);
   const timeRecords = attendanceByEmployee.get(String(item.id)) ?? [];
   const presentCount = timeRecords.filter((record) => record.attendance_status === 'PRESENT').length;
   const latestRecord = [...timeRecords].sort(
@@ -82,7 +87,7 @@ function mapApiEmployee(item: any, attendanceByEmployee = new Map<string, any[]>
     fullName: `${item.first_name || ''} ${item.last_name || ''}`.trim() || 'Unknown Name',
     department: item.department?.name ?? 'Unassigned',
     location: item.working_location?.name ?? 'Unassigned',
-    salary: Number(structure.basic_salary ?? structure.daily_rate ?? 0),
+    salary,
     status: item.status || 'ACTIVE',
     attendanceRate: timeRecords.length ? Math.round((presentCount / timeRecords.length) * 100) : 0,
     lastAttendanceDate: latestRecord?.attendance_date,
@@ -428,19 +433,6 @@ export default function EmployeeDirectoryPage() {
         : "No changes detected, but record was synchronized.";
 
       if (selectedFrequency) {
-        // We still call these for backward compatibility or if they have extra logic, 
-        // but the backend update already handles most of this now with UpdateEmployeeDto
-        await createPaymentStructure({
-          employee_id: editingEmployee.bigIntId,
-          payroll_frequency: selectedFrequency,
-          basic_salary: newEmployee.basic_salary || '0',
-          daily_rate: newEmployee.daily_rate || '0',
-          overtime_rate: '0',
-          tax_percentage: newEmployee.tax_percentage || '0',
-          custom_work_days: newEmployee.custom_work_days ? Number(newEmployee.custom_work_days) : undefined,
-          effective_from: new Date().toISOString().slice(0, 10),
-        });
-
         const canAssignAllowance =
           selectedFrequency === 'MONTHLY' ||
           (selectedFrequency === 'CUSTOM' &&
@@ -612,9 +604,6 @@ export default function EmployeeDirectoryPage() {
       category.uuid === newEmployee.employment_category_id,
   );
   const selectedFrequency = selectedCategory?.payroll_frequency;
-  const canAssignAllowance =
-    selectedFrequency === 'MONTHLY' ||
-    (selectedFrequency === 'CUSTOM' && Number(newEmployee.custom_work_days) > 21);
   const isAttendant = user?.roles?.includes('ATTENDANT') ?? false;
   const canCreateEmployee = hasPermission('employees.create') && !isAttendant;
   const canUpdateEmployee = hasPermission('employees.update') && !isAttendant;

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
@@ -8,11 +8,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
-import { ShieldCheck, Lock, Eye, EyeOff, Loader2 } from 'lucide-react';
+import { Lock, Eye, EyeOff, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import Image from 'next/image';
 import { useParams, useRouter } from 'next/navigation';
-import axios from '@/api/axios';
+import { resetPassword } from '@/api/auth';
 
 const resetSchema = z.object({
   password: z.string().regex(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{5,}$/, "Min 5 chars, 2 digits, 1 uppercase, 1 lowercase, 1 symbol"),
@@ -27,11 +27,7 @@ export default function ResetPasswordPage() {
   const router = useRouter();
   const { toast } = useToast();
   const [showPassword, setShowPassword] = useState(false);
-  const [userName, setUserName] = useState<string>('');
   const [isLoading, setIsLoading] = useState(false);
-
-  // In a real flow, we might fetch user info by token first
-  // For now we'll just show the form
 
   const form = useForm<z.infer<typeof resetSchema>>({
     resolver: zodResolver(resetSchema),
@@ -41,7 +37,11 @@ export default function ResetPasswordPage() {
   const onSubmit = async (values: z.infer<typeof resetSchema>) => {
     setIsLoading(true);
     try {
-      await axios.post(`/auth/reset-password/${token}`, values);
+      const resetToken = Array.isArray(token) ? token[0] : token;
+      if (!resetToken) {
+        throw new Error("Missing reset token.");
+      }
+      await resetPassword(resetToken, values);
       toast({ title: "Success", description: "Password reset successfully. You can now login." });
       router.push('/auth/login');
     } catch (error: any) {
@@ -100,7 +100,6 @@ export default function ResetPasswordPage() {
             />
           </div>
           <h1 className="text-3xl font-headline font-bold text-white mb-2">Change your password</h1>
-          {userName && <p className="text-white/80 font-medium">Welcome back, {userName}</p>}
         </div>
 
         <Card className="shadow-2xl border-none bg-white">

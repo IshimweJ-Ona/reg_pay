@@ -2,16 +2,15 @@
 "use client";
 
 import React, { useEffect, useState } from 'react';
-import { Bell, Check, Clock, AlertCircle, Search, Filter } from 'lucide-react';
+import { Bell, Check, AlertCircle, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Input } from '@/components/ui/input';
 import { getNotifications, markAsRead, markAllAsRead, Notification } from '@/api/notifications';
 import { approveUser, rejectUser } from '@/api/users';
 import { approvePayrollBatch, rejectPayrollBatch } from '@/api/payroll';
 import { useToast } from '@/hooks/use-toast';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 
 export default function NotificationsPage() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
@@ -48,7 +47,7 @@ export default function NotificationsPage() {
       await markAsRead(nUuid);
       toast({ variant: "destructive", title: "Account denied" });
       await loadNotifications();
-    } catch (error: any) {
+    } catch {
       toast({ variant: "destructive", title: "Denial failed" });
     }
   };
@@ -59,7 +58,7 @@ export default function NotificationsPage() {
       await markAsRead(nUuid);
       toast({ title: "Payroll approved" });
       await loadNotifications();
-    } catch (error: any) {
+    } catch {
       toast({ variant: "destructive", title: "Approval failed" });
     }
   };

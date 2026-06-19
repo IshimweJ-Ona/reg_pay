@@ -1,7 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState, useRef } from 'react';
-import { useSearchParams } from 'next/navigation';
+import React, { useEffect, useState, useRef } from 'react';
 import { 
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow 
 } from "@/components/ui/table";
@@ -9,14 +8,13 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { 
-  Search, MoreVertical, CheckCircle, 
-  Ban, UserPlus, Shield, Fingerprint, Calendar, Edit, Trash2, Power, PowerOff, Image as ImageIcon, Upload, X
+  Search, MoreVertical,
+  Ban, UserPlus, Shield, Edit, Trash2, Power, Image as ImageIcon, Upload, X
 } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -48,15 +46,13 @@ import {
 } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import { User, UserStatus } from '@/types/auth';
+import { User } from '@/types/auth';
 import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/hooks/use-toast';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { approveUser, getUsers, rejectUser, suspendUser, reactivateUser, updateUserPermissionOverride, bulkUploadProfileImages, assignUserRoles } from '@/api/users';
-import { getWorkingLocations, getDepartments } from '@/api/working_locations';
+import { getUsers, suspendUser, reactivateUser, updateUserPermissionOverride, bulkUploadProfileImages, assignUserRoles } from '@/api/users';
 import { getRoles } from '@/api/roles';
 import { getPermissions } from '@/api/permissions';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { userFriendlyError } from '@/lib/error-message';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { getAvatarUrl, cn } from '@/lib/utils';
@@ -94,12 +90,9 @@ export default function UsersManagementPage() {
 
 function UsersManagementContent() {
   const { user: currentUser } = useAuth();
-  const searchParams = useSearchParams();
   const [users, setUsers] = useState<User[]>([]);
   const [roles, setRoles] = useState<any[]>([]);
   const [allPermissions, setAllPermissions] = useState<any[]>([]);
-  const [locations, setLocations] = useState<any[]>([]);
-  const [departments, setDepartments] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [isEditSheetOpen, setIsEditSheetOpen] = useState(false);
@@ -108,33 +101,22 @@ function UsersManagementContent() {
   const [userToDelete, setUserToDelete] = useState<string | null>(null);
   const [uploadingFiles, setUploadingFiles] = useState<File[]>([]);
   const [isUploading, setIsUploading] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
+  const [, setIsSaving] = useState(false);
   
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const assignableRoles = useMemo(
-    () => roles.filter((role) => {
-        if (role.name === 'SUPER_ADMIN') return false;
-        if (role.name === 'BRANCH_MANAGER' && currentUser?.role !== 'SUPER_ADMIN') return false;
-        return true;
-    }),
-    [roles, currentUser]
-  );
-  
   const loadData = async () => {
     try {
-      const [usersData, rolesData, locsData, permsData] = await Promise.all([
+      const [usersData, rolesData, permsData] = await Promise.all([
         getUsers(),
         getRoles(),
-        getWorkingLocations(),
         getPermissions()
       ]);
       const userList = usersData.users || usersData;
       setUsers(userList.map(mapApiUser));
       setRoles(rolesData);
       setAllPermissions(permsData);
-      setLocations(locsData.working_locations || locsData);
     } catch (error: any) {
       toast({
         variant: "destructive",

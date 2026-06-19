@@ -21,8 +21,6 @@ import { createPayrollBatch } from '@/api/payroll';
 import { getDepartments, getWorkingLocations } from '@/api/working_locations';
 import { useAuth } from '@/context/auth-context';
 
-const formatRwf = (value: number) => `RWF ${value.toLocaleString()}`;
-
 export default function NewPayrollBatchPage() {
   const router = useRouter();
   const params = useParams();

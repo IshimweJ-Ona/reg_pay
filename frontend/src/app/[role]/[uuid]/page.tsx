@@ -1,9 +1,9 @@
 
 "use client";
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Users, FileCheck, AlertCircle, TrendingUp, Activity, Clock, ShieldAlert, Bell, FileText, Calendar, ChevronRight, Plus, Building2, MapPin, Receipt, Wallet } from 'lucide-react';
+import { Users, FileCheck, AlertCircle, Activity, Clock, ShieldAlert, Bell, FileText, Calendar, ChevronRight, Plus } from 'lucide-react';
 import { useAuth, isAdminRole } from '@/context/auth-context';
 import { getEmployees } from '@/api/employees';
 import { getPayrollBatches } from '@/api/payroll';
@@ -20,7 +20,6 @@ export default function DashboardPage() {
   const params = useParams();
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [batches, setBatches] = useState<any[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
 
   const role = params.role as string;
   const uuid = params.uuid as string;
@@ -29,7 +28,6 @@ export default function DashboardPage() {
   useEffect(() => {
     async function loadData() {
       if (!isAdminRole(user?.role)) {
-        setIsLoading(false);
         return;
       }
       try {
@@ -42,7 +40,6 @@ export default function DashboardPage() {
       } catch (error) {
         console.error('Dashboard data load failed:', error);
       } finally {
-        setIsLoading(false);
       }
     }
     if (user) loadData();

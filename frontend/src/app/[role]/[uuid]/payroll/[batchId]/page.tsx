@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { 
   ArrowLeft, FileText, Users,
   CheckCircle2, XCircle, Clock, MessageSquare, Download, Save
@@ -23,8 +23,7 @@ import {
 } from "@/components/ui/dialog";
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
-import { approvePayrollBatch, getPayrollBatch, rejectPayrollBatch, submitPayrollBatch, rejectPayrollItem } from '@/api/payroll';
-import { PermissionGate } from '@/components/auth/permission-gate';
+import { approvePayrollBatch, downloadPayrollBatchExport, getPayrollBatch, rejectPayrollBatch, submitPayrollBatch, rejectPayrollItem } from '@/api/payroll';
 import { useAuth } from '@/context/auth-context';
 
 const formatRwf = (value: number) => `RWF ${value.toLocaleString()}`;
@@ -94,6 +93,19 @@ export default function PayrollBatchDetailsPage() {
     }
   };
 
+  const handleExport = async () => {
+    try {
+      await downloadPayrollBatchExport(batchId);
+      toast({ title: 'Export ready', description: 'The payroll batch CSV has been downloaded.' });
+    } catch (error: any) {
+      toast({
+        variant: 'destructive',
+        title: 'Export failed',
+        description: error?.response?.data?.message ?? 'Could not download this payroll batch.',
+      });
+    }
+  };
+
   if (!batch) return <div className="p-8 text-sm text-muted-foreground">Loading payroll batch...</div>;
 
   const roles = user?.roles ?? [];
@@ -130,7 +142,7 @@ export default function PayrollBatchDetailsPage() {
               <Save className="h-4 w-4" /> {batch.status.startsWith('REJECTED') ? 'Resubmit for Review' : 'Submit for Review'}
             </Button>
           )}
-          <Button variant="outline" className="gap-2">
+          <Button variant="outline" className="gap-2" onClick={handleExport}>
             <Download className="h-4 w-4" /> Export Assets
           </Button>
           {canApprove && (

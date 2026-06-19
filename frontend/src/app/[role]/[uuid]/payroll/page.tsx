@@ -1,12 +1,12 @@
 "use client";
 
 import React, { useEffect, useState } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { 
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow 
 } from "@/components/ui/table";
 import { 
-  Plus, Search, Filter, Download, FileText, 
+  Plus, Search, Download, FileText, 
   MoreVertical, Eye, CheckCircle, XCircle, Clock, Wallet
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -23,7 +23,7 @@ import {
 import { PermissionGate } from '@/components/auth/permission-gate';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { approvePayrollBatch, getPayrollBatches, rejectPayrollBatch } from '@/api/payroll';
+import { approvePayrollBatch, downloadPayrollBatchExport, getPayrollBatches, rejectPayrollBatch } from '@/api/payroll';
 import { exportToCSV, exportToExcel } from '@/lib/export-utils';
 import { useToast } from '@/hooks/use-toast';
 import { PendingBatchesModal } from '@/components/payroll/pending-batches-modal';
@@ -136,6 +136,19 @@ export default function PayrollAdminPage() {
         variant: 'destructive',
         title: 'Rejection failed',
         description: error?.response?.data?.message ?? 'Please review the payroll details and try again.',
+      });
+    }
+  };
+
+  const handleBatchExport = async (batch: PayrollBatch) => {
+    try {
+      await downloadPayrollBatchExport(batch.id);
+      toast({ title: 'Export ready', description: `${batch.batchId} has been downloaded.` });
+    } catch (error: any) {
+      toast({
+        variant: 'destructive',
+        title: 'Export failed',
+        description: error?.response?.data?.message ?? 'Could not download this payroll batch.',
       });
     }
   };
@@ -269,6 +282,9 @@ export default function PayrollAdminPage() {
                           <Eye className="mr-2 h-4 w-4" /> View Details
                         </DropdownMenuItem>
                       </Link>
+                      <DropdownMenuItem onClick={() => handleBatchExport(batch)}>
+                        <Download className="mr-2 h-4 w-4" /> Export CSV
+                      </DropdownMenuItem>
                       <PermissionGate permission="payroll.approve">
                         <DropdownMenuItem className="text-emerald-600" onClick={() => handleApprove(batch)}>
                           <CheckCircle className="mr-2 h-4 w-4" /> Approve

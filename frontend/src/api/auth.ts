@@ -32,6 +32,21 @@ export interface LoginResponse extends TokenPair {
     status: string;
 }
 
+export interface ForgotPasswordPayload {
+    identifier: string;
+}
+
+export interface ForgotPasswordResponse {
+    message: string;
+    reset_token?: string;
+    user_name?: string;
+}
+
+export interface ResetPasswordPayload {
+    password: string;
+    confirmPassword: string;
+}
+
 export interface JwtUser {
     sub: string;
     uuid?: string;
@@ -56,6 +71,21 @@ export const login = async (payload: LoginPayload): Promise<LoginResponse> => {
 
 export const registerUser = async (payload: RegisterUserPayload) => {
     const response = await api.post("/auth/register", payload);
+    return response.data;
+};
+
+export const forgotPassword = async (
+    payload: ForgotPasswordPayload,
+): Promise<ForgotPasswordResponse> => {
+    const response = await api.post<ForgotPasswordResponse>("/auth/forgot-password", payload);
+    return response.data;
+};
+
+export const resetPassword = async (
+    token: string,
+    payload: ResetPasswordPayload,
+) => {
+    const response = await api.post(`/auth/reset-password/${token}`, payload);
     return response.data;
 };
 

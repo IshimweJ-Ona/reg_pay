@@ -8,7 +8,6 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Separator } from "@/components/ui/separator";
 import { useToast } from '@/hooks/use-toast';
 import { Save, User as UserIcon, Mail, Shield, Camera } from 'lucide-react';
 import { getAvatarUrl } from '@/lib/utils';

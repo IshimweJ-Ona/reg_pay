@@ -31,6 +31,24 @@ export const getPayrollBatch = async (uuid: string) => {
     return response.data;
 };
 
+export const downloadPayrollBatchExport = async (uuid: string) => {
+    const response = await api.get(`/payroll/batches/${uuid}/export`, {
+        responseType: "blob",
+    });
+    const disposition = response.headers["content-disposition"] as string | undefined;
+    const filename =
+        disposition?.match(/filename="?([^"]+)"?/)?.[1] ??
+        `reg-pay-batch-${uuid}-${new Date().toISOString().slice(0, 10)}.csv`;
+    const url = URL.createObjectURL(response.data);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+};
+
 export const approvePayrollBatch = async (uuid: string, comment?: string) => {
     const response = await api.patch(`/payroll/batches/${uuid}/approve`, {
         comment,

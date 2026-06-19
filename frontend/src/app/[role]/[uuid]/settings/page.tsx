@@ -48,8 +48,7 @@ export default function SystemSettingsPage() {
     hqPhone: ''
   });
   const { toast } = useToast();
-  const { hasPermission, user } = useAuth();
-  const canManageDeductions = hasPermission('payment-structures.update');
+  const { user } = useAuth();
   const isSuperAdmin = (user?.roles ?? []).includes('SUPER_ADMIN');
 
   useEffect(() => {
@@ -180,12 +179,6 @@ export default function SystemSettingsPage() {
       await updateMonthlyTax(newTax.name.trim(), Number(newTax.rate));
       await refreshMonthlyTaxes();
       
-      const now = new Date();
-      const isFirstDay = now.getDate() === 1;
-      const effectiveMonth = isFirstDay 
-        ? now.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
-        : new Date(now.getFullYear(), now.getMonth() + 1, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
-
       setNewTax({ name: '', rate: '' });
       toast({
         title: 'Tax updated',

@@ -40,7 +40,7 @@ import { userFriendlyError } from '@/lib/error-message';
 import { useAuth } from '@/context/auth-context';
 
 export default function DepartmentsManagementPage() {
-  const { user, hasPermission } = useAuth();
+  const { user } = useAuth();
   const [departments, setDepartments] = useState<any[]>([]);
   const [editingDep, setEditingDep] = useState<any | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -106,7 +106,6 @@ export default function DepartmentsManagementPage() {
     dept.code.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const canManageDepartments = hasPermission('departments.manage');
   const isSuperAdmin = user?.roles?.includes('SUPER_ADMIN');
 
   const handleCreate = async () => {
