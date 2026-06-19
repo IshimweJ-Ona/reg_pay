@@ -1,36 +1,48 @@
 services:
   db:
     image: mysql:8.0
-    restart: always
-    environment:
-      MYSQL_DATABASE: reg_pay
-      MYSQL_ROOT_PASSWORD: root
+    restart: unless-stopped
+    env_file:
+      - env.docker
     ports:
       - "3306:3306"
     volumes:
       - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
   backend:
-    build: ./backend
-    restart: always
+    build:
+      context: ./backend
+    restart: unless-stopped
+    env_file:
+      - env.docker
     ports:
-      - "3000:3000"
-    environment:
-      DATABASE_URL: "mysql://root:root@db:3306/reg_pay"
-      JWT_ACCESS_SECRET: "your_secret_here"
-      JWT_REFRESH_SECRET: "your_refresh_secret_here"
+      - "5000:5000"
+    volumes:
+      - backend_uploads:/app/uploads
     depends_on:
-      - db
+      db:
+        condition: service_healthy
 
   frontend:
-    build: ./frontend
-    restart: always
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:5000
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      NEXT_PUBLIC_API_URL: http://localhost:5000
     ports:
       - "3001:3001"
-    environment:
-      NEXT_PUBLIC_API_URL: "http://localhost:3000"
     depends_on:
       - backend
 
 volumes:
   db_data:
+  backend_uploads:

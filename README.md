@@ -21,9 +21,19 @@ Comprehensive Payroll and Employee Management System for REG (Rwanda Energy Grou
 ### Using Docker (Recommended)
 
 1. Clone the repository.
-2. Run `docker-compose up --build`.
-3. The backend will be available at `http://localhost:3000`.
-4. The frontend will be available at `http://localhost:3001`.
+2. Start Docker Desktop.
+3. Review `env.docker` and change the local passwords/secrets if needed.
+4. Run `docker compose --env-file env.docker up --build`.
+5. The backend will be available at `http://localhost:5000`.
+6. The frontend will be available at `http://localhost:3001`.
+
+Docker starts MySQL on `localhost:3306`. The MySQL image creates the `reg_pay` database and grants `reg_pay_user` access to it. On backend startup, Docker runs Prisma migrations, generates the Prisma client, runs `prisma db seed`, then starts the API.
+
+Default seeded super admin from `env.docker`:
+
+- Email: `admin@reg.rw`
+- Phone: `+250788000000`
+- Password: `Admin@RegPay2024!`
 
 ### Local Development
 
