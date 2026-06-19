@@ -37,8 +37,10 @@ import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { getDepartments, createDepartment, updateDepartment, deleteDepartment } from '@/api/working_locations';
 import { userFriendlyError } from '@/lib/error-message';
+import { useAuth } from '@/context/auth-context';
 
 export default function DepartmentsManagementPage() {
+  const { user, hasPermission } = useAuth();
   const [departments, setDepartments] = useState<any[]>([]);
   const [editingDep, setEditingDep] = useState<any | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -62,14 +64,28 @@ export default function DepartmentsManagementPage() {
 
   useEffect(() => {
     loadData();
-  }, [toast]);
+
+    // Listen for global system updates (via SSE) to refresh data instantly
+    const handleSystemUpdate = (event: any) => {
+      if (event.detail?.type === 'departments_updated') {
+        console.log('Instant sync: Refreshing department database...');
+        loadData();
+      }
+    };
+
+    window.addEventListener('system_update', handleSystemUpdate);
+    return () => window.removeEventListener('system_update', handleSystemUpdate);
+  }, []);
 
   const departmentRows = useMemo(() => {
     const grouped = new Map<string, any>();
     departments.forEach((dept) => {
-      const key = dept.code || dept.name;
+      // In scoped view (for branch managers), we don't group, we show as is
+      const isSuperAdmin = user?.roles?.includes('SUPER_ADMIN');
+      const key = isSuperAdmin ? (dept.code || dept.name) : dept.uuid;
+      
       const existing = grouped.get(key);
-      if (existing) {
+      if (existing && isSuperAdmin) {
         existing.personnel += dept._count?.users ?? 0;
         existing.employees += dept._count?.employees ?? 0;
         existing.branchCount += 1;
@@ -83,12 +99,15 @@ export default function DepartmentsManagementPage() {
       }
     });
     return Array.from(grouped.values());
-  }, [departments]);
+  }, [departments, user]);
 
   const filteredDepartments = departmentRows.filter(dept => 
     dept.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
     dept.code.toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  const canManageDepartments = hasPermission('departments.manage');
+  const isSuperAdmin = user?.roles?.includes('SUPER_ADMIN');
 
   const handleCreate = async () => {
     try {
@@ -151,9 +170,11 @@ export default function DepartmentsManagementPage() {
           <h1 className="text-3xl font-headline font-bold">Department Directory</h1>
           <p className="text-muted-foreground">View department names and personnel totals across all branches.</p>
         </div>
-        <Button className="h-11 px-6 shadow-lg shadow-primary/20" onClick={() => setIsCreateModalOpen(true)}>
-          <Plus className="mr-2 h-4 w-4" /> Create Department
-        </Button>
+        {isSuperAdmin && (
+          <Button className="h-11 px-6 shadow-lg shadow-primary/20" onClick={() => setIsCreateModalOpen(true)}>
+            <Plus className="mr-2 h-4 w-4" /> Create Department
+          </Button>
+        )}
       </div>
 
       <div className="relative w-full max-w-md">
@@ -170,7 +191,7 @@ export default function DepartmentsManagementPage() {
         <Table>
           <TableHeader className="bg-secondary/50">
             <TableRow>
-              <TableHead className="font-bold">Department</TableHead>
+              <TableHead className="font-bold">Affiliation</TableHead>
               <TableHead className="font-bold">Code</TableHead>
               <TableHead className="font-bold">Personnel</TableHead>
               <TableHead className="font-bold">Branches</TableHead>
@@ -185,7 +206,14 @@ export default function DepartmentsManagementPage() {
                     <div className="h-10 w-10 rounded-xl bg-accent/5 flex items-center justify-center">
                       <Layers className="h-5 w-5 text-accent" />
                     </div>
-                    <span className="font-semibold">{dept.name}</span>
+                    <div className="flex flex-col gap-0.5">
+                      <span className="font-bold text-sm">{dept.name}</span>
+                      {dept.working_location && (
+                         <div className="flex items-center gap-1 text-[10px] text-muted-foreground font-medium">
+                            <Building2 className="h-3 w-3" /> {dept.working_location.name}
+                         </div>
+                      )}
+                    </div>
                   </div>
                 </TableCell>
                 <TableCell><Badge variant="secondary">{dept.code}</Badge></TableCell>
@@ -196,22 +224,24 @@ export default function DepartmentsManagementPage() {
                 </TableCell>
                 <TableCell className="text-sm text-muted-foreground">{dept.branchCount}</TableCell>
                 <TableCell>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon"><MoreVertical className="h-4 w-4" /></Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem onClick={() => setEditingDep(dept)}>
-                        <Edit className="mr-2 h-4 w-4" /> Edit Details
-                      </DropdownMenuItem>
-                      <DropdownMenuItem 
-                        className="text-destructive"
-                        onClick={() => setArchiveId(dept.id)}
-                      >
-                        <Trash2 className="mr-2 h-4 w-4" /> Archive Unit
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+                  {isSuperAdmin && (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="icon"><MoreVertical className="h-4 w-4" /></Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => setEditingDep(dept)}>
+                          <Edit className="mr-2 h-4 w-4" /> Edit Details
+                        </DropdownMenuItem>
+                        <DropdownMenuItem 
+                          className="text-destructive"
+                          onClick={() => setArchiveId(dept.id)}
+                        >
+                          <Trash2 className="mr-2 h-4 w-4" /> Archive Unit
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  )}
                 </TableCell>
               </TableRow>
             ))}

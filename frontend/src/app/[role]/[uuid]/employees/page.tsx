@@ -10,7 +10,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { 
   Search, Filter, UserPlus, Eye, 
-  MapPin, Building2, CreditCard, Activity, Edit, Trash2, MoreVertical
+  MapPin, Building2, CreditCard, Activity, Edit, Trash2, MoreVertical,
+  Loader2
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -43,6 +44,8 @@ import { useToast } from '@/hooks/use-toast';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Employee } from '@/types/employee';
 import { getEmployees, suspendEmployee, createEmployee, updateEmployee } from '@/api/employees';
+import { getTimeRecords } from '@/api/attendance';
+import { getWorkingLocations, getDepartments } from '@/api/working_locations';
 import { getAvatarUrl } from '@/lib/utils';
 import { 
   createAllowance, 
@@ -61,9 +64,15 @@ import { Download } from 'lucide-react';
 
 const formatRwf = (value: number) => `RWF ${value.toLocaleString()}`;
 
-function mapApiEmployee(item: any): Employee {
+function mapApiEmployee(item: any, attendanceByEmployee = new Map<string, any[]>()): Employee {
   const structure = item.payment_structures?.[0] || {};
-  const stats = item.attendance_stats || {};
+  const timeRecords = attendanceByEmployee.get(String(item.id)) ?? [];
+  const presentCount = timeRecords.filter((record) => record.attendance_status === 'PRESENT').length;
+  const latestRecord = [...timeRecords].sort(
+    (a, b) =>
+      new Date(b.attendance_date ?? b.created_at).getTime() -
+      new Date(a.attendance_date ?? a.created_at).getTime(),
+  )[0];
 
   return {
     id: item.uuid || '',
@@ -75,9 +84,9 @@ function mapApiEmployee(item: any): Employee {
     location: item.working_location?.name ?? 'Unassigned',
     salary: Number(structure.basic_salary ?? structure.daily_rate ?? 0),
     status: item.status || 'ACTIVE',
-    attendanceRate: stats.rate ?? 0,
-    lastAttendanceDate: stats.last_date,
-    lastAttendanceStatus: stats.last_status,
+    attendanceRate: timeRecords.length ? Math.round((presentCount / timeRecords.length) * 100) : 0,
+    lastAttendanceDate: latestRecord?.attendance_date,
+    lastAttendanceStatus: latestRecord?.attendance_status,
     employmentCategory: item.employment_category?.name ?? 'Unassigned',
     email: item.email ?? '',
     avatar_url: item.avatar_url,
@@ -103,6 +112,8 @@ export default function EmployeeDirectoryPage() {
   const [isAddingEmployee, setIsAddingEmployee] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [initialEmployeeData, setInitialEmployeeData] = useState<any>(null);
   
   const [locations, setLocations] = useState<any[]>([]);
   const [departments, setDepartments] = useState<any[]>([]);
@@ -152,12 +163,24 @@ export default function EmployeeDirectoryPage() {
   const loadEmployees = async () => {
     setIsLoading(true);
     try {
-      const response = await getEmployees();
+      const [response, timeRecords] = await Promise.all([
+        getEmployees(),
+        getTimeRecords().catch(() => []),
+      ]);
       const employeeList = response.employees || (Array.isArray(response) ? response : []);
-      
+      const attendanceByEmployee = new Map<string, any[]>();
+
+      (Array.isArray(timeRecords) ? timeRecords : []).forEach((record: any) => {
+        const employeeId = String(record.employee_id ?? record.employee?.id ?? '');
+        if (!employeeId) return;
+        const existing = attendanceByEmployee.get(employeeId) ?? [];
+        existing.push(record);
+        attendanceByEmployee.set(employeeId, existing);
+      });
+
       const uniqueEmployees = new Map<string, Employee>();
       employeeList.forEach((item: any) => {
-        const employee = mapApiEmployee(item);
+        const employee = mapApiEmployee(item, attendanceByEmployee);
         if (employee.uuid) uniqueEmployees.set(employee.uuid, employee);
       });
 
@@ -205,7 +228,7 @@ export default function EmployeeDirectoryPage() {
       const structure = await getActivePaymentStructureByEmployee(emp.bigIntId!);
       const allowances = await getAllowances(emp.bigIntId!);
       
-      setNewEmployee({
+      const data = {
         first_name: emp.fullName.split(' ')[0],
         last_name: emp.fullName.split(' ').slice(1).join(' '),
         email: emp.email,
@@ -222,7 +245,10 @@ export default function EmployeeDirectoryPage() {
         allowance_title: allowances[0]?.title || '',
         allowance_amount: allowances[0]?.amount?.toString() || '',
         allowance_description: allowances[0]?.description || '',
-      });
+      };
+      
+      setNewEmployee(data);
+      setInitialEmployeeData(data);
       
       if (emp.working_location_id) {
         const data = await getDepartments(emp.working_location_id);
@@ -317,38 +343,139 @@ export default function EmployeeDirectoryPage() {
 
   const handleUpdate = async () => {
     if (!editingEmployee) return;
+
+    // Duplicate prevention on the frontend (pre-flight check)
+    const email = newEmployee.email || undefined;
+    const phone_number = newEmployee.phone_number ? `+250${newEmployee.phone_number}` : undefined;
+    const national_id = newEmployee.national_id;
+
+    const duplicate = employees.find(
+      (e) =>
+        e.uuid !== editingEmployee.uuid &&
+        (
+          (email && e.email === email) ||
+          (phone_number && e.phone_number === phone_number) ||
+          (national_id && e.national_id === national_id)
+        ),
+    );
+
+    if (duplicate) {
+      toast({
+        variant: "destructive",
+        title: "Duplicate record found",
+        description: `Another employee (${duplicate.fullName}) already has this email, phone, or national ID.`,
+      });
+      return;
+    }
+
+    setIsSubmitting(true);
     try {
+      const selectedCategory = paymentCategories.find(
+        (category) =>
+          category.id === newEmployee.employment_category_id ||
+          category.uuid === newEmployee.employment_category_id,
+      );
+      const selectedFrequency = selectedCategory?.payroll_frequency;
+      
       const submissionData = {
         first_name: newEmployee.first_name,
         last_name: newEmployee.last_name,
-        email: newEmployee.email || undefined,
-        phone_number: newEmployee.phone_number ? `+250${newEmployee.phone_number}` : undefined,
-        national_id: newEmployee.national_id,
+        email,
+        phone_number,
+        national_id,
         gender: newEmployee.gender,
         department_id: newEmployee.department_id || undefined,
         working_location_id: newEmployee.working_location_id || undefined,
         employment_category_id: newEmployee.employment_category_id || undefined,
-        // Unified fields
-        basic_salary: newEmployee.basic_salary,
-        daily_rate: newEmployee.daily_rate,
-        tax_percentage: newEmployee.tax_percentage,
+        basic_salary: newEmployee.basic_salary || undefined,
+        daily_rate: newEmployee.daily_rate || undefined,
+        tax_percentage: newEmployee.tax_percentage || undefined,
         custom_work_days: newEmployee.custom_work_days ? Number(newEmployee.custom_work_days) : undefined,
-        allowance_title: newEmployee.allowance_title,
-        allowance_amount: newEmployee.allowance_amount,
+        allowance_title: newEmployee.allowance_title || undefined,
+        allowance_amount: newEmployee.allowance_amount || undefined,
       };
 
-      // Atomic update of Profile, Salary, and Benefits
       await updateEmployee(editingEmployee.id, submissionData);
 
+      const fieldLabels: Record<string, string> = {
+        first_name: "First Name",
+        last_name: "Last Name",
+        email: "Email",
+        phone_number: "Phone Number",
+        national_id: "National ID",
+        gender: "Gender",
+        department_id: "Department",
+        working_location_id: "Location",
+        employment_category_id: "Employment Category",
+        basic_salary: "Monthly Salary",
+        daily_rate: "Daily Rate",
+        tax_percentage: "Tax Percentage",
+        custom_work_days: "Contracted Days",
+        allowance_title: "Allowance Title",
+        allowance_amount: "Allowance Amount",
+      };
+
+      const changes = Object.keys(newEmployee)
+        .filter((key) => {
+          const newVal = String(newEmployee[key as keyof typeof newEmployee] || '');
+          const oldVal = String(initialEmployeeData?.[key] || '');
+          return newVal !== oldVal;
+        })
+        .map((key) => fieldLabels[key] || key);
+
+      const changeDescription = changes.length > 0 
+        ? `Updated: ${changes.join(', ')}` 
+        : "No changes detected, but record was synchronized.";
+
+      if (selectedFrequency) {
+        // We still call these for backward compatibility or if they have extra logic, 
+        // but the backend update already handles most of this now with UpdateEmployeeDto
+        await createPaymentStructure({
+          employee_id: editingEmployee.bigIntId,
+          payroll_frequency: selectedFrequency,
+          basic_salary: newEmployee.basic_salary || '0',
+          daily_rate: newEmployee.daily_rate || '0',
+          overtime_rate: '0',
+          tax_percentage: newEmployee.tax_percentage || '0',
+          custom_work_days: newEmployee.custom_work_days ? Number(newEmployee.custom_work_days) : undefined,
+          effective_from: new Date().toISOString().slice(0, 10),
+        });
+
+        const canAssignAllowance =
+          selectedFrequency === 'MONTHLY' ||
+          (selectedFrequency === 'CUSTOM' &&
+            Number(newEmployee.custom_work_days) > 21);
+
+        if (canAssignAllowance && newEmployee.allowance_title && newEmployee.allowance_amount) {
+          const currentAllowances = await getAllowances(editingEmployee.bigIntId!);
+          if (currentAllowances.length > 0) {
+            await updateAllowance(currentAllowances[0].uuid, {
+              title: newEmployee.allowance_title,
+              amount: newEmployee.allowance_amount,
+              description: newEmployee.allowance_description || undefined,
+            });
+          } else {
+            await createAllowance({
+              employee_id: editingEmployee.bigIntId!,
+              title: newEmployee.allowance_title,
+              amount: newEmployee.allowance_amount,
+              description: newEmployee.allowance_description || undefined,
+            });
+          }
+        }
+      }
+
       await loadEmployees();
-      toast({ title: "Employee Updated", description: "All records have been successfully synchronized in a single operation." });
+      toast({ title: "Employee Updated", description: changeDescription });
       setEditingEmployee(null);
     } catch (error: any) {
       toast({
         variant: "destructive",
         title: "Update failed",
-        description: error?.response?.data?.message || "Could not synchronize employee records.",
+        description: error?.response?.data?.message || "Could not update employee.",
       });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -359,11 +486,20 @@ export default function EmployeeDirectoryPage() {
     }
 
     try {
+      const selectedCategory = paymentCategories.find(
+        (category) =>
+          category.id === newEmployee.employment_category_id ||
+          category.uuid === newEmployee.employment_category_id,
+      );
+      const selectedFrequency = selectedCategory?.payroll_frequency;
       const isLocationScopedManager =
         user?.roles?.some((role) =>
-          ['MANAGER', 'ON_MANAGER', 'BRANCH_MANAGER'].includes(role),
-        ) && !user?.roles?.some((role) => ['SUPER_ADMIN', 'ADMIN'].includes(role));
-
+          ['BRANCH_MANAGER'].includes(role),
+        ) && !user?.roles?.some((role) => ['SUPER_ADMIN'].includes(role));
+      const canAssignAllowance =
+        selectedFrequency === 'MONTHLY' ||
+        (selectedFrequency === 'CUSTOM' &&
+          Number(newEmployee.custom_work_days) > 21);
       const submissionData = {
         first_name: newEmployee.first_name,
         last_name: newEmployee.last_name,
@@ -374,20 +510,33 @@ export default function EmployeeDirectoryPage() {
         department_id: newEmployee.department_id || undefined,
         employment_category_id: newEmployee.employment_category_id || undefined,
         ...(isLocationScopedManager ? {} : { working_location_id: newEmployee.working_location_id || undefined }),
-        // Unified fields
-        basic_salary: newEmployee.basic_salary,
-        daily_rate: newEmployee.daily_rate,
-        tax_percentage: newEmployee.tax_percentage,
-        custom_work_days: newEmployee.custom_work_days ? Number(newEmployee.custom_work_days) : undefined,
-        allowance_title: newEmployee.allowance_title,
-        allowance_amount: newEmployee.allowance_amount,
       };
+      const created = await createEmployee(submissionData);
+      const createdEmployee = created?.employee ?? created;
 
-      // Atomic creation
-      await createEmployee(submissionData);
-      
+      if (createdEmployee?.id && selectedFrequency) {
+        await createPaymentStructure({
+          employee_id: createdEmployee.id,
+          payroll_frequency: selectedFrequency,
+          basic_salary: newEmployee.basic_salary || '0',
+          daily_rate: newEmployee.daily_rate || '0',
+          overtime_rate: '0',
+          tax_percentage: newEmployee.tax_percentage || '0',
+          custom_work_days: newEmployee.custom_work_days ? Number(newEmployee.custom_work_days) : undefined,
+          effective_from: new Date().toISOString().slice(0, 10),
+        });
+
+        if (canAssignAllowance && newEmployee.allowance_title && newEmployee.allowance_amount) {
+          await createAllowance({
+            employee_id: createdEmployee.id,
+            title: newEmployee.allowance_title,
+            amount: newEmployee.allowance_amount,
+            description: newEmployee.allowance_description || undefined,
+          });
+        }
+      }
       await loadEmployees();
-      toast({ title: "Employee Created", description: "New employee with full salary profile has been added." });
+      toast({ title: "Employee Created", description: "New employee has been added to the system." });
       setIsAddingEmployee(false);
       setNewEmployee({
         first_name: '',
@@ -471,8 +620,8 @@ export default function EmployeeDirectoryPage() {
   const canUpdateEmployee = hasPermission('employees.update') && !isAttendant;
   const isLocationScopedManager =
     user?.roles?.some((role) =>
-      ['MANAGER', 'ON_MANAGER', 'BRANCH_MANAGER'].includes(role),
-    ) && !user?.roles?.some((role) => ['SUPER_ADMIN', 'ADMIN'].includes(role));
+      ['BRANCH_MANAGER'].includes(role),
+    ) && !user?.roles?.some((role) => ['SUPER_ADMIN'].includes(role));
 
   const handleExport = (type: 'csv' | 'excel') => {
     const sortedData = [...filtered].sort((a, b) => {
@@ -958,8 +1107,19 @@ export default function EmployeeDirectoryPage() {
                setIsAddingEmployee(false);
                setEditingEmployee(null);
             }}>Cancel</Button>
-            <Button className="flex-[2]" onClick={editingEmployee ? handleUpdate : handleCreate}>
-               {editingEmployee ? 'Update Employee' : 'Create Employee'}
+            <Button 
+              className="flex-[2]" 
+              onClick={editingEmployee ? handleUpdate : handleCreate}
+              disabled={isSubmitting}
+            >
+               {isSubmitting ? (
+                 <>
+                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                   {editingEmployee ? 'Updating...' : 'Creating...'}
+                 </>
+               ) : (
+                 editingEmployee ? 'Update Employee' : 'Create Employee'
+               )}
             </Button>
           </div>
         </SheetContent>

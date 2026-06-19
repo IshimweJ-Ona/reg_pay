@@ -64,13 +64,33 @@ export const suspendEmployee = async (uuid: string, reason?: string) => {
     return response.data;
 };
 
-// Update an existing employee's profile information
+export interface UpdateEmployeePayload {
+  first_name?: string;
+  last_name?: string;
+  email?: string;
+  phone_number?: string;
+  national_id?: string;
+  gender?: Gender;
+  hire_date?: string;
+  department_id?: string;
+  working_location_id?: string;
+  employment_category_id?: string;
+  // Salary fields
+  basic_salary?: string;
+  daily_rate?: string;
+  tax_percentage?: string;
+  custom_work_days?: number;
+  // Allowance fields
+  allowance_title?: string;
+  allowance_amount?: string;
+}
+
 export const updateEmployee = async (
-    uuid: string,
-    payload: Partial<CreateEmployeePayload>,
+  uuid: string,
+  payload: UpdateEmployeePayload,
 ) => {
-    const response = await api.patch(`/employees/${uuid}`, payload);
-    return response.data;
+  const response = await api.patch(`/employees/${uuid}`, payload);
+  return response.data;
 };
 
 export const deleteEmployee = async (uuid: string) => {

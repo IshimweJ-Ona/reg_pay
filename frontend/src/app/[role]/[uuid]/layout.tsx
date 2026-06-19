@@ -23,7 +23,19 @@ function DashboardLayoutContent({ children }: { children: React.ReactNode }) {
       // Security check: Ensure the UUID in the URL matches the logged in user
       if (user.uuid !== params.uuid) {
         // Redirect to their own dashboard if they try to access another UUID
-        const rolePath = isAdminRole(user.role) ? 'super_admin' : 'users'; // Simplified for now
+        let rolePath = 'users';
+        if (user.roles?.includes('SUPER_ADMIN')) {
+          rolePath = 'super_admin';
+        } else if (user.roles?.includes('BRANCH_MANAGER')) {
+          rolePath = 'branch_manager';
+        } else if (user.roles?.some(r => ['HR', 'HR_MANAGER', 'HR_ADMIN'].includes(r))) {
+          rolePath = 'hr';
+        } else if (user.roles?.some(r => ['ACCOUNTANT', 'FINANCE'].includes(r))) {
+          rolePath = 'finance';
+        } else if (user.roles?.includes('ATTENDANT')) {
+          rolePath = 'attendant';
+        }
+        
         router.push(`/${rolePath}/${user.uuid}`);
       }
     }

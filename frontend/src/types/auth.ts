@@ -1,7 +1,6 @@
 
 export type UserRole =
   | 'SUPER_ADMIN'
-  | 'ADMIN'
   | 'HR'
   | 'HR_ADMIN'
   | 'HR_MANAGER'
@@ -9,10 +8,7 @@ export type UserRole =
   | 'ATTENDANT'
   | 'FINANCE'
   | 'BRANCH_MANAGER'
-  | 'HQ_MANAGER'
   | 'DEPARTMENT_MANAGER'
-  | 'MANAGER'
-  | 'ON_MANAGER'
   | 'USER';
 
 export type UserStatus = 'PENDING' | 'APPROVED' | 'SUSPENDED' | 'REJECTED';

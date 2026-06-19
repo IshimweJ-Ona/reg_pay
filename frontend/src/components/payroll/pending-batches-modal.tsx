@@ -8,7 +8,7 @@ import {
   DialogTitle,
   DialogDescription,
   DialogFooter,
-} from "@/components/ui/card"; // Wait, I should use dialog.tsx but card was listed? No, dialog.tsx is there.
+} from "@/components/ui/dialog"; 
 import {
   Table,
   TableBody,

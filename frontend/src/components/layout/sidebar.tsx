@@ -41,7 +41,7 @@ export function Sidebar({ type }: SidebarProps) {
 
   const adminMenuItems: SidebarMenuItem[] = [
     { name: 'Dashboard', href: `${basePath}`, icon: LayoutDashboard },
-    { name: 'Users', href: `${basePath}/users`, icon: Users, permission: 'users.read' },
+    { name: 'Users', href: `${basePath}/users`, icon: Users, permission: 'users.read', roles: ['SUPER_ADMIN', 'BRANCH_MANAGER'] },
     { name: 'Employees', href: `${basePath}/employees`, icon: UserCircle, permission: 'employees.read' },
     { 
       name: 'Branches', 
@@ -61,7 +61,7 @@ export function Sidebar({ type }: SidebarProps) {
   const userMenuItems: SidebarMenuItem[] = [
     { name: 'Dashboard', href: `${basePath}`, icon: LayoutDashboard },
     { name: 'Employees', href: `${basePath}/employees`, icon: UserCircle, permission: 'employees.read' },
-    { name: 'Team Access', href: `${basePath}/users`, icon: Users, permission: 'users.read' },
+    { name: 'Team Access', href: `${basePath}/users`, icon: Users, permission: 'users.read', roles: ['SUPER_ADMIN', 'BRANCH_MANAGER'] },
     { name: 'My Payroll', href: `${basePath}/payroll`, icon: FileText, permission: 'payroll.read' },
     { name: 'Attendance', href: `${basePath}/attendance`, icon: Calendar, permission: 'attendance.read' },
     { name: 'Notifications', href: `${basePath}/notifications`, icon: Bell },

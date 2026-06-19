@@ -39,9 +39,6 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function isAdminRole(role?: string) {
   return [
     'SUPER_ADMIN',
-    'ADMIN',
-    'MANAGER',
-    'ON_MANAGER',
     'ACCOUNTANT',
     'HR',
     'ATTENDANT',
@@ -49,7 +46,6 @@ export function isAdminRole(role?: string) {
     'HR_MANAGER',
     'FINANCE',
     'BRANCH_MANAGER',
-    'HQ_MANAGER',
   ].includes(role ?? '');
 }
 
@@ -60,7 +56,7 @@ function mapJwtUser(token: string): User | null {
   const primaryRole = (payload.roles?.[0] ?? 'USER') as UserRole;
   return {
     id: payload.sub,
-    uuid: payload.uuid,
+    uuid: payload.uuid ?? '',
     name: `${payload.first_name} ${payload.last_name}`.trim(),
     email: payload.email,
     role: primaryRole,
@@ -84,6 +80,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const loadUser = async () => {
       const token = localStorage.getItem('accessToken');
       if (!token) {
+        setIsLoading(false);
+        return;
+      }
+
+      const payload = decodeJwt(token);
+      if (!payload || (payload.exp && payload.exp * 1000 < Date.now())) {
+        clearTokens();
         setIsLoading(false);
         return;
       }
@@ -123,6 +126,41 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     loadUser();
   }, []);
 
+  // Token refresh 
+  useEffect(() => {
+    if (!user) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const refreshToken = localStorage.getItem('refreshToken');
+        if (!refreshToken) return;
+
+        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/refresh`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ refresh_token: refreshToken }),
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          saveTokens(data);
+          setAccessToken(data.access_token);
+        } else {
+          // Refresh failed - Force logout
+          clearTokens();
+          setUser(null);
+          setAccessToken(null);
+          router.push('/auth/login');
+        }
+      } catch {
+        // Network error
+      }
+    }, 13 * 60 * 1000); // every 13 minutes, before 15m access token expires
+
+    return () => clearInterval(interval);
+  }, [user]);
+
   const login = async (email: string, password: string) => {
     const response = await loginRequest({ identifier: email, password });
     saveTokens(response);
@@ -152,7 +190,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const hasPermission = (permission: string) => {
     if (!user) return false;
-    if (user.roles?.some((role) => ['SUPER_ADMIN', 'ADMIN'].includes(role))) return true;
+    if (user.roles?.some((role) => ['SUPER_ADMIN'].includes(role))) return true;
     return user.permissions.includes(permission);
   };
 

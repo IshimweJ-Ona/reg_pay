@@ -70,9 +70,10 @@ export function AttendanceSyncProvider({ children }: { children: React.ReactNode
       startedAt: new Date().toISOString(),
     });
 
+    let interval: any;
     try {
       // Simulate progress for UI feedback since we use a single batch call
-      const interval = setInterval(() => {
+      interval = setInterval(() => {
         setSyncState(prev => {
           if (prev.progress >= 90) {
             clearInterval(interval);

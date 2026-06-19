@@ -114,8 +114,12 @@ function UsersManagementContent() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const assignableRoles = useMemo(
-    () => roles.filter((role) => !['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ON_MANAGER'].includes(role.name)),
-    [roles]
+    () => roles.filter((role) => {
+        if (role.name === 'SUPER_ADMIN') return false;
+        if (role.name === 'BRANCH_MANAGER' && currentUser?.role !== 'SUPER_ADMIN') return false;
+        return true;
+    }),
+    [roles, currentUser]
   );
   
   const loadData = async () => {
@@ -218,7 +222,7 @@ function UsersManagementContent() {
     (u.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
      u.email.toLowerCase().includes(searchTerm.toLowerCase())) &&
     u.id !== currentUser?.id &&
-    !u.roles?.some(role => ['ADMIN', 'SUPER_ADMIN'].includes(role))
+    !u.roles?.some(role => ['SUPER_ADMIN'].includes(role))
   );
 
   return (
@@ -354,7 +358,7 @@ function UsersManagementContent() {
                 <div className="grid grid-cols-2 gap-2">
                   {roles.map((role) => {
                     const isAssigned = selectedUser.roles?.includes(role.name);
-                    const isSystemRole = ['SUPER_ADMIN', 'ADMIN'].includes(role.name);
+                    const isSystemRole = ['SUPER_ADMIN'].includes(role.name);
                     
                     return (
                       <Button
@@ -367,17 +371,22 @@ function UsersManagementContent() {
                           isAssigned ? "shadow-md shadow-primary/20" : "bg-transparent"
                         )}
                         onClick={() => {
-                          const currentRoles = roles.filter(r => selectedUser.roles?.includes(r.name)).map(r => r.uuid);
-                          const nextRoles = isAssigned 
-                            ? currentRoles.filter(id => id !== role.uuid)
-                            : [...currentRoles, role.uuid];
-                          handleUpdateRoles(selectedUser.id, nextRoles);
+                          if (!selectedUser) return;
+                          const isAssigned = (selectedUser.roles || []).includes(role.name);
+                          const nextRoles = isAssigned
+                            ? (selectedUser.roles || []).filter((r) => r !== role.name)
+                            : [...(selectedUser.roles || []), role.name];
+
+                          const roleIds = roles
+                            .filter((r) => nextRoles.includes(r.name))
+                            .map((r) => r.uuid);
+
+                          handleUpdateRoles(selectedUser.id, roleIds);
+
                           // Optimistic update
                           setSelectedUser({
                             ...selectedUser,
-                            roles: isAssigned 
-                              ? selectedUser.roles?.filter(r => r !== role.name)
-                              : [...(selectedUser.roles || []), role.name]
+                            roles: nextRoles,
                           });
                         }}
                       >
@@ -389,7 +398,7 @@ function UsersManagementContent() {
                 </div>
               </div>
 
-              {['SUPER_ADMIN', 'ADMIN'].includes(currentUser?.role || '') && (
+              {['SUPER_ADMIN'].includes(currentUser?.role || '') && (
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
                     <Label className="text-base font-bold">Security Overrides</Label>

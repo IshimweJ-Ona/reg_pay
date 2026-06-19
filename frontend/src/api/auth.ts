@@ -44,6 +44,7 @@ export interface JwtUser {
     permissions: string[];
     working_location_id: string | null;
     department_id: string | null;
+    avatar_url?: string;
     exp?: number;
     iat?: number;
 }
