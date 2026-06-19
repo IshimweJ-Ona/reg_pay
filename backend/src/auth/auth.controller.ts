@@ -41,6 +41,7 @@ import type { CurrentUserType } from './types/current-user.type';
 type UpdateProfileDto = {
   first_name?: string;
   last_name?: string;
+  email?: string;
   password?: string;
 };
 

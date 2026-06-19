@@ -126,6 +126,8 @@ export class PermissionsService {
       return created;
     });
 
+    await this.cacheManager.del('roles:all');
+
     return {
       message: 'Permission assigned to role.',
       role_permission: this.serializeRolePermission(assignment),
@@ -169,6 +171,8 @@ export class PermissionsService {
         },
       }),
     ]);
+
+    await this.cacheManager.del('roles:all');
 
     return { message: 'Permission removed from role.' };
   }

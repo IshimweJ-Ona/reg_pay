@@ -41,6 +41,7 @@ export class PermissionsController {
   }
 
   @Permissions('permissions.assign')
+  @Roles('SUPER_ADMIN')
   @Post('assign-role')
   assignToRole(
     @Body() dto: AssignPermissionDto,
@@ -50,6 +51,7 @@ export class PermissionsController {
   }
 
   @Permissions('permissions.assign')
+  @Roles('SUPER_ADMIN')
   @Delete('assign-role')
   removeFromRole(
     @Query() dto: AssignPermissionDto,

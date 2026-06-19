@@ -42,6 +42,7 @@ type TokenPair = {
 type UpdateProfileDto = {
   first_name?: string;
   last_name?: string;
+  email?: string;
   password?: string;
 };
 
@@ -818,6 +819,24 @@ export class AuthService {
         throw new ConflictException('Last name cannot be empty.');
       }
       data.last_name = dto.last_name.trim();
+    }
+    if (dto.email !== undefined) {
+      const email = dto.email.trim().toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        throw new ConflictException('Please enter a valid email address.');
+      }
+      const existing = await this.prisma.users.findFirst({
+        where: {
+          email,
+          id: { not: BigInt(userId) },
+          deleted_at: null,
+        },
+        select: { id: true },
+      });
+      if (existing) {
+        throw new ConflictException('A user with this email already exists.');
+      }
+      data.email = email;
     }
     if (dto.password) {
       const passwordRegex =
