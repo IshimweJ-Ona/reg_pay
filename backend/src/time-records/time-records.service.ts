@@ -12,15 +12,12 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ApproveTimeRecordDto } from './dto/approve-time-record.dto';
 import { CreateTimeRecordDto } from './dto/create-time-record.dto';
 import { UpdateTimeRecordDto } from './dto/update-time-record.dto';
-
+import { BulkImportDto } from './dto/bulk-import.dto';
+import dayjs from 'dayjs';
 import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class TimeRecordsService {
-  private readonly overtimeThresholdHours = Number(
-    process.env.OVERTIME_THRESHOLD_HOURS ?? 1,
-  );
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
@@ -49,7 +46,8 @@ export class TimeRecordsService {
           uuid: generateUUID(),
           employee_id: employeeId,
           attendance_date: attendanceDate,
-          clock_in: dto.clock_in ? new Date(dto.clock_in) : new Date(),
+          hours_worked: dto.hours_worked ?? 0,
+          overtime_hours: dto.overtime_hours ?? 0,
           attendance_status: dto.attendance_status ?? ATTENDANCE_STATUS.PRESENT,
         },
         include: this.includes(),
@@ -81,22 +79,183 @@ export class TimeRecordsService {
     return this.serialize(record);
   }
 
-  async bulkCreate(
-    dto: { records: CreateTimeRecordDto[] },
-    actor: CurrentUserType,
-  ) {
-    const results: any[] = [];
-    for (const recordDto of dto.records) {
+  async bulkCreate(dto: BulkImportDto, actor: CurrentUserType) {
+    if (!dto.date_from || !dto.date_to) {
+      throw new BadRequestException(
+        'date_from and date_to are required for bulk imports.',
+      );
+    }
+
+    const dateFrom = dayjs(dto.date_from).startOf('day');
+    const dateTo = dayjs(dto.date_to).startOf('day');
+
+    if (dateTo.isBefore(dateFrom)) {
+      throw new BadRequestException(
+        'date_to must be greater than or equal to date_from.',
+      );
+    }
+
+    const errors: Array<{
+      row: number;
+      employee_id?: string;
+      message: string;
+    }> = [];
+
+    const records = dto.records || [];
+    const employeeIdStrings = records
+      .map((r) => r.employee_id)
+      .filter((id) => /^\d+$/.test(id));
+    const uniqueEmployeeIds = [...new Set(employeeIdStrings)].map((id) =>
+      BigInt(id),
+    );
+
+    const employees = await this.prisma.employees.findMany({
+      where: { id: { in: uniqueEmployeeIds }, deleted_at: null },
+      select: { id: true, working_location_id: true, department_id: true },
+    });
+
+    const employeeMap = new Map<
+    string, {
+      id: bigint,
+      working_location_id?: bigint | null;
+      department_id?: bigint | null;
+    }>();
+    for (const emp of employees) {
+      employeeMap.set(emp.id.toString(), emp);
+    }
+
+    for (let i = 0; i < records.length; i++) {
+      const row = i + 1;
+      const recordDto = records[i];
+
+      if (!recordDto.employee_id) {
+        errors.push({ row, message: 'employee_id is required' });
+        continue;
+      }
+
+      if (!/^\d+$/.test(recordDto.employee_id)) {
+        errors.push({
+          row,
+          employee_id: recordDto.employee_id,
+          message: 'employee_id must be a numeric ID',
+        });
+        continue;
+      }
+
+      const employee = employeeMap.get(recordDto.employee_id);
+      if (!employee) {
+        errors.push({
+          row,
+          employee_id: recordDto.employee_id,
+          message: 'Employee does not exist',
+        });
+        continue;
+      }
+
       try {
-        const result = await this.create(recordDto, actor);
-        results.push(result);
-      } catch (error: any) {
-        if (!(error instanceof ConflictException)) {
-          console.error('Bulk item failed:', error.message || error);
+        this.ensureActorCanAccessEmployee(actor, employee);
+      } catch (err: any) {
+        errors.push({
+          row,
+          employee_id: recordDto.employee_id,
+          message: err.message || 'Actor is not allowed to manage this employee',
+        });
+      }
+
+      if (!recordDto.attendance_status) {
+        errors.push({
+          row,
+          employee_id: recordDto.employee_id,
+          message: 'attendance_status is required',
+        });
+      } else if (
+        recordDto.attendance_status !== 'PRESENT' &&
+        recordDto.attendance_status !== 'ABSENT'
+      ) {
+        errors.push({
+          row,
+          employee_id: recordDto.employee_id,
+          message: 'attendance_status must be exactly PRESENT or ABSENT',
+        });
+      }
+
+      if (!recordDto.attendance_date) {
+        errors.push({
+          row,
+          employee_id: recordDto.employee_id,
+          message: 'attendance_date is required',
+        });
+      } else {
+        const attendanceDate = dayjs(recordDto.attendance_date).startOf('day');
+        if (!attendanceDate.isValid()) {
+          errors.push({
+            row,
+            employee_id: recordDto.employee_id,
+            message: 'attendance_date must be a valid date',
+          });
+        } else if (
+          attendanceDate.isBefore(dateFrom) ||
+          attendanceDate.isAfter(dateTo)
+        ) {
+          errors.push({
+            row,
+            employee_id: recordDto.employee_id,
+            message: `attendance_date must be within the range [${dto.date_from}, ${dto.date_to}]`,
+          });
         }
       }
     }
-    return { success: true, count: results.length };
+
+    if (errors.length > 0) {
+      throw new BadRequestException({
+        success: false,
+        count: 0,
+        rejected: errors.length,
+        errors,
+      });
+    }
+
+    const syncedRecords = await this.prisma.$transaction(async (tx) => {
+      const results: any[] = [];
+      for (const recordDto of records) {
+        const employeeId = BigInt(recordDto.employee_id);
+        const attendanceDate = new Date(recordDto.attendance_date);
+
+        const upserted = await tx.time_records.upsert({
+          where: {
+            employee_id_attendance_date: {
+              employee_id: employeeId,
+              attendance_date: attendanceDate,
+            },
+          },
+          update: {
+            attendance_status: recordDto.attendance_status,
+            hours_worked: recordDto.hours_worked ?? 0,
+            overtime_hours: recordDto.overtime_hours ?? 0,
+          },
+          create: {
+            uuid: generateUUID(),
+            employee_id: employeeId,
+            attendance_date: attendanceDate,
+            attendance_status: recordDto.attendance_status,
+            hours_worked: recordDto.hours_worked ?? 0,
+            overtime_hours: recordDto.overtime_hours ?? 0,
+          },
+        });
+        results.push(upserted);
+      }
+      return results;
+    });
+
+    this.notificationsService.broadcast({ type: 'attendance_updated' });
+    this.notificationsService.broadcast({ type: 'employees_updated' });
+
+    return {
+      success: true,
+      count: syncedRecords.length,
+      rejected: 0,
+      errors: [],
+    };
   }
 
   async batchSync(
@@ -109,17 +268,14 @@ export class TimeRecordsService {
 
     const employeeIds = [
       ...new Set(
-        dto.records.map((recordDto) =>
-          this.toBigInt(recordDto.employee_id, 'employee_id').toString(),
+        dto.records.map((r) =>
+          this.toBigInt(r.employee_id, 'employee_id').toString(),
         ),
       ),
     ].map((id) => BigInt(id));
 
     const employees = await this.prisma.employees.findMany({
-      where: {
-        id: { in: employeeIds },
-        deleted_at: null,
-      },
+      where: { id: { in: employeeIds }, deleted_at: null },
       select: { id: true, working_location_id: true, department_id: true },
     });
 
@@ -127,12 +283,10 @@ export class TimeRecordsService {
       throw new BadRequestException('One or more employees do not exist.');
     }
 
-    employees.forEach((employee) =>
-      this.ensureActorCanAccessEmployee(actor, employee),
-    );
+    employees.forEach((emp) => this.ensureActorCanAccessEmployee(actor, emp));
 
     const results = await this.prisma.$transaction(async (tx) => {
-      const syncedRecords: any[] = [];
+      const synced: any[] = [];
 
       for (const recordDto of dto.records) {
         const employeeId = this.toBigInt(recordDto.employee_id, 'employee_id');
@@ -146,9 +300,8 @@ export class TimeRecordsService {
             },
           },
           update: {
-            clock_in: recordDto.clock_in
-              ? new Date(recordDto.clock_in)
-              : undefined,
+            hours_worked: recordDto.hours_worked ?? undefined,
+            overtime_hours: recordDto.overtime_hours ?? undefined,
             attendance_status:
               recordDto.attendance_status ?? ATTENDANCE_STATUS.PRESENT,
           },
@@ -156,17 +309,16 @@ export class TimeRecordsService {
             uuid: generateUUID(),
             employee_id: employeeId,
             attendance_date: attendanceDate,
-            clock_in: recordDto.clock_in
-              ? new Date(recordDto.clock_in)
-              : new Date(),
+            hours_worked: recordDto.hours_worked ?? 0,
+            overtime_hours: recordDto.overtime_hours ?? 0,
             attendance_status:
               recordDto.attendance_status ?? ATTENDANCE_STATUS.PRESENT,
           },
         });
-        syncedRecords.push(record);
+        synced.push(record);
       }
 
-      return syncedRecords;
+      return synced;
     });
 
     this.notificationsService.broadcast({ type: 'attendance_updated' });
@@ -175,38 +327,21 @@ export class TimeRecordsService {
     return { success: true, count: results.length };
   }
 
-  async clockOut(
+  async update(
     uuid: string,
     dto: UpdateTimeRecordDto,
     actor: CurrentUserType,
   ) {
     const record = await this.findByUuidOrThrow(uuid);
     this.ensureActorCanAccessEmployee(actor, record.employee);
-    const clockOut = dto.clock_out ? new Date(dto.clock_out) : new Date();
-
-    if (!record.clock_in) {
-      throw new BadRequestException(
-        'Cannot clock out without a clock in time.',
-      );
-    }
-
-    const hoursWorked = Math.max(
-      0,
-      (clockOut.getTime() - record.clock_in.getTime()) / (1000 * 60 * 60),
-    );
-    const overtimeHours = Math.max(
-      0,
-      hoursWorked - this.overtimeThresholdHours,
-    );
 
     const updated = await this.prisma.$transaction(async (tx) => {
       const saved = await tx.time_records.update({
         where: { id: record.id },
         data: {
-          clock_out: clockOut,
-          hours_worked: hoursWorked,
-          overtime_hours: overtimeHours,
-          attendance_status: dto.attendance_status ?? ATTENDANCE_STATUS.PRESENT,
+          hours_worked: dto.hours_worked ?? undefined,
+          overtime_hours: dto.overtime_hours ?? undefined,
+          attendance_status: dto.attendance_status ?? undefined,
         },
         include: this.includes(),
       });
@@ -219,14 +354,13 @@ export class TimeRecordsService {
           entity_id: record.id,
           module_name: 'ATTENDANCE',
           activity_type: ACTIVITY_TYPE.UPDATE,
-          activity_description: 'Clocked out attendance record.',
+          activity_description: 'Updated attendance record.',
           action: AUDIT_ACTION.UPDATED,
           new_values: {
-            clock_out: clockOut.toISOString(),
-            hours_worked: hoursWorked,
-            overtime_hours: overtimeHours,
+            hours_worked: dto.hours_worked,
+            overtime_hours: dto.overtime_hours,
           },
-          changed_fields: ['clock_out', 'hours_worked', 'overtime_hours'],
+          changed_fields: ['hours_worked', 'overtime_hours', 'attendance_status'],
         },
       });
 
@@ -286,7 +420,7 @@ export class TimeRecordsService {
       orderBy: { attendance_date: 'desc' },
     });
 
-    return records.map((record) => this.serialize(record));
+    return records.map((r) => this.serialize(r));
   }
 
   async findToday(
@@ -297,25 +431,21 @@ export class TimeRecordsService {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    const where: any = {
-      attendance_date: today,
-    };
+    const where: any = { attendance_date: today };
 
     if (workingLocationId) {
-      // workingLocationId may be numeric id, uuid, or human-readable name (frontend sometimes passes name).
       let wlId: bigint | null = null;
 
       if (/^\d+$/.test(workingLocationId)) {
         wlId = BigInt(workingLocationId);
       } else {
-        // Try uuid lookup
         const wlByUuid = await this.prisma.working_locations.findUnique({
           where: { uuid: workingLocationId },
           select: { id: true },
         });
-        if (wlByUuid) wlId = wlByUuid.id;
-        else {
-          // Fallback: try matching by name
+        if (wlByUuid) {
+          wlId = wlByUuid.id;
+        } else {
           const wlByName = await this.prisma.working_locations.findFirst({
             where: { name: workingLocationId, deleted_at: null },
             select: { id: true },
@@ -325,11 +455,8 @@ export class TimeRecordsService {
       }
 
       if (wlId !== null) {
-        where.employee = {
-          working_location_id: wlId,
-        };
+        where.employee = { working_location_id: wlId };
       } else {
-        // If we can't resolve, return empty set to avoid throwing on invalid input
         return [];
       }
     }
@@ -337,18 +464,14 @@ export class TimeRecordsService {
     if (category) {
       where.employee = {
         ...(where.employee || {}),
-        employment_category: {
-          name: category,
-        },
+        employment_category: { name: category },
       };
     }
 
-    // Apply actor scoping if provided
     if (actor) {
-      const scope = this.employeeScopeWhere(actor);
       where.employee = {
         ...(where.employee || {}),
-        ...scope,
+        ...this.employeeScopeWhere(actor),
       };
     }
 
@@ -357,7 +480,7 @@ export class TimeRecordsService {
       include: this.includes(),
     });
 
-    return records.map((record) => this.serialize(record));
+    return records.map((r) => this.serialize(r));
   }
 
   async findByEmployee(employeeIdInput: string, actor: CurrentUserType) {
@@ -371,7 +494,7 @@ export class TimeRecordsService {
       orderBy: { attendance_date: 'desc' },
     });
 
-    return records.map((record) => this.serialize(record));
+    return records.map((r) => this.serialize(r));
   }
 
   private async findByUuidOrThrow(uuid: string) {
@@ -381,7 +504,6 @@ export class TimeRecordsService {
     });
 
     if (!record) throw new NotFoundException('Time record not found.');
-
     return record;
   }
 
@@ -396,10 +518,7 @@ export class TimeRecordsService {
   }
 
   private includes() {
-    return {
-      employee: true,
-      approvedBy: true,
-    };
+    return { employee: true, approvedBy: true };
   }
 
   private serialize(record: Record<string, any>) {
@@ -440,7 +559,6 @@ export class TimeRecordsService {
         `Please choose a valid ${fieldName.replace('_', ' ')}.`,
       );
     }
-
     return BigInt(value);
   }
 
@@ -458,7 +576,6 @@ export class TimeRecordsService {
     if (actor.department_id) {
       where.department_id = BigInt(actor.department_id);
     }
-
     return where;
   }
 

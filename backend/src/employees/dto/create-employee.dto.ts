@@ -18,7 +18,7 @@ export class CreateEmployeeDto {
   })
   @IsString()
   @IsNotEmpty()
-  first_name: string;
+  first_name?: string;
 
   @ApiProperty({
     example: 'Mugisha',
@@ -26,7 +26,7 @@ export class CreateEmployeeDto {
   })
   @IsString()
   @IsNotEmpty()
-  last_name: string;
+  last_name!: string;
 
   @ApiPropertyOptional({
     example: 'johnmugisha@gmail.com',

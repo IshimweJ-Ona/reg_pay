@@ -12,5 +12,5 @@ export class UpdateRoleDto {
   @IsArray()
   @IsString({ each: true })
   @IsOptional()
-  permission_ids?: string[];
+  permission_keys?: string[];
 }

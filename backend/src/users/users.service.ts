@@ -34,6 +34,11 @@ import { ApproveUserDto } from './dto/approve-user.dto';
 import { UpdateUserPermissionOverrideDto } from './dto/update-user-permission-override.dto';
 
 import { NotificationsService } from '../notifications/notifications.service';
+import {
+  ALL_PERMISSION_KEYS,
+  IMPLIED_PERMISSIONS,
+  PERMISSION_MODULES,
+} from '../common/constants/permissions.constants';
 
 @Injectable()
 export class UsersService {
@@ -126,9 +131,9 @@ export class UsersService {
 
       if (permissionIds.length) {
         await tx.user_permissions.createMany({
-          data: permissionIds.map((permissionId) => ({
+          data: permissionIds.map((key) => ({
             user_id: created.id,
-            permission_id: permissionId,
+            permission_key: key,
             granted_by: actor ? BigInt(actor.userId) : null,
           })),
           skipDuplicates: true,
@@ -391,9 +396,9 @@ export class UsersService {
 
       if (permissionIds.length) {
         await tx.user_permissions.createMany({
-          data: permissionIds.map((permissionId) => ({
+          data: permissionIds.map((key) => ({
             user_id: user.id,
-            permission_id: permissionId,
+            permission_key: key,
             granted_by: BigInt(actor.userId),
           })),
           skipDuplicates: true,
@@ -698,9 +703,9 @@ export class UsersService {
     const updatedUser = await this.prisma.$transaction(async (tx) => {
       await tx.user_permission_overrides.upsert({
         where: {
-          user_id_permission_id: {
+          user_id_permission_key: {
             user_id: user.id,
-            permission_id: permission.id,
+            permission_key: permission.permission_key,
           },
         },
         update: {
@@ -711,7 +716,7 @@ export class UsersService {
         create: {
           uuid: generateUUID(),
           user_id: user.id,
-          permission_id: permission.id,
+          permission_key: permission.permission_key,
           is_allowed: dto.is_allowed,
           reason: dto.reason,
           changed_by: BigInt(actor.userId),
@@ -731,7 +736,6 @@ export class UsersService {
           action: AUDIT_ACTION.UPDATED,
           new_values: {
             user_id: user.id.toString(),
-            permission_id: permission.id.toString(),
             permission_key: permission.permission_key,
             is_allowed: dto.is_allowed,
           },
@@ -748,7 +752,7 @@ export class UsersService {
             ? `You can now use ${permission.name}.`
             : `Your access to ${permission.name} has been removed.`,
           type: 'PERMISSION_UPDATED',
-          reference_id: permission.uuid,
+          reference_id: permission.permission_key,
           metadata: {
             permission_key: permission.permission_key,
             permission_name: permission.name,
@@ -1206,26 +1210,14 @@ export class UsersService {
   }
 
   private async resolvePermissionIds(values: string[]) {
-    const permissions = await this.prisma.permissions.findMany({
-      where: {
-        OR: values.map((value) =>
-          isNumericId(value)
-            ? { id: BigInt(value) }
-            : isUuid(value)
-              ? { uuid: value }
-              : { permission_key: value },
-        ),
-      },
-      select: { id: true },
-    });
-
-    if (permissions.length !== values.length) {
-      throw new BadRequestException(
-        'Please choose valid permissions before saving this user.',
-      );
+    for (const key of values) {
+      if (!ALL_PERMISSION_KEYS.includes(key)) {
+        throw new BadRequestException(
+          'Please choose valid permissions before saving this user.',
+        );
+      }
     }
-
-    return permissions.map((p) => p.id);
+    return values;
   }
 
   private async resolveRoleIds(values: string[]) {
@@ -1251,21 +1243,11 @@ export class UsersService {
     return roles.map((role) => role.id);
   }
 
-  private async ensurePermissionsExist(permissionIds: bigint[]) {
-    const permissions = await this.prisma.permissions.findMany({
-      where: {
-        id: {
-          in: permissionIds,
-        },
-      },
-
-      select: {
-        id: true,
-      },
-    });
-
-    if (permissions.length !== permissionIds.length) {
-      throw new BadRequestException('One or more permissions do not exist.');
+  private async ensurePermissionsExist(permissionKeys: string[]) {
+    for (const key of permissionKeys) {
+      if (!ALL_PERMISSION_KEYS.includes(key)) {
+        throw new BadRequestException('One or more permissions do not exist.');
+      }
     }
   }
 
@@ -1291,30 +1273,14 @@ export class UsersService {
   private userIncludes() {
     return {
       working_location: true,
-
       department: true,
-
       roles: {
         include: {
-          role: {
-            include: {
-              role_permissions: { include: { permission: true } },
-            },
-          },
+          role: true,
         },
       },
-
-      user_permissions: {
-        include: {
-          permission: true,
-        },
-      },
-
-      permission_overrides: {
-        include: {
-          permission: true,
-        },
-      },
+      user_permissions: true,
+      permission_overrides: true,
     };
   }
 
@@ -1339,8 +1305,7 @@ export class UsersService {
       permission_overrides:
         user.permission_overrides?.map((override) => ({
           id: override.id.toString(),
-          permission_id: override.permission_id.toString(),
-          permission_key: override.permission?.permission_key,
+          permission_key: override.permission_key,
           is_allowed: override.is_allowed,
           reason: override.reason,
         })) ?? [],
@@ -1370,66 +1335,52 @@ export class UsersService {
 
     // 1. Collect direct and role-based permissions
     for (const userRole of user.roles ?? []) {
-      for (const rolePermission of userRole.role?.role_permissions ?? []) {
-        const permission = rolePermission.permission;
-        permissionMap.set(permission.permission_key, {
-          permission_id: permission.id.toString(),
-          permission_key: permission.permission_key,
-          name: permission.name,
-          module_name: permission.module_name,
+      const keys = (userRole.role?.permission_keys as string[]) ?? [];
+      for (const key of keys) {
+        let name = key.split('.').map((s) => s.charAt(0).toUpperCase() + s.slice(1)).join(' ');
+        let moduleName = 'SYSTEM';
+        for (const mod of PERMISSION_MODULES) {
+          const found = mod.permissions.find((p) => p.key === key);
+          if (found) {
+            name = found.name;
+            moduleName = mod.module;
+            break;
+          }
+        }
+        permissionMap.set(key, {
+          permission_key: key,
+          name,
+          module_name: moduleName,
           source: 'role',
         });
       }
     }
 
     for (const userPermission of user.user_permissions ?? []) {
-      permissionMap.set(userPermission.permission.permission_key, {
+      const key = userPermission.permission_key;
+      let name = key.split('.').map((s) => s.charAt(0).toUpperCase() + s.slice(1)).join(' ');
+      let moduleName = 'SYSTEM';
+      for (const mod of PERMISSION_MODULES) {
+        const found = mod.permissions.find((p) => p.key === key);
+        if (found) {
+          name = found.name;
+          moduleName = mod.module;
+          break;
+        }
+      }
+      permissionMap.set(key, {
         id: userPermission.id.toString(),
-        permission_id: userPermission.permission_id.toString(),
-        permission_key: userPermission.permission?.permission_key,
-        name: userPermission.permission?.name,
-        module_name: userPermission.permission?.module_name,
+        permission_key: key,
+        name,
+        module_name: moduleName,
         source: 'direct',
       });
     }
 
     // 2. Expand implied permissions
-    const impliedMap: Record<string, string[]> = {
-      'employees.create': [
-        'employees.read',
-        'employees.update',
-        'employees.suspend',
-        'employees.transfer',
-      ],
-      'attendance.create': [
-        'attendance.read',
-        'attendance.update',
-        'attendance.approve',
-      ],
-      'payroll.create': ['payroll.read', 'payroll.manage'],
-      'payroll.manage': ['payroll.read', 'payroll.create', 'payroll.approve'],
-      'payment-structures.create': [
-        'payment-structures.read',
-        'payment-structures.update',
-        'payment-structures.delete',
-      ],
-      'users.create': [
-        'users.read',
-        'users.update',
-        'users.approve',
-        'users.suspend',
-      ],
-      'permissions.manage': [
-        'permissions.read',
-        'permissions.create',
-        'permissions.assign',
-      ],
-      'branches.manage': ['departments.manage', 'branch-manager.manage'],
-    };
-
     const initialPermissions = Array.from(permissionMap.values());
     for (const p of initialPermissions) {
-      for (const impliedKey of impliedMap[p.permission_key] ?? []) {
+      for (const impliedKey of IMPLIED_PERMISSIONS[p.permission_key] ?? []) {
         if (!permissionMap.has(impliedKey)) {
           permissionMap.set(impliedKey, {
             permission_key: impliedKey,
@@ -1445,15 +1396,25 @@ export class UsersService {
 
     // 3. Apply overrides (EXPLICIT DENY takes precedence)
     for (const override of user.permission_overrides ?? []) {
-      const permissionKey = override.permission?.permission_key;
+      const permissionKey = override.permission_key;
       if (!permissionKey) continue;
 
       if (override.is_allowed) {
+        let name = permissionKey.split('.').map((s) => s.charAt(0).toUpperCase() + s.slice(1)).join(' ');
+        let moduleName = 'SYSTEM';
+        for (const mod of PERMISSION_MODULES) {
+          const found = mod.permissions.find((p) => p.key === permissionKey);
+          if (found) {
+            name = found.name;
+            moduleName = mod.module;
+            break;
+          }
+        }
         permissionMap.set(permissionKey, {
-          permission_id: override.permission_id.toString(),
+          id: override.id.toString(),
           permission_key: permissionKey,
-          name: override.permission?.name,
-          module_name: override.permission?.module_name,
+          name,
+          module_name: moduleName,
           source: 'override',
         });
       } else {
@@ -1464,26 +1425,30 @@ export class UsersService {
     return Array.from(permissionMap.values());
   }
 
-  private async resolvePermission(value: string) {
-    const permission = await this.prisma.permissions.findFirst({
-      where: isNumericId(value)
-        ? { id: BigInt(value) }
-        : isUuid(value)
-          ? { uuid: value }
-          : { permission_key: value },
-      select: {
-        id: true,
-        uuid: true,
-        name: true,
-        permission_key: true,
-      },
-    });
-
-    if (!permission) {
-      throw new BadRequestException('Please choose a valid permission.');
+  private resolvePermission(value: string) {
+    if (!ALL_PERMISSION_KEYS.includes(value)) {
+      throw new BadRequestException('Permission does not exist.');
     }
 
-    return permission;
+    for (const mod of PERMISSION_MODULES) {
+      const permission = mod.permissions.find((item) => item.key === value);
+      if (permission) {
+        return {
+          permission_key: permission.key,
+          name: permission.name,
+          module_name: mod.module,
+        };
+      }
+    }
+
+    return {
+      permission_key: value,
+      name: value
+        .split('.')
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(' '),
+      module_name: 'SYSTEM',
+    };
   }
 
   private serializeTransferRequest(request: Record<string, any>) {

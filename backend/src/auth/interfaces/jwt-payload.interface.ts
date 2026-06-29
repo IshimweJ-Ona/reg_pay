@@ -8,6 +8,10 @@ export interface JwtPayload {
   status: string;
   roles: string[];
   permissions: string[];
+  permission_overrides?: Array<{
+    permission_key: string;
+    is_allowed: boolean;
+  }>;
   working_location_id: string | null;
   department_id: string | null;
 }

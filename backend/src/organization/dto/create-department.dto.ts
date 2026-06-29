@@ -16,7 +16,7 @@ export class CreateDepartmentDto {
   })
   @IsString()
   @IsNotEmpty()
-  code: string;
+  code?: string;
 
   @ApiProperty({
     example: 'Finance Department',
@@ -24,7 +24,7 @@ export class CreateDepartmentDto {
   })
   @IsString()
   @IsNotEmpty()
-  name: string;
+  name?: string;
 
   @ApiPropertyOptional({
     example: 'Responsible for all financial operations and payroll accounting.',

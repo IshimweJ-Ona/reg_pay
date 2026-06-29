@@ -18,6 +18,7 @@ import type { CurrentUserType } from '../auth/types/current-user.type';
 import { ApproveTimeRecordDto } from './dto/approve-time-record.dto';
 import { CreateTimeRecordDto } from './dto/create-time-record.dto';
 import { UpdateTimeRecordDto } from './dto/update-time-record.dto';
+import { BulkImportDto } from './dto/bulk-import.dto';
 import { TimeRecordsService } from './time-records.service';
 
 @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
@@ -56,20 +57,20 @@ export class TimeRecordsController {
   @Permissions('attendance.create')
   @Post('bulk')
   bulkCreate(
-    @Body() dto: { records: CreateTimeRecordDto[] },
+    @Body() dto: BulkImportDto,
     @CurrentUser() actor: CurrentUserType,
   ) {
     return this.timeRecordsService.bulkCreate(dto, actor);
   }
 
   @Permissions('attendance.update')
-  @Patch(':uuid/clock-out')
-  clockOut(
+  @Patch(':uuid')
+  update(
     @Param('uuid') uuid: string,
     @Body() dto: UpdateTimeRecordDto,
     @CurrentUser() actor: CurrentUserType,
   ) {
-    return this.timeRecordsService.clockOut(uuid, dto, actor);
+    return this.timeRecordsService.update(uuid, dto, actor);
   }
 
   @Permissions('attendance.approve')
@@ -89,11 +90,7 @@ export class TimeRecordsController {
     @Query('category') category?: string,
     @CurrentUser() actor?: CurrentUserType,
   ) {
-    return this.timeRecordsService.findToday(
-      workingLocationId,
-      category,
-      actor,
-    );
+    return this.timeRecordsService.findToday(workingLocationId, category, actor);
   }
 
   @Permissions('attendance.read')
@@ -104,7 +101,7 @@ export class TimeRecordsController {
 
   @Permissions('attendance.read')
   @Get('employee/:employeeId')
-  findByEmployee(
+  findByEmplloyee(
     @Param('employeeId') employeeId: string,
     @CurrentUser() actor: CurrentUserType,
   ) {

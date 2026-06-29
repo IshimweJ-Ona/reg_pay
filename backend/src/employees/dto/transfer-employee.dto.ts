@@ -8,12 +8,12 @@ export class TransferEmployeeDto {
   })
   @IsString()
   @IsNotEmpty()
-  working_location_id: string;
+  working_location_id?: string;
 
   @ApiProperty({ example: 'dept-uuid' })
   @IsString()
   @IsNotEmpty()
-  department_id: string;
+  department_id?: string;
 
   @ApiPropertyOptional({ example: 'category-uuid' })
   @IsOptional()

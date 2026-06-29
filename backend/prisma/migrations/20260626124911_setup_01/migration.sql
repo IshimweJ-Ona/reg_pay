@@ -153,6 +153,7 @@ CREATE TABLE `Roles` (
     `description` TEXT NULL,
     `level_order` INTEGER NULL,
     `is_system_role` BOOLEAN NOT NULL DEFAULT false,
+    `permission_keys` JSON NOT NULL,
     `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
 
     UNIQUE INDEX `Roles_uuid_key`(`uuid`),
@@ -203,13 +204,13 @@ CREATE TABLE `Role_permissions` (
 CREATE TABLE `User_permissions` (
     `id` BIGINT NOT NULL AUTO_INCREMENT,
     `user_id` BIGINT NOT NULL,
-    `permission_id` BIGINT NOT NULL,
+    `permission_key` VARCHAR(150) NOT NULL,
     `granted_by` BIGINT NULL,
     `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
 
     INDEX `idx_user_permission_user`(`user_id`),
-    INDEX `idx_user_permission_permission`(`permission_id`),
-    UNIQUE INDEX `User_permissions_user_id_permission_id_key`(`user_id`, `permission_id`),
+    INDEX `idx_user_permission_key`(`permission_key`),
+    UNIQUE INDEX `User_permissions_user_id_permission_key_key`(`user_id`, `permission_key`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -218,7 +219,7 @@ CREATE TABLE `User_permission_overrides` (
     `id` BIGINT NOT NULL AUTO_INCREMENT,
     `uuid` CHAR(36) NOT NULL,
     `user_id` BIGINT NOT NULL,
-    `permission_id` BIGINT NOT NULL,
+    `permission_key` VARCHAR(150) NOT NULL,
     `is_allowed` BOOLEAN NOT NULL DEFAULT true,
     `changed_by` BIGINT NULL,
     `reason` TEXT NULL,
@@ -227,9 +228,9 @@ CREATE TABLE `User_permission_overrides` (
 
     UNIQUE INDEX `User_permission_overrides_uuid_key`(`uuid`),
     INDEX `idx_user_permission_override_user`(`user_id`),
-    INDEX `idx_user_permission_override_permission`(`permission_id`),
+    INDEX `idx_user_permission_override_key`(`permission_key`),
     INDEX `idx_user_permission_override_allowed`(`is_allowed`),
-    UNIQUE INDEX `User_permission_overrides_user_id_permission_id_key`(`user_id`, `permission_id`),
+    UNIQUE INDEX `User_permission_overrides_user_id_permission_key_key`(`user_id`, `permission_key`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -408,8 +409,6 @@ CREATE TABLE `Time_records` (
     `uuid` CHAR(36) NOT NULL,
     `employee_id` BIGINT NOT NULL,
     `attendance_date` DATE NOT NULL,
-    `clock_in` DATETIME(3) NULL,
-    `clock_out` DATETIME(3) NULL,
     `hours_worked` DECIMAL(5, 2) NOT NULL DEFAULT 0.00,
     `overtime_hours` DECIMAL(5, 2) NOT NULL DEFAULT 0.00,
     `attendance_status` ENUM('PRESENT', 'ABSENT') NOT NULL,
@@ -747,16 +746,10 @@ ALTER TABLE `Role_permissions` ADD CONSTRAINT `Role_permissions_permission_id_fk
 ALTER TABLE `User_permissions` ADD CONSTRAINT `User_permissions_user_id_fkey` FOREIGN KEY (`user_id`) REFERENCES `Users`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE `User_permissions` ADD CONSTRAINT `User_permissions_permission_id_fkey` FOREIGN KEY (`permission_id`) REFERENCES `Permissions`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
 ALTER TABLE `User_permissions` ADD CONSTRAINT `User_permissions_granted_by_fkey` FOREIGN KEY (`granted_by`) REFERENCES `Users`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE `User_permission_overrides` ADD CONSTRAINT `User_permission_overrides_user_id_fkey` FOREIGN KEY (`user_id`) REFERENCES `Users`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE `User_permission_overrides` ADD CONSTRAINT `User_permission_overrides_permission_id_fkey` FOREIGN KEY (`permission_id`) REFERENCES `Permissions`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE `User_permission_overrides` ADD CONSTRAINT `User_permission_overrides_changed_by_fkey` FOREIGN KEY (`changed_by`) REFERENCES `Users`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;

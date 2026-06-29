@@ -9,11 +9,14 @@ import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import * as cacheManager from 'cache-manager';
 import { ACTIVITY_TYPE, AUDIT_ACTION } from '@prisma/client';
 import type { CurrentUserType } from '../auth/types/current-user.type';
-import { generateUUID } from '../common/utils/uuid.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { AssignPermissionDto } from './dto/assign-permission.dto';
 import { AssignUserPermissionDto } from './dto/assign-user-permission.dto';
-import { CreatePermissionDto } from './dto/create-permission.dto';
+import {
+  PERMISSION_MODULES,
+  PermissionModule,
+  ALL_PERMISSION_KEYS,
+} from '../common/constants/permissions.constants';
 
 @Injectable()
 export class PermissionsService {
@@ -22,155 +25,50 @@ export class PermissionsService {
     @Inject(CACHE_MANAGER) private cacheManager: cacheManager.Cache,
   ) {}
 
-  async create(dto: CreatePermissionDto, actor: CurrentUserType) {
-    const existing = await this.prisma.permissions.findFirst({
-      where: {
-        OR: [{ name: dto.name }, { permission_key: dto.permission_key }],
-      },
-      select: { id: true },
-    });
-
-    if (existing) {
-      throw new ConflictException('Permission name or key already exists.');
-    }
-
-    const permission = await this.prisma.$transaction(async (tx) => {
-      const created = await tx.permissions.create({
-        data: {
-          uuid: generateUUID(),
-          name: dto.name,
-          module_name: dto.module_name,
-          permission_key: dto.permission_key,
-        },
-      });
-
-      await tx.audit_logs.create({
-        data: {
-          user_id: BigInt(actor.userId),
-          entity_table: 'permissions',
-          entity_id: created.id,
-          module_name: 'RBAC',
-          activity_type: ACTIVITY_TYPE.CREATE,
-          activity_description: 'Created permission.',
-          action: AUDIT_ACTION.CREATED,
-          new_values: {
-            name: created.name,
-            module_name: created.module_name,
-            permission_key: created.permission_key,
-          },
-        },
-      });
-
-      return created;
-    });
-
-    await this.cacheManager.del('permissions:all');
-
-    return this.serializePermission(permission);
-  }
-
-  async findAll() {
-    const cacheKey = 'permissions:all';
-    const cached = await this.cacheManager.get(cacheKey);
-    if (cached) return cached as any;
-
-    const permissions = await this.prisma.permissions.findMany({
-      orderBy: [{ module_name: 'asc' }, { permission_key: 'asc' }],
-    });
-
-    const result = permissions.map((permission) =>
-      this.serializePermission(permission),
-    );
-
-    await this.cacheManager.set(cacheKey, result, 600000); // 10 minutes cache
-    return result;
+  async findAll(): Promise<PermissionModule[]> {
+    return PERMISSION_MODULES;
   }
 
   async assignToRole(dto: AssignPermissionDto, actor: CurrentUserType) {
     const roleId = this.toBigInt(dto.role_id, 'role_id');
-    const permissionId = this.toBigInt(dto.permission_id, 'permission_id');
+    const permissionKey = dto.permission_key;
 
-    await this.ensureRoleAndPermission(roleId, permissionId);
+    await this.ensureRoleAndPermission(roleId, permissionKey);
 
-    const assignment = await this.prisma.$transaction(async (tx) => {
-      const created = await tx.role_permissions.upsert({
-        where: {
-          role_id_permission_id: {
-            role_id: roleId,
-            permission_id: permissionId,
-          },
-        },
-        update: {},
-        create: {
-          role_id: roleId,
-          permission_id: permissionId,
-        },
-      });
-
-      await tx.audit_logs.create({
-        data: {
-          user_id: BigInt(actor.userId),
-          entity_table: 'role_permissions',
-          entity_id: created.id,
-          module_name: 'RBAC',
-          activity_type: ACTIVITY_TYPE.UPDATE,
-          activity_description: 'Assigned permission to role.',
-          action: AUDIT_ACTION.UPDATED,
-          new_values: {
-            role_id: roleId.toString(),
-            permission_id: permissionId.toString(),
-          },
-        },
-      });
-
-      return created;
+    const role = await this.prisma.roles.findUniqueOrThrow({
+      where: { id: roleId },
     });
+    const keys = (role.permission_keys as string[]) ?? [];
+    if (!keys.includes(permissionKey)) {
+      keys.push(permissionKey);
+      await this.prisma.roles.update({
+        where: { id: roleId },
+        data: { permission_keys: keys },
+      });
+    }
 
     await this.cacheManager.del('roles:all');
 
     return {
       message: 'Permission assigned to role.',
-      role_permission: this.serializeRolePermission(assignment),
     };
   }
 
   async removeFromRole(dto: AssignPermissionDto, actor: CurrentUserType) {
     const roleId = this.toBigInt(dto.role_id, 'role_id');
-    const permissionId = this.toBigInt(dto.permission_id, 'permission_id');
+    const permissionKey = dto.permission_key;
 
-    const existing = await this.prisma.role_permissions.findUnique({
-      where: {
-        role_id_permission_id: {
-          role_id: roleId,
-          permission_id: permissionId,
-        },
-      },
-    });
+    const role = await this.prisma.roles.findUnique({ where: { id: roleId } });
+    if (!role) throw new NotFoundException('Role not found.');
 
-    if (!existing) {
-      throw new NotFoundException('Role permission assignment not found.');
+    const keys = (role.permission_keys as string[]) ?? [];
+    if (keys.includes(permissionKey)) {
+      const updatedKeys = keys.filter((k) => k !== permissionKey);
+      await this.prisma.roles.update({
+        where: { id: roleId },
+        data: { permission_keys: updatedKeys },
+      });
     }
-
-    await this.prisma.$transaction([
-      this.prisma.role_permissions.delete({
-        where: { id: existing.id },
-      }),
-      this.prisma.audit_logs.create({
-        data: {
-          user_id: BigInt(actor.userId),
-          entity_table: 'role_permissions',
-          entity_id: existing.id,
-          module_name: 'RBAC',
-          activity_type: ACTIVITY_TYPE.UPDATE,
-          activity_description: 'Removed permission from role.',
-          action: AUDIT_ACTION.UPDATED,
-          old_values: {
-            role_id: roleId.toString(),
-            permission_id: permissionId.toString(),
-          },
-        },
-      }),
-    ]);
 
     await this.cacheManager.del('roles:all');
 
@@ -179,23 +77,23 @@ export class PermissionsService {
 
   async assignToUser(dto: AssignUserPermissionDto, actor: CurrentUserType) {
     const userId = this.toBigInt(dto.user_id, 'user_id');
-    const permissionId = this.toBigInt(dto.permission_id, 'permission_id');
+    const permissionKey = dto.permission_key;
 
-    await this.ensureUserAndPermission(userId, permissionId);
+    await this.ensureUserAndPermission(userId, permissionKey);
     await this.ensureActorCanGrantUserPermission(actor, userId);
 
     const assignment = await this.prisma.$transaction(async (tx) => {
       const created = await tx.user_permissions.upsert({
         where: {
-          user_id_permission_id: {
+          user_id_permission_key: {
             user_id: userId,
-            permission_id: permissionId,
+            permission_key: permissionKey,
           },
         },
         update: {},
         create: {
           user_id: userId,
-          permission_id: permissionId,
+          permission_key: permissionKey,
           granted_by: BigInt(actor.userId),
         },
       });
@@ -211,7 +109,7 @@ export class PermissionsService {
           action: AUDIT_ACTION.UPDATED,
           new_values: {
             user_id: userId.toString(),
-            permission_id: permissionId.toString(),
+            permission_key: permissionKey,
           },
         },
       });
@@ -227,14 +125,14 @@ export class PermissionsService {
 
   async removeFromUser(dto: AssignUserPermissionDto, actor: CurrentUserType) {
     const userId = this.toBigInt(dto.user_id, 'user_id');
-    const permissionId = this.toBigInt(dto.permission_id, 'permission_id');
+    const permissionKey = dto.permission_key;
     await this.ensureActorCanGrantUserPermission(actor, userId);
 
     const existing = await this.prisma.user_permissions.findUnique({
       where: {
-        user_id_permission_id: {
+        user_id_permission_key: {
           user_id: userId,
-          permission_id: permissionId,
+          permission_key: permissionKey,
         },
       },
     });
@@ -256,7 +154,7 @@ export class PermissionsService {
           action: AUDIT_ACTION.UPDATED,
           old_values: {
             user_id: userId.toString(),
-            permission_id: permissionId.toString(),
+            permission_key: permissionKey,
           },
         },
       }),
@@ -265,38 +163,33 @@ export class PermissionsService {
     return { message: 'Permission removed from user.' };
   }
 
-  private async ensureRoleAndPermission(roleId: bigint, permissionId: bigint) {
-    const [role, permission] = await Promise.all([
-      this.prisma.roles.findUnique({
-        where: { id: roleId },
-        select: { id: true },
-      }),
-      this.prisma.permissions.findUnique({
-        where: { id: permissionId },
-        select: { id: true },
-      }),
-    ]);
-
+  private async ensureRoleAndPermission(roleId: bigint, permissionKey: string) {
+    const role = await this.prisma.roles.findUnique({
+      where: { id: roleId },
+      select: { id: true },
+    });
     if (!role) throw new BadRequestException('Role does not exist.');
-    if (!permission)
-      throw new BadRequestException('Permission does not exist.');
+
+    if (!ALL_PERMISSION_KEYS.includes(permissionKey)) {
+      throw new BadRequestException(
+        `Permission key "${permissionKey}" is not a valid system permission.`,
+      );
+    }
   }
 
-  private async ensureUserAndPermission(userId: bigint, permissionId: bigint) {
-    const [user, permission] = await Promise.all([
-      this.prisma.users.findFirst({
-        where: { id: userId, deleted_at: null },
-        select: { id: true },
-      }),
-      this.prisma.permissions.findUnique({
-        where: { id: permissionId },
-        select: { id: true },
-      }),
-    ]);
+  private async ensureUserAndPermission(userId: bigint, permissionKey: string) {
+    const user = await this.prisma.users.findFirst({
+      where: { id: userId, deleted_at: null },
+      select: { id: true },
+    });
 
     if (!user) throw new BadRequestException('User does not exist.');
-    if (!permission)
-      throw new BadRequestException('Permission does not exist.');
+
+    if (!ALL_PERMISSION_KEYS.includes(permissionKey)) {
+      throw new BadRequestException(
+        `Permission key "${permissionKey}" is not a valid system permission.`,
+      );
+    }
   }
 
   private isSystemAdmin(actor: CurrentUserType) {
@@ -331,28 +224,12 @@ export class PermissionsService {
     }
   }
 
-  private serializePermission(permission: Record<string, any>) {
-    return {
-      ...permission,
-      id: permission.id.toString(),
-    };
-  }
-
-  private serializeRolePermission(rolePermission: Record<string, any>) {
-    return {
-      ...rolePermission,
-      id: rolePermission.id.toString(),
-      role_id: rolePermission.role_id.toString(),
-      permission_id: rolePermission.permission_id.toString(),
-    };
-  }
-
   private serializeUserPermission(userPermission: Record<string, any>) {
     return {
       ...userPermission,
       id: userPermission.id.toString(),
       user_id: userPermission.user_id.toString(),
-      permission_id: userPermission.permission_id.toString(),
+      permission_key: userPermission.permission_key,
       granted_by: userPermission.granted_by?.toString() ?? null,
     };
   }

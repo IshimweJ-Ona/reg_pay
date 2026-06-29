@@ -27,6 +27,7 @@ export const buildJwtPayload = (
   user: UserForToken,
   roles: string[],
   permissions: string[],
+  permissionOverrides: JwtPayload['permission_overrides'] = [],
 ): JwtPayload => ({
   sub: user.id.toString(),
   uuid: user.uuid,
@@ -37,6 +38,7 @@ export const buildJwtPayload = (
   status: user.status,
   roles,
   permissions,
+  permission_overrides: permissionOverrides,
   working_location_id: user.working_location_id?.toString() ?? null,
   department_id: user.department_id?.toString() ?? null,
 });

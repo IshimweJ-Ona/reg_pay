@@ -27,6 +27,11 @@ import {
   signAccessToken,
   signRefreshToken,
 } from './utils/token.util';
+import {
+  IMPLIED_PERMISSIONS,
+  PERMISSION_MODULES,
+} from '../common/constants/permissions.constants';
+
 
 type RequestContext = {
   deviceInfo?: string | string[];
@@ -386,15 +391,11 @@ export class AuthService {
       include: {
         working_location: true,
         department: true,
-        user_permissions: { include: { permission: true, grantedBy: true } },
-        permission_overrides: { include: { permission: true } },
+        user_permissions: { include: { grantedBy: true } },
+        permission_overrides: true,
         roles: {
           include: {
-            role: {
-              include: {
-                role_permissions: { include: { permission: true } },
-              },
-            },
+            role: true,
           },
         },
       },
@@ -471,7 +472,12 @@ export class AuthService {
     });
     const rbac = await this.loadUserRbac(userId);
 
-    return buildJwtPayload(user, rbac.roles, rbac.permissions);
+    return buildJwtPayload(
+      user,
+      rbac.roles,
+      rbac.permissions,
+      rbac.permission_overrides,
+    );
   }
 
   private serializeEffectivePermissions(user: Record<string, any>) {
@@ -479,13 +485,23 @@ export class AuthService {
 
     // 1. Collect direct and role-based permissions
     for (const userRole of user.roles ?? []) {
-      for (const rolePermission of userRole.role?.role_permissions ?? []) {
-        const permission = rolePermission.permission;
-        permissionMap.set(permission.permission_key, {
-          uuid: permission.uuid,
-          key: permission.permission_key,
-          name: permission.name,
-          module_name: permission.module_name,
+      const keys = (userRole.role?.permission_keys as string[]) ?? [];
+      for (const key of keys) {
+        let name = key.split('.').map((s) => s.charAt(0).toUpperCase() + s.slice(1)).join(' ');
+        let moduleName = 'SYSTEM';
+        for (const mod of PERMISSION_MODULES) {
+          const found = mod.permissions.find((p) => p.key === key);
+          if (found) {
+            name = found.name;
+            moduleName = mod.module;
+            break;
+          }
+        }
+        permissionMap.set(key, {
+          uuid: key,
+          key,
+          name,
+          module_name: moduleName,
           source: 'role',
           granted_at: userRole.created_at,
           granted_by: null,
@@ -494,11 +510,9 @@ export class AuthService {
     }
 
     for (const userPermission of user.user_permissions ?? []) {
-      permissionMap.set(userPermission.permission.permission_key, {
-        uuid: userPermission.permission.uuid,
-        key: userPermission.permission.permission_key,
-        name: userPermission.permission.name,
-        module_name: userPermission.permission.module_name,
+      const meta = this.getPermissionMeta(userPermission.permission_key);
+      permissionMap.set(meta.key, {
+        ...meta,
         source: 'direct',
         granted_at: userPermission.created_at,
         granted_by: userPermission.grantedBy
@@ -512,49 +526,13 @@ export class AuthService {
     }
 
     // 2. Expand implied permissions
-    const impliedMap: Record<string, string[]> = {
-      'employees.create': [
-        'employees.read',
-        'employees.update',
-        'employees.suspend',
-        'employees.transfer',
-      ],
-      'attendance.create': [
-        'attendance.read',
-        'attendance.update',
-        'attendance.approve',
-      ],
-      'payroll.create': ['payroll.read', 'payroll.manage'],
-      'payroll.manage': ['payroll.read', 'payroll.create', 'payroll.approve'],
-      'payment-structures.create': [
-        'payment-structures.read',
-        'payment-structures.update',
-        'payment-structures.delete',
-      ],
-      'users.create': [
-        'users.read',
-        'users.update',
-        'users.approve',
-        'users.suspend',
-      ],
-      'permissions.manage': [
-        'permissions.read',
-        'permissions.create',
-        'permissions.assign',
-      ],
-      'branches.manage': ['departments.manage', 'branch-manager.manage'],
-    };
-
     const initialPermissions = Array.from(permissionMap.values());
     for (const p of initialPermissions) {
-      for (const impliedKey of impliedMap[p.key] ?? []) {
+      for (const impliedKey of IMPLIED_PERMISSIONS[p.key] ?? []) {
         if (!permissionMap.has(impliedKey)) {
+          const impliedMeta = this.getPermissionMeta(impliedKey);
           permissionMap.set(impliedKey, {
-            key: impliedKey,
-            name: impliedKey
-              .split('.')
-              .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
-              .join(' '),
+            ...impliedMeta,
             source: 'implied',
             granted_at: p.granted_at,
           });
@@ -564,15 +542,13 @@ export class AuthService {
 
     // 3. Apply overrides (EXPLICIT DENY takes precedence)
     for (const override of user.permission_overrides ?? []) {
-      const permissionKey = override.permission?.permission_key;
+      const permissionKey = override.permission_key;
       if (!permissionKey) continue;
 
       if (override.is_allowed) {
+        const meta = this.getPermissionMeta(permissionKey);
         permissionMap.set(permissionKey, {
-          uuid: override.permission.uuid,
-          key: permissionKey,
-          name: override.permission.name,
-          module_name: override.permission.module_name,
+          ...meta,
           source: 'override',
           granted_at: override.updated_at,
           granted_by: null,
@@ -583,6 +559,30 @@ export class AuthService {
     }
 
     return Array.from(permissionMap.values());
+  }
+
+  private getPermissionMeta(key: string) {
+    for (const mod of PERMISSION_MODULES) {
+      const found = mod.permissions.find((permission) => permission.key === key);
+      if (found) {
+        return {
+          uuid: key,
+          key,
+          name: found.name,
+          module_name: mod.module,
+        };
+      }
+    }
+
+    return {
+      uuid: key,
+      key,
+      name: key
+        .split('.')
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(' '),
+      module_name: 'SYSTEM',
+    };
   }
 
   private async loadUserRbac(userId: bigint) {
@@ -597,22 +597,14 @@ export class AuthService {
       this.prisma.user_roles.findMany({
         where: { user_id: userId },
         include: {
-          role: {
-            include: {
-              role_permissions: {
-                include: { permission: true },
-              },
-            },
-          },
+          role: true,
         },
       }),
       this.prisma.user_permissions.findMany({
         where: { user_id: userId },
-        include: { permission: true },
       }),
       this.prisma.user_permission_overrides.findMany({
         where: { user_id: userId },
-        include: { permission: true },
       }),
       this.prisma.branch_managers.findFirst({
         where: { user_id: userId, is_active: true },
@@ -627,56 +619,24 @@ export class AuthService {
       roles.push('BRANCH_MANAGER');
     }
     if (user?.status !== STATUS_USER.ACTIVE) {
-      return { roles, permissions: [] };
+      return { roles, permissions: [], permission_overrides: [] };
     }
 
     // 1. Collect direct and role-based permissions
     for (const userRole of userRoles) {
-      for (const rolePermission of userRole.role.role_permissions) {
-        permissions.add(rolePermission.permission.permission_key);
+      const keys = (userRole.role.permission_keys as string[]) ?? [];
+      for (const key of keys) {
+        permissions.add(key);
       }
     }
     for (const userPermission of userPermissions) {
-      permissions.add(userPermission.permission.permission_key);
+      permissions.add(userPermission.permission_key);
     }
 
     // 2. Expand implied permissions
-    const impliedMap: Record<string, string[]> = {
-      'employees.create': [
-        'employees.read',
-        'employees.update',
-        'employees.suspend',
-        'employees.transfer',
-      ],
-      'attendance.create': [
-        'attendance.read',
-        'attendance.update',
-        'attendance.approve',
-      ],
-      'payroll.create': ['payroll.read', 'payroll.manage'],
-      'payroll.manage': ['payroll.read', 'payroll.create', 'payroll.approve'],
-      'payment-structures.create': [
-        'payment-structures.read',
-        'payment-structures.update',
-        'payment-structures.delete',
-      ],
-      'users.create': [
-        'users.read',
-        'users.update',
-        'users.approve',
-        'users.suspend',
-      ],
-      'permissions.manage': [
-        'permissions.read',
-        'permissions.create',
-        'permissions.assign',
-      ],
-      'branches.manage': ['departments.manage', 'branch-manager.manage'],
-    };
-
     const initialPermissions = Array.from(permissions);
     for (const p of initialPermissions) {
-      for (const implied of impliedMap[p] ?? []) {
+      for (const implied of IMPLIED_PERMISSIONS[p] ?? []) {
         permissions.add(implied);
       }
     }
@@ -684,15 +644,19 @@ export class AuthService {
     // 3. Apply overrides (EXPLICIT DENY takes precedence)
     for (const override of permissionOverrides) {
       if (override.is_allowed) {
-        permissions.add(override.permission.permission_key);
+        permissions.add(override.permission_key);
       } else {
-        permissions.delete(override.permission.permission_key);
+        permissions.delete(override.permission_key);
       }
     }
 
     return {
       roles,
       permissions: Array.from(permissions),
+      permission_overrides: permissionOverrides.map((override) => ({
+        permission_key: override.permission_key,
+        is_allowed: override.is_allowed,
+      })),
     };
   }
 

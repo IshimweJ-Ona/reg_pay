@@ -44,7 +44,15 @@ export class OrganizationService {
         'Only SUPER_ADMIN can create working locations.',
       );
     }
-    if (dto.type === WORKING_LOCATION_TYPE.HQ) {
+    if (!dto.name || !dto.type || !dto.address) {
+      throw new BadRequestException(
+        'Name, type, and address are required to create a working location.',
+      );
+    }
+    const locationName = dto.name;
+    const locationType = dto.type;
+    const locationAddress = dto.address;
+    if (locationType === WORKING_LOCATION_TYPE.HQ) {
       const existingHq = await this.prisma.working_locations.findFirst({
         where: {
           type: WORKING_LOCATION_TYPE.HQ,
@@ -62,9 +70,9 @@ export class OrganizationService {
       const created = await tx.working_locations.create({
         data: {
           uuid: generateUUID(),
-          name: dto.name,
-          type: dto.type,
-          address: dto.address,
+          name: locationName,
+          type: locationType,
+          address: locationAddress,
           created_by: BigInt(actor.userId),
         },
       });
@@ -95,7 +103,7 @@ export class OrganizationService {
           entity_id: created.id,
           module_name: 'ORGANIZATION',
           activity_type: ACTIVITY_TYPE.CREATE,
-          activity_description: `Created ${dto.type.toLowerCase()} working location.`,
+          activity_description: `Created ${locationType.toLowerCase()} working location.`,
           action: AUDIT_ACTION.CREATED,
           new_values: {
             name: created.name,
@@ -243,6 +251,13 @@ export class OrganizationService {
         'Only SUPER_ADMIN can create global departments.',
       );
     }
+    if (!dto.code || !dto.name) {
+      throw new BadRequestException(
+        'Department code and name are required.',
+      );
+    }
+    const departmentCode = dto.code;
+    const departmentName = dto.name;
 
     const targetLocations = (
       await this.prisma.working_locations.findMany({
@@ -262,8 +277,8 @@ export class OrganizationService {
         data: targetLocations.map((workingLocationId) => ({
           uuid: generateUUID(),
           working_location_id: workingLocationId,
-          code: dto.code,
-          name: dto.name,
+          code: departmentCode,
+          name: departmentName,
           description: dto.description,
         })),
         skipDuplicates: true,
@@ -271,7 +286,7 @@ export class OrganizationService {
 
       const created = await tx.departments.findMany({
         where: {
-          code: dto.code,
+          code: departmentCode,
           working_location_id: { in: targetLocations },
         },
         include: { working_location: true },
@@ -524,6 +539,9 @@ export class OrganizationService {
         'Only SUPER_ADMIN can assign branch managers.',
       );
     }
+    if (!dto.user_id) {
+      throw new BadRequestException('User is required.');
+    }
     const userId = await this.resolveUserId(dto.user_id);
 
     const branch = await this.prisma.working_locations.findFirst({
@@ -606,6 +624,9 @@ export class OrganizationService {
     dto: AssignManagerDto,
     actor: CurrentUserType,
   ) {
+    if (!dto.user_id) {
+      throw new BadRequestException('User is required.');
+    }
     const userId = await this.resolveUserId(dto.user_id);
 
     const department = await this.prisma.departments.findUnique({

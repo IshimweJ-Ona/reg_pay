@@ -1,16 +1,18 @@
 import { ATTENDANCE_STATUS } from '@prisma/client';
 import {
+  IsArray,
   IsDateString,
   IsEnum,
-  IsNumber,
   IsNotEmpty,
+  IsNumber,
   IsOptional,
   IsString,
   Min,
+  ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
-export class CreateTimeRecordDto {
+export class BulkImportRecordDto {
   @IsString()
   @IsNotEmpty()
   employee_id: string;
@@ -18,20 +20,31 @@ export class CreateTimeRecordDto {
   @IsDateString()
   attendance_date: string;
 
+  @IsEnum(ATTENDANCE_STATUS)
+  attendance_status: 'PRESENT' | 'ABSENT';
+
   @IsOptional()
   @IsNumber()
   @Min(0)
   @Type(() => Number)
   hours_worked?: number;
 
-  
   @IsOptional()
   @IsNumber()
   @Min(0)
   @Type(() => Number)
   overtime_hours?: number;
+}
 
-  @IsOptional()
-  @IsEnum(ATTENDANCE_STATUS)
-  attendance_status?: ATTENDANCE_STATUS;
+export class BulkImportDto {
+  @IsDateString()
+  date_from: string;
+
+  @IsDateString()
+  date_to: string;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => BulkImportRecordDto)
+  records: BulkImportRecordDto[];
 }

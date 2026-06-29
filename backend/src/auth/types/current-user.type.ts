@@ -10,4 +10,8 @@ export type CurrentUserType = {
   permissions: string[];
   working_location_id: string | null;
   department_id: string | null;
+  permission_overrides?: Array<{
+    permission_key: string;
+    is_allowed: boolean;
+  }>;
 };

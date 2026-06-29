@@ -19,6 +19,7 @@ import { PaymentStructuresModule } from './payment-structures/payment-structures
 import { PayrollModule } from './payroll/payroll.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { SystemConfigModule } from './system-config/system-config.module';
+import { AuditLogsModule } from './audit-logs/audit-logs.module';
 
 import { SecurityMiddleware } from './common/security/security.middleware';
 import { WorkingLocationScopeInterceptor } from './common/interceptors/working-location-scope.interceptor';
@@ -58,6 +59,8 @@ import { WorkingLocationScopeInterceptor } from './common/interceptors/working-l
     NotificationsModule,
 
     SystemConfigModule,
+
+    AuditLogsModule,
   ],
 
   controllers: [AppController],

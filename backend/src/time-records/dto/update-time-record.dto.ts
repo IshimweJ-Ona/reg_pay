@@ -1,10 +1,19 @@
 import { ATTENDANCE_STATUS } from '@prisma/client';
-import { IsDateString, IsEnum, IsOptional } from 'class-validator';
+import { IsEnum, IsNumber, IsOptional, Min } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class UpdateTimeRecordDto {
   @IsOptional()
-  @IsDateString()
-  clock_out?: string;
+  @IsNumber()
+  @Min(0)
+  @Type(() => Number)
+  hours_worked?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Type(() => Number)
+  overtime_hours?: number;
 
   @IsOptional()
   @IsEnum(ATTENDANCE_STATUS)

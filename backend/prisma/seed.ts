@@ -49,162 +49,14 @@ import {
 } from '@prisma/client';
 import { generateUUID } from '../src/common/utils/uuid.util';
 import { hashPassword } from '../src/auth/utils/password.util';
+import { BASELINE_ROLE_PERMISSIONS, ALL_PERMISSION_KEYS } from '../src/common/constants/permissions.constants';
 import * as crypto from 'crypto';
 
 
 const prisma = new PrismaClient();
 
-/**
- * PERMISSIONS
- * Each entry: [display name, module group, unique key] 
- * 
- * name {human readable label shown in admin UI}
- * module_name  {group permissions by feature area}
- * permissions_key {the string guards in our API check}
-*/
-const PERMISSIONS = [
-  // USER_MANAGEMENT
-  ['Users Read',          'USER_MANAGEMENT',       'users.read'],
-  ['Users Create',        'USER_MANAGEMENT',       'users.create'],
-  ['Users Approve',       'USER_MANAGEMENT',       'users.approve'],
-  ['Users Update',        'USER_MANAGEMENT',       'users.update'],
-  ['Users Suspend',       'USER_MANAGEMENT',       'users.suspend'],
-  ['Users Transfer',      'USER_MANAGEMENT',       'users.transfer'],
 
-  //RBAC
-  ['Roles Manage',        'RBAC',                  'roles.manage'],
-  ['Permissions Manage',  'RBAC',                  'permissions.manage'],
-  ['Permissions Create',  'RBAC',                  'permissions.create'],
-  ['Permissions Read',    'RBAC',                  'permissions.read'],
-  ['Permissions Assign',  'RBAC',                  'permissions.assign'],
 
-  // ORGANIZATION
-  ['Branches Manage',     'ORGANIZATION',          'branches.manage'],
-  ['Departments Manage',  'ORGANIZATION',          'departments.manage'],
-  ['Branch Manager',      'ORGANIZATION',          'branch-manager.manage'],
-
-  // EMPLOYEES
-  ['Create Employees',    'EMPLOYEES',             'employees.create'],
-  ['Employees Read',      'EMPLOYEES',             'employees.read'],
-  ['Employees Update',    'EMPLOYEES',             'employees.update'],
-  ['Employees Approve',   'EMPLOYEES',             'employees.approve'],
-  ['Employees Transfer',  'EMPLOYEES',             'employees.transfer'],
-  ['Employees Suspend',   'EMPLOYEES',             'employees.suspend'],
-
-  // ATTENDANCE
-  ['Time Records',        'ATTENDANCE',            'attendance.create'],
-  ['Attendance Read',     'ATTENDANCE',            'attendance.read'],
-  ['Attendance Update',   'ATTENDANCE',            'attendance.update'],
-  ['Attendance Approve',  'ATTENDANCE',            'attendance.approve'],
-
-  // PAYMENT_STRUCTURES
-  ['Payment Structures Create',  'PAYMENT_STRUCTURES',    'payment-structures.create'],
-  ['Payment Structures Read',    'PAYMENT_STRUCTURES',    'payment-structures.read'],
-  ['Payment Structures Update',  'PAYMENT_STRUCTURES',    'payment-structures.update'],
-  ['Payment Structures Delete',  'PAYMENT_STRUCTURES',    'payment-structures.delete'],
-  ['Allowances Manage',          'PAYMENT_STRUCTURES',    'allowances.manage'],
-
-  // PAYROLL
-  ['Batch Creation',       'PAYROLL',              'payroll.create'],
-  ['Payroll Read',         'PAYROLL',              'payroll.read'],
-  ['Payroll Manage',       'PAYROLL',              'payroll.manage'],
-  ['Payroll Approve',      'PAYROLL',              'payroll.approve'],
-  ['Payroll Reports',      'PAYROLL',              'payroll.reports'],
-
-  // NOTIFICATIONS
-  ['Notifications Read',      'NOTIFICATIONS',        'notifications.read'],
-  ['Notifications Manage',    'NOTIFICATIONS',        'notifications.manage'],
-] as const;
-
-// ═══════════════════════════════════════════════════════════════════
-// SECTION 2 — ROLES & THEIR PERMISSION SETS
-// ═══════════════════════════════════════════════════════════════════
-// BRANCH_MANAGER: full control over their branch — users, employees,
-// attendance, and payroll approval. Cannot access other branches.
-// The backend enforces branch scoping; the seed just sets up the role.
-
-const ROLE_PERMISSIONS: Record<string, string[]> = {
-  SUPER_ADMIN: PERMISSIONS.map(([, , key]) => key),
-  
-  BRANCH_MANAGER: [
-    'users.read',
-    'users.create',
-    'users.update',
-    'users.approve',
-    'users.suspend',
-    'users.transfer',
-    'branch-manager.manage',
-    'branches.manage',
-    'departments.manage',
-    'employees.create',
-    'employees.read',
-    'employees.update',
-    'employees.approve',
-    'employees.transfer',
-    'employees.suspend',
-    'attendance.create',
-    'attendance.read',
-    'attendance.update',
-    'attendance.approve',
-    'payment-structures.create',
-    'payment-structures.read',
-    'payment-structures.update',
-    'payment-structures.delete',
-    'allowances.manage',
-    'payroll.create',
-    'payroll.read',
-    'payroll.manage',
-    'payroll.approve',
-    'payroll.reports',
-    'notifications.read',
-    'notifications.manage',
-  ],
-  
-  ACCOUNTANT: [
-    'employees.read',
-    'attendance.read',
-    'payment-structures.create',
-    'payment-structures.read',
-    'payment-structures.update',
-    'allowances.manage',
-    'payroll.create',
-    'payroll.read',
-    'payroll.manage',
-    'payroll.reports',
-    'notifications.read',
-  ],
-  
-  HR: [
-    'employees.create',
-    'employees.read',
-    'employees.update',
-    'employees.suspend',
-    'payment-structures.create',
-    'payment-structures.read',
-    'payment-structures.update',
-    'notifications.read',
-  ],
-  
-  ATTENDANT: [
-    'employees.read',
-    'attendance.create',
-    'attendance.read',
-    'attendance.update',
-    'notifications.read',
-  ],
-  
-  FINANCE: [
-    'employees.read',
-    'attendance.read',
-    'payment-structures.create',
-    'payment-structures.read',
-    'payment-structures.update',
-    'payroll.create',
-    'payroll.read',
-    'payroll.manage',
-    'payroll.reports',
-  ],
-};
 
 // ═══════════════════════════════════════════════════════════════════
 // SECTION 3 — REG WORKING LOCATIONS
@@ -434,68 +286,34 @@ async function main() {
 
   const roleIdMap = new Map<string, bigint>();
   let levelOrder  = 1;
+  const rolesToSeed = ['SUPER_ADMIN', 'BRANCH_MANAGER', 'ACCOUNTANT', 'HR', 'ATTENDANT', 'FINANCE'];
 
-  for (const roleName of Object.keys(ROLE_PERMISSIONS)) {
+  for (const roleName of rolesToSeed) {
     const desc = roleName === 'SUPER_ADMIN'
       ? 'Full platform administrator with unrestricted access.'
       : roleName === 'BRANCH_MANAGER'
         ? 'Branch administrator, full control scoped to their assigned branch.'
         : `${roleName.replace(/_/g, ' ')} role.`;
 
+    const keys = roleName === 'SUPER_ADMIN'
+      ? ALL_PERMISSION_KEYS
+      : (BASELINE_ROLE_PERMISSIONS[roleName] ?? []);
+
     const role = await prisma.roles.upsert({
       where:  { name: roleName },
-      update: { description: desc, level_order: levelOrder },
-      create: { uuid: generateUUID(), name: roleName, description: desc, level_order: levelOrder},
+      update: { description: desc, level_order: levelOrder, permission_keys: keys },
+      create: {
+        uuid:            generateUUID(),
+        name:            roleName,
+        description:     desc,
+        level_order:     levelOrder,
+        permission_keys: keys,
+      },
     });
 
     roleIdMap.set(roleName, role.id);
     levelOrder++;
     console.log(`  Role: ${roleName} (level ${role.level_order})`);
-  }
-
-  // ─────────────────────────────────────────────────────────────────
-  // PHASE 1.3 — PERMISSIONS
-  // Upsert on permission_key — this is the stable identifier.
-
-  console.log('\n   Seeding permissions...');
-
-  const permIdMap = new Map<string, bigint>();
-
-  for (const [name, moduleName, permissionKey] of PERMISSIONS) {
-    const perm = await prisma.permissions.upsert({
-      where:   { permission_key: permissionKey },
-      update: {},
-      create: { uuid: generateUUID(), name, module_name: moduleName, permission_key: permissionKey},
-    });
-    permIdMap.set(permissionKey, perm.id);
-  }
-
-  console.log (` ${PERMISSIONS.length} permissions seeded`);
-
-  // ─────────────────────────────────────────────────────────────────
-  // PHASE 1.4 — ROLE ↔ PERMISSIONS (join table)
-  // Removes stale links, upserts current ones.
-
-  console.log('\n   Linking role permissions...');
-
-  for (const [roleName, keys] of Object.entries(ROLE_PERMISSIONS)) {
-    const roleId = roleIdMap.get(roleName);
-    if (!roleId) continue;
-
-    await prisma.role_permissions.deleteMany({
-      where: { role_id: roleId, permission: { permission_key: { notIn: keys } } },
-    });
-
-    for (const key of keys) {
-      const permId = permIdMap.get(key);
-      if (!permId) continue;
-      await prisma.role_permissions.upsert({
-        where: { role_id_permission_id: { role_id: roleId, permission_id: permId } },
-        update: {},
-        create: { role_id: roleId, permission_id: permId },
-      });
-    }
-    console.log(`   ${roleName}: ${keys.length} permissions`);
   }
 
   // ─────────────────────────────────────────────────────────────────
@@ -1026,7 +844,7 @@ async function main() {
   console.log(`   Working locations : ${allLocations.length} (1 HQ + ${branchLocations.length} branches)`);
   console.log(`   Departments       : ${allLocations.length * 3} (3 per location)`);
   console.log(`   Roles             : ${roleIdMap.size}`);
-  console.log(`   Permissions       : ${PERMISSIONS.length}`);
+  console.log(`   Permissions       : ${ALL_PERMISSION_KEYS.length}`);
   console.log(`   Branch managers   : ${branchManagerSummary.length}`);
   console.log(`   Employees         : ${TOTAL_EMPLOYEES}`);
   console.log(`   Payment structures: ${TOTAL_EMPLOYEES}`);

@@ -45,6 +45,14 @@ export class EmployeesService {
   ) {}
 
   async create(dto: CreateEmployeeDto, actor?: CurrentUserType) {
+    if (!dto.first_name || !dto.last_name) {
+      throw new BadRequestException(
+        'First name and last name are required to create an employee.',
+      );
+    }
+    const firstName = dto.first_name;
+    const lastName = dto.last_name;
+
     const managerScoped =
       actor?.roles?.some((role) => ['BRANCH_MANAGER'].includes(role)) &&
       !this.isSystemAdmin(actor);
@@ -120,8 +128,8 @@ export class EmployeesService {
       const created = await tx.employees.create({
         data: {
           uuid: generateUUID(),
-          first_name: dto.first_name,
-          last_name: dto.last_name,
+          first_name: firstName,
+          last_name: lastName,
           email: dto.email,
           phone_number: dto.phone_number,
           national_id: dto.national_id,
@@ -533,6 +541,12 @@ export class EmployeesService {
     const employee = await this.findEmployeeByUuidOrThrow(uuid);
 
     this.ensureActorCanAccessEmployee(actor, employee);
+
+    if (!dto.working_location_id || !dto.department_id) {
+      throw new BadRequestException(
+        'Working location and department are required for employee transfer.',
+      );
+    }
 
     const workingLocationId = await this.resolveWorkingLocationId(
       dto.working_location_id,

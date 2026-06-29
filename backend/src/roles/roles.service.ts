@@ -13,6 +13,7 @@ import { generateUUID } from '../common/utils/uuid.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateRoleDto } from './dto/create-role.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
+import { ALL_PERMISSION_KEYS } from '../common/constants/permissions.constants';
 
 @Injectable()
 export class RolesService {
@@ -27,27 +28,13 @@ export class RolesService {
     if (cached) return cached as any;
 
     const roles = await this.prisma.roles.findMany({
-      include: {
-        role_permissions: {
-          include: { permission: true },
-          orderBy: { permission_id: 'asc' },
-        },
-      },
       orderBy: { level_order: 'asc' },
     });
 
     const result = roles.map((r) => ({
       ...r,
       id: r.id.toString(),
-      role_permissions: r.role_permissions.map((rolePermission) => ({
-        id: rolePermission.id.toString(),
-        role_id: rolePermission.role_id.toString(),
-        permission_id: rolePermission.permission_id.toString(),
-        permission: {
-          ...rolePermission.permission,
-          id: rolePermission.permission.id.toString(),
-        },
-      })),
+      permission_keys: (r.permission_keys as string[]) ?? [],
     }));
 
     await this.cacheManager.set(cacheKey, result, 600000); // 10 minutes cache
@@ -56,9 +43,13 @@ export class RolesService {
 
   async create(dto: CreateRoleDto, actor: CurrentUserType) {
     const name = this.normalizeRoleName(dto.name);
-    const permissionIds = await this.resolvePermissionIds(
-      dto.permission_ids ?? [],
-    );
+    const permissionKeys = dto.permission_keys ?? [];
+
+    for (const key of permissionKeys) {
+      if (!ALL_PERMISSION_KEYS.includes(key)) {
+        throw new BadRequestException(`Permission key "${key}" is not a valid system permission.`);
+      }
+    }
 
     const existing = await this.prisma.roles.findUnique({ where: { name } });
     if (existing) {
@@ -72,18 +63,9 @@ export class RolesService {
           name,
           description: dto.description?.trim() || null,
           is_system_role: false,
+          permission_keys: permissionKeys,
         },
       });
-
-      if (permissionIds.length) {
-        await tx.role_permissions.createMany({
-          data: permissionIds.map((permissionId) => ({
-            role_id: created.id,
-            permission_id: permissionId,
-          })),
-          skipDuplicates: true,
-        });
-      }
 
       await tx.audit_logs.create({
         data: {
@@ -96,7 +78,7 @@ export class RolesService {
           action: AUDIT_ACTION.CREATED,
           new_values: {
             name: created.name,
-            permission_ids: permissionIds.map((id) => id.toString()),
+            permission_keys: permissionKeys,
           },
         },
       });
@@ -123,32 +105,18 @@ export class RolesService {
     if (dto.description !== undefined) {
       data.description = dto.description.trim() || null;
     }
-
-    const permissionIds = dto.permission_ids
-      ? await this.resolvePermissionIds(dto.permission_ids)
-      : null;
+    if (dto.permission_keys !== undefined) {
+      for (const key of dto.permission_keys) {
+        if (!ALL_PERMISSION_KEYS.includes(key)) {
+          throw new BadRequestException(`Permission key "${key}" is not a valid system permission.`);
+        }
+      }
+      data.permission_keys = dto.permission_keys;
+    }
 
     await this.prisma.$transaction(async (tx) => {
       if (Object.keys(data).length) {
         await tx.roles.update({ where: { id: roleId }, data });
-      }
-
-      if (permissionIds) {
-        await tx.role_permissions.deleteMany({
-          where: {
-            role_id: roleId,
-            permission_id: { notIn: permissionIds },
-          },
-        });
-        if (permissionIds.length) {
-          await tx.role_permissions.createMany({
-            data: permissionIds.map((permissionId) => ({
-              role_id: roleId,
-              permission_id: permissionId,
-            })),
-            skipDuplicates: true,
-          });
-        }
       }
 
       await tx.audit_logs.create({
@@ -162,7 +130,6 @@ export class RolesService {
           action: AUDIT_ACTION.UPDATED,
           new_values: {
             ...data,
-            permission_ids: permissionIds?.map((id) => id.toString()),
           },
         },
       });
@@ -175,42 +142,13 @@ export class RolesService {
   private async findOne(roleId: bigint) {
     const role = await this.prisma.roles.findUniqueOrThrow({
       where: { id: roleId },
-      include: {
-        role_permissions: {
-          include: { permission: true },
-          orderBy: { permission_id: 'asc' },
-        },
-      },
     });
 
     return {
       ...role,
       id: role.id.toString(),
-      role_permissions: role.role_permissions.map((rolePermission) => ({
-        id: rolePermission.id.toString(),
-        role_id: rolePermission.role_id.toString(),
-        permission_id: rolePermission.permission_id.toString(),
-        permission: {
-          ...rolePermission.permission,
-          id: rolePermission.permission.id.toString(),
-        },
-      })),
+      permission_keys: (role.permission_keys as string[]) ?? [],
     };
-  }
-
-  private async resolvePermissionIds(values: string[]) {
-    const ids = values.map((value) => this.toBigInt(value, 'permission'));
-    if (!ids.length) return [];
-
-    const permissions = await this.prisma.permissions.findMany({
-      where: { id: { in: ids } },
-      select: { id: true },
-    });
-    if (permissions.length !== ids.length) {
-      throw new BadRequestException('One or more permissions do not exist.');
-    }
-
-    return ids;
   }
 
   private normalizeRoleName(name: string) {

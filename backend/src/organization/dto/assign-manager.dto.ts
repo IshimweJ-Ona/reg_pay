@@ -8,5 +8,5 @@ export class AssignManagerDto {
   })
   @IsString()
   @IsNotEmpty()
-  user_id: string;
+  user_id?: string;
 }

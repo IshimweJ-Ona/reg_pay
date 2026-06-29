@@ -7,5 +7,5 @@ export class AssignPermissionDto {
 
   @IsString()
   @IsNotEmpty()
-  permission_id: string;
+  permission_key: string;
 }

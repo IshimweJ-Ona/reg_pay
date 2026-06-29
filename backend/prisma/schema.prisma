@@ -414,6 +414,7 @@ model Roles {
 
   level_order Int?
   is_system_role Boolean @default(false)
+  permission_keys Json @default("[]")
 
   created_at DateTime @default(now())
 
@@ -460,8 +461,6 @@ model Permissions {
   created_at DateTime @default(now())
 
   role_permissions Role_permissions[]
-  user_permissions User_permissions[]
-  user_permission_overrides User_permission_overrides[]
 
   @@index([module_name], name: "idx_permission_module")
 }
@@ -490,18 +489,17 @@ model User_permissions {
   id BigInt @id @default(autoincrement())
 
   user_id BigInt
-  permission_id BigInt
+  permission_key String @db.VarChar(150)
 
   granted_by BigInt?
   created_at DateTime @default(now())
 
   user Users @relation(fields: [user_id], references: [id])
-  permission Permissions @relation(fields: [permission_id], references: [id])
   grantedBy Users? @relation("PermissionGrantedBy", fields: [granted_by], references: [id])
 
-  @@unique([user_id, permission_id])
+  @@unique([user_id, permission_key])
   @@index([user_id], name: "idx_user_permission_user")
-  @@index([permission_id], name: "idx_user_permission_permission")
+  @@index([permission_key], name: "idx_user_permission_key")
 }
 
 /* =========================================================
@@ -513,7 +511,7 @@ model User_permission_overrides {
   uuid String @unique @db.Char(36)
 
   user_id BigInt
-  permission_id BigInt
+  permission_key String @db.VarChar(150)
 
   is_allowed Boolean @default(true)
 
@@ -524,12 +522,11 @@ model User_permission_overrides {
   updated_at DateTime @updatedAt
 
   user Users @relation(fields: [user_id], references: [id])
-  permission Permissions @relation(fields: [permission_id], references: [id])
   changedBy Users? @relation("PermissionOverrideChangedBy", fields: [changed_by], references: [id])
 
-  @@unique([user_id, permission_id])
+  @@unique([user_id, permission_key])
   @@index([user_id], name: "idx_user_permission_override_user")
-  @@index([permission_id], name: "idx_user_permission_override_permission")
+  @@index([permission_key], name: "idx_user_permission_override_key")
   @@index([is_allowed], name: "idx_user_permission_override_allowed")
 }
 
@@ -815,8 +812,6 @@ model Time_records {
 
   attendance_date DateTime @db.Date
 
-  clock_in DateTime?
-  clock_out DateTime?
 
   hours_worked Decimal @default(0.00) @db.Decimal(5, 2)
   overtime_hours Decimal @default(0.00) @db.Decimal(5, 2)

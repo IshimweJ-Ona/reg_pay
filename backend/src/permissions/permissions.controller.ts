@@ -16,7 +16,6 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import type { CurrentUserType } from '../auth/types/current-user.type';
 import { AssignPermissionDto } from './dto/assign-permission.dto';
 import { AssignUserPermissionDto } from './dto/assign-user-permission.dto';
-import { CreatePermissionDto } from './dto/create-permission.dto';
 import { PermissionsService } from './permissions.service';
 
 @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
@@ -25,14 +24,6 @@ import { PermissionsService } from './permissions.service';
 export class PermissionsController {
   constructor(private readonly permissionsService: PermissionsService) {}
 
-  @Permissions('permissions.create')
-  @Post()
-  create(
-    @Body() dto: CreatePermissionDto,
-    @CurrentUser() actor: CurrentUserType,
-  ) {
-    return this.permissionsService.create(dto, actor);
-  }
 
   @Permissions('permissions.read')
   @Get()

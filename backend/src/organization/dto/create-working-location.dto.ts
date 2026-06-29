@@ -9,7 +9,7 @@ export class CreateWorkingLocationDto {
   })
   @IsString()
   @IsNotEmpty()
-  name: string;
+  name?: string;
 
   @ApiProperty({
     enum: WORKING_LOCATION_TYPE,
@@ -17,7 +17,7 @@ export class CreateWorkingLocationDto {
     description: 'The type of location (e.g., HEAD_QUARTER, BRANCH).',
   })
   @IsEnum(WORKING_LOCATION_TYPE)
-  type: WORKING_LOCATION_TYPE;
+  type?: WORKING_LOCATION_TYPE;
 
   @ApiProperty({
     example: 'KN 2 St, Kigali, Rwanda',
@@ -25,5 +25,5 @@ export class CreateWorkingLocationDto {
   })
   @IsString()
   @IsNotEmpty()
-  address: string;
+  address?: string;
 }
