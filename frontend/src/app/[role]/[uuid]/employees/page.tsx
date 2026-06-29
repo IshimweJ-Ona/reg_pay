@@ -689,6 +689,7 @@ export default function EmployeeDirectoryPage() {
           <DropdownMenuContent align="end" className="w-72 p-3">
             <DropdownMenuLabel className="px-0">Working Location</DropdownMenuLabel>
             <select
+              aria-label="Filter by working location"
               className="mb-3 h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
               value={filters.location}
               onChange={(event) =>
@@ -709,6 +710,7 @@ export default function EmployeeDirectoryPage() {
 
             <DropdownMenuLabel className="px-0">Department</DropdownMenuLabel>
             <select
+              aria-label="Filter by department"
               className="mb-3 h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
               value={filters.department}
               onChange={(event) =>
@@ -731,6 +733,7 @@ export default function EmployeeDirectoryPage() {
 
             <DropdownMenuLabel className="px-0">Employment Category</DropdownMenuLabel>
             <select
+              aria-label="Filter by employment category"
               className="mb-3 h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
               value={filters.category}
               onChange={(event) =>
@@ -747,6 +750,7 @@ export default function EmployeeDirectoryPage() {
 
             <DropdownMenuLabel className="px-0">Status</DropdownMenuLabel>
             <select
+              aria-label="Filter by employee status"
               className="mb-3 h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
               value={filters.status}
               onChange={(event) =>
@@ -951,6 +955,7 @@ export default function EmployeeDirectoryPage() {
               <div className="space-y-2">
                 <Label>Location</Label>
                 <select 
+                  aria-label="Employee location"
                   className="w-full h-10 px-3 rounded-md border border-input bg-background"
                   value={newEmployee.working_location_id}
                   onChange={e => handleLocationChange(e.target.value)}
@@ -963,6 +968,7 @@ export default function EmployeeDirectoryPage() {
             <div className="space-y-2">
               <Label>Department</Label>
               <select 
+                aria-label="Employee department"
                 className="w-full h-10 px-3 rounded-md border border-input bg-background"
                 value={newEmployee.department_id}
                 onChange={e => setNewEmployee(p => ({...p, department_id: e.target.value}))}
@@ -975,6 +981,7 @@ export default function EmployeeDirectoryPage() {
             <div className="space-y-2">
               <Label>Payment Category</Label>
               <select
+                aria-label="Employee payment category"
                 className="w-full h-10 px-3 rounded-md border border-input bg-background font-bold text-xs"
                 value={newEmployee.employment_category_id}
                 onChange={e => setNewEmployee(p => ({ ...p, employment_category_id: e.target.value }))}

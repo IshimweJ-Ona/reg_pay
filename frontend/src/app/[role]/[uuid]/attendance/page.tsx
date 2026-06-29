@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState, useRef } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { 
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow 
 } from "@/components/ui/table";
@@ -18,12 +18,24 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/auth-context';
 import { useAttendanceSync } from '@/context/attendance-sync-context';
 import * as XLSX from 'xlsx';
 import dayjs, { getRwandaTime } from '@/lib/dayjs';
 import { AttendanceSyncPopover } from '@/components/attendance/attendance-sync-popover';
+import { symbol } from 'zod';
+
+const PRESENT_SYMBOL = 'P';
+const ABSENT_SYMBOL = 'A';
 
 export default function AttendanceMonitoringPage() {
   const [records, setRecords] = useState<any[]>([]);
@@ -32,10 +44,13 @@ export default function AttendanceMonitoringPage() {
   const [activeTab, setActiveTab] = useState('ALL');
   const [viewMode, setViewMode] = useState<'LOG' | 'HISTORY'>('LOG');
   const [loading, setLoading] = useState(false);
+  const [isImportOpen, setIsImportOpen] = useState(false);
+  const [importDateFrom, setImportDateFrom] = useState('');
+  const [importDateTo, setImportDateTo] = useState('');
+  const [importFile, setImportFile] = useState<File | null>(null);
   const { toast } = useToast();
   const { user, hasPermission } = useAuth();
   const { startSync, syncState, pendingSync, setPendingSync } = useAttendanceSync();
-  const fileInputRef = useRef<HTMLInputElement>(null);
   
   const canCreateAttendance = hasPermission('attendance.create');
   const canUpdateAttendance = hasPermission('attendance.update');
@@ -152,74 +167,244 @@ export default function AttendanceMonitoringPage() {
     });
   }, [records, searchTerm, activeTab]);
 
-  const handleMarkAttendance = (employeeId: string, status: 'PRESENT' | 'ABSENT', clockIn?: string, clockOut?: string) => {
+  const handleMarkAttendance = (
+    employeeId: string,
+    status: 'PRESENT' | 'ABSENT',
+    hoursWorked?: number,
+    overtimeHours?: number,
+  ) => {
     const existing = todayRecordsMap[employeeId];
     if (existing && !canUpdateAttendance) {
-      toast({ variant: 'destructive', title: 'Permission denied', description: 'Cannot update existing logs.' });
+      toast({ variant: 'destructive', title: 'Permission denied', description: 'Cannot updae existing logs.' });
       return;
     }
 
     const log = {
-        employee_id: employeeId,
-        attendance_date: new Date().toISOString(),
-        attendance_status: status,
-        clock_in: status === 'PRESENT' ? new Date(`${todayStr}T${clockIn}`).toISOString() : undefined,
-        clock_out: status === 'PRESENT' ? new Date(`${todayStr}T${clockOut}`).toISOString() : undefined
+      employee_id: employeeId,
+      attendance_date: new Date().toISOString(),
+      attendace_status: status,
+      hours_worked: status === 'PRESENT' ? hoursWorked: undefined,
+      overtime_hours: status === 'PRESENT' ? overtimeHours: undefined,
     };
 
-    setPendingSync(prev => ({ ...prev, [employeeId]: log }));
-    toast({ title: 'Logged Locally', description: `Attendance cached. Use "Sync Now" to finalize.` });
+    setPendingSync((prev) => ({...prev, [employeeId]: log }));
+    toast({ title: 'Logged Locally', description: 'Attendance cached. Use "Sync Now" to finalize.'});
   };
 
-  const handleExcelImport = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const downloadTemplate = () => {
+    if (!importDateFrom || !importDateTo) {
+      toast({ variant: 'destructive', title: 'Date Range Required', description: 'Please select a date range.' });
+      return;
+    }
 
-    if (file.size > 5 * 1024 * 1024) {
+    const start = dayjs(importDateFrom);
+    const end = dayjs(importDateTo);
+    if (end.isBefore(start)) {
+      toast({ variant: 'destructive', title: 'Invalid range', description: 'date_to must be greater than or equal to date_from.'});
+      return;
+    }
+
+    const dates: string[] = [];
+    let cur = start;
+    while (cur.isSameOrBefore(end, 'day')) {
+      dates.push(cur.format('DD/MM/YYYY'));
+      cur = cur.add(1, 'day');
+    }
+
+    const headers = ['employee_id', 'employee_name', 'overtime_hours', 'worked_hours', ...dates];
+
+    const rows = employees.map((emp) => {
+      const row: Record<string, any> ={
+        employee_id: emp.id.toString(),
+        employee_name: `${emp.first_name ?? ''} ${emp.last_name || ''}`.trim(),
+        overtime_hours: '',
+        worked_hours: '',
+      };
+      dates.forEach((d) => { row[d] = ''; });
+      return row;
+    });
+
+    const worksheet = XLSX.utils.json_to_sheet(rows, { header: headers });
+
+    worksheet['!cols'] = [
+      { wch: 14 },
+      { wch: 22 },
+      { wch: 16 },
+      { wch: 14 },
+      ...dates.map(() => ({ wch: 13 })),
+    ];
+
+    const totalRows = rows.length + 1;
+    const dateColStartIndex = 4; 
+
+    dates.forEach((_, i) => {
+      const colLetter = XLSX.utils.encode_col(dateColStartIndex + i);
+      const sqref = `${colLetter}2:${colLetter}${totalRows}`;
+      if (!(worksheet as any)['!dataValication']) {
+        (worksheet as any)['!dataValidation'] = [];
+      }
+      (worksheet as any)['!dataValidation'].push({
+        sqref,
+        type:  'list',
+        formula1: `"${PRESENT_SYMBOL},${ABSENT_SYMBOL}"`,
+        allowBlank: true,
+        showDropDown: false,
+        error: 'Only P (Present) or A (ABSENT) are allowed.',
+        errorTitle: 'Invalid value',
+        showErrorMessage: true,
+      });
+    });
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Attendance');
+    XLSX.writeFile(workbook, `attendance_template_${importDateFrom}_to_${importDateTo}.xlsx`);
+    toast({ title: 'Template Downloaded', description: 'Fill P for present, A for Absent in each date column. Empty date marks as not recorded for that specific date.' });
+  };
+
+  const handleImportUpload = () => {
+    if (!importFile) return;
+    if (!importDateFrom || !importDateTo) {
+      toast({ variant: 'destructive', title: 'Date Range required', description: 'Please selecet a date range.' });
+      return;
+    }
+    const start = dayjs(importDateFrom);
+    const end = dayjs(importDateTo);
+    if (end.isBefore(start)) {
+      toast({ variant: 'destructive', title: 'Invalid range', description: 'date_to must be greater than or equal to date_from.' });
+      return;
+    }
+    if (importFile.size > 5 * 1024 *1024) {
       toast({ variant: 'destructive', title: 'File too large', description: 'Max file size is 5MB.' });
       return;
     }
 
     const reader = new FileReader();
     reader.onload = async (evt) => {
-      const bstr = evt.target?.result;
-      const wb = XLSX.read(bstr, { type: 'binary' });
-      const wsname = wb.SheetNames[0];
-      const ws = wb.Sheets[wsname];
-      const data: any[] = XLSX.utils.sheet_to_json(ws);
-
-      if (data.length > 200) {
-        toast({ variant: 'destructive', title: 'Too many rows', description: 'files rows aree too many divide file into two' });
-        return;
-      }
-
-      // Handle duplicates and empty fields
-      const processedLogs: any[] = [];
-      const seen = new Set();
-
-      data.forEach(row => {
-        const empId = row.employee_id || row.EmployeeID;
-        if (!empId || seen.has(empId)) return; // Ignore duplicates or empty IDs
-        
-        seen.add(empId);
-        processedLogs.push({
-          employee_id: empId,
-          attendance_date: todayStr,
-          attendance_status: row.status || 'PRESENT',
-          clock_in: row.clock_in ? new Date(`${todayStr}T${row.clock_in}`).toISOString() : undefined,
-          clock_out: row.clock_out ? new Date(`${todayStr}T${row.clock_out}`).toISOString() : undefined,
-        });
-      });
-
       try {
-        await bulkCreateTimeRecords(processedLogs);
+        const wb = XLSX.read(evt.target?.result, { type: 'binary' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const raw = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][];
+
+        if (!raw || raw.length < 2) {
+          toast ({ variant: 'destructive', title: 'Import Rejected', description: 'File is empty or has no data rows.' });
+          return;
+        }
+
+        const headers: string[] = raw[0].map((h: any) => String(h ?? '').trim());
+
+        if (headers[0] !== 'employee_id' || headers[1] !== 'employee_name') {
+          toast({ variant: 'destructive', title: 'Import Rejected', description: 'Columns A and B must be employee_id and employee_name.' });
+          return;
+        }
+        if (headers[2] !== 'overrtime_hours' || headers[3] !== 'worked_hours') {
+          toast({ variant: 'destructive', title: 'Import Rejected', description: 'Columns C and D must be overtime_hours and worked_hours.' });
+          return;
+        }
+
+        const dateHeaders = headers.slice(4);
+        if (dateHeaders.length === 0) {
+          toast({ variant: 'destructive', title: 'Import Rejected', description: 'No date columns found in template.' });
+          return;
+        }
+
+        if (raw.length - 1 > 500) {
+          toast({ variant: 'destructive', title: 'Too many rows', description: 'Limit is 500 rows. Please split the file.' });
+          return;
+        }
+
+        const processedLogs: any[] = [];
+
+        for (let i = 1; i < raw.length; i++) {
+          const row = raw[i];
+          const rowNum = i + 1;
+          const empIdRaw = row[0];
+          const overrideOT = row[2];
+          const workedHrs = row[3];
+
+          if (empIdRaw === undefined || empIdRaw === null || empIdRaw === '') continue;
+
+          const empIdStr = String(empIdRaw).trim();
+          if (!/^\d+$/.test(empIdStr)) {
+            toast({ variant: 'destructive', title: 'Validation Error', description: `Row ${rowNum}: employee_id "${empIdStr}" must be numeric.` });
+            return;
+          }
+
+          const employeeExists = employees.some((e) => e.id.toString() === empIdStr);
+          if (!employeeExists) {
+            toast({ variant: 'destructive', title: 'Validation Error', description: `Row ${rowNum}: Employee ID "${empIdStr}" not found.` });
+            return;
+          }
+
+          const hours_worked = workedHrs !== '' && workedHrs != null ? Number(workedHrs) : undefined;
+          const overtime_hours = overrideOT !== '' && overrideOT != null ? Number(overrideOT) : undefined;
+
+          for (let d = 0; d < dateHeaders.length; d++) {
+            const dateHeaderRaw = dateHeaders[d];
+            const cellValue = row[4 + d];
+
+            if (cellValue === undefined || cellValue === null || cellValue === '') continue;
+
+            const symbol = String(cellValue).trim();
+            let attendance_status: 'PRESENT' | 'ABSENT';
+
+            if (symbol === PRESENT_SYMBOL) {
+              attendance_status = 'PRESENT';
+            } else if ( symbol === ABSENT_SYMBOL) {
+              attendance_status = 'ABSENT';
+            } else {
+              toast({ variant: 'destructive', title: 'Validation Error', description: `Row ${rowNum}, date "${dateHeaderRaw}": only ✓ or ✗ are allowed (got "${symbol}").` });
+              return;
+            }
+
+            const parsedDate = dayjs(dateHeaderRaw, 'DD/MM/YYYY');
+            if (!parsedDate.isValid()) {
+              toast({ variant: 'destructive', title: 'Validation Error', description: `Invalid date column header: "${dateHeaderRaw}".` });
+              return;
+            }
+            if (parsedDate.isBefore(start, 'day') || parsedDate.isAfter(end, 'day')) {
+              toast({ variant: 'destructive', title: 'Validation Error', description: `Date "${dateHeaderRaw}" is outside the selected range.` });
+              return;
+            }
+
+            processedLogs.push({
+              employee_id: empIdStr,
+              attendance_date: parsedDate.format('YYYY-MM-DD'),
+              attendance_status,
+              hours_worked,
+              overtime_hours,
+            });
+          }
+        }
+
+        if (processedLogs.length === 0) {
+          toast({ variant: 'destructive', title: 'Nothing to import', description: 'No filled attendance cells found.' });
+          return;
+        }
+
+        setLoading(true);
+        await bulkCreateTimeRecords({
+          date_from: importDateFrom,
+          date_to: importDateTo,
+          records: processedLogs,
+        });
+
         toast({ title: 'Import Success', description: `${processedLogs.length} attendance records imported.` });
+        setIsImportOpen(false);
+        setImportFile(null);
         fetchData();
-      } catch (err) {
-        toast({ variant: 'destructive', title: 'Import Failed', description: 'Ensure the file format is correct.' });
+      } catch (err: any) {
+        console.error('Import error:', err);
+        const serverErrors = err.response?.data?.errors;
+        if (Array.isArray(serverErrors) && serverErrors.length > 0) {
+          toast({ variant: 'destructive', title: 'Import Failed (Server)', description: `Row ${serverErrors[0].row}: ${serverErrors[0].message}` });
+        } else {
+          toast({ variant: 'destructive', title: 'Import Failed (Server)', description: `Row ${serverErrors[0].row}: ${serverErrors[0].message}` });
+        }
+      } finally {
+        setLoading(false);
       }
     };
-    reader.readAsBinaryString(file);
+    reader.readAsBinaryString(importFile);
   };
 
   const handleExport = (type: 'csv' | 'excel') => {
@@ -258,17 +443,9 @@ export default function AttendanceMonitoringPage() {
         </div>
         <div className="flex gap-2 items-center">
           <AttendanceSyncPopover />
-          <input 
-            type="file" 
-            ref={fileInputRef} 
-            className="hidden" 
-            accept=".xlsx, .xls, .csv" 
-            onChange={handleExcelImport}
-            aria-label="bulk-import-file"
-          />
           <Button 
             variant="outline" 
-            onClick={() => fileInputRef.current?.click()}
+            onClick={() => setIsImportOpen(true)}
             className="h-11 border-dashed"
           >
             <Upload className="mr-2 h-4 w-4" /> Bulk Import
@@ -379,8 +556,8 @@ export default function AttendanceMonitoringPage() {
                   <TableRow>
                     <TableHead className="font-bold">Personnel</TableHead>
                     <TableHead className="font-bold">Status Today</TableHead>
-                    <TableHead className="font-bold">Clock In</TableHead>
-                    <TableHead className="font-bold">Clock Out</TableHead>
+                    <TableHead className="font-bold">Hours Worked</TableHead>
+                    <TableHead className="font-bold">Overtime Hrs</TableHead>
                     {canLogAttendance && <TableHead className="font-bold text-right">Actions</TableHead>}
                   </TableRow>
                 </TableHeader>
@@ -439,29 +616,136 @@ export default function AttendanceMonitoringPage() {
           </div>
         </TabsContent>
       </Tabs>
+
+      <Dialog open={isImportOpen} onOpenChange={(open) => {
+        setIsImportOpen(open);
+        if (!open) setImportFile(null);
+      }}>
+        <DialogContent className="max-w-md bg-white rounded-3xl p-6 border shadow-lg">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-bold">Bulk Import Attendance</DialogTitle>
+            <DialogDescription className="text-sm text-slate-500">
+              Select a date range to generate a template or upload your filled template.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4 my-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-600">Date From</label>
+                <Input 
+                  type="date"
+                  value={importDateFrom}
+                  onChange={(e) => setImportDateFrom(e.target.value)}
+                  className="h-10 rounded-xl"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-600">Date To</label>
+                <Input 
+                  type="date"
+                  value={importDateTo}
+                  onChange={(e) => setImportDateTo(e.target.value)}
+                  className="h-10 rounded-xl"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-between items-center bg-slate-50 p-4 rounded-2xl border border-slate-100">
+              <div className="space-y-0.5">
+                <p className="text-xs font-bold text-slate-800">1. Download Template</p>
+                <p className="text-[10px] text-slate-500">Includes all active employees and dates.</p>
+              </div>
+              <Button 
+                type="button" 
+                size="sm" 
+                variant="outline" 
+                onClick={downloadTemplate}
+                disabled={!importDateFrom || !importDateTo}
+                className="h-9 rounded-xl font-semibold text-xs"
+              >
+                <Download className="mr-1 h-3.5 w-3.5" /> Download
+              </Button>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-slate-800">2. Upload Template File</label>
+              <div 
+                className="border-2 border-dashed border-slate-200 hover:border-slate-300 transition-colors rounded-2xl p-6 text-center cursor-pointer bg-slate-50/50"
+                onClick={() => {
+                  const el = document.getElementById('dialog-file-input');
+                  el?.click();
+                }}
+              >
+                <Upload className="mx-auto h-8 w-8 text-slate-400 mb-2" />
+                <p className="text-xs text-slate-600 font-medium">
+                  {importFile ? importFile.name : 'Click to select Excel/CSV file'}
+                </p>
+                <p className="text-[10px] text-slate-400 mt-1">Maximum size 5MB</p>
+                <input 
+                  id="dialog-file-input"
+                  type="file"
+                  className="hidden"
+                  accept=".xlsx, .xls, .csv"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) setImportFile(file);
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button 
+              variant="ghost" 
+              onClick={() => {
+                setIsImportOpen(false);
+                setImportFile(null);
+              }}
+              className="h-10 rounded-xl text-xs font-semibold"
+            >
+              Cancel
+            </Button>
+            <Button 
+              onClick={handleImportUpload}
+              disabled={!importFile || !importDateFrom || !importDateTo}
+              className="h-10 rounded-xl text-xs font-semibold px-6 bg-slate-900 text-white hover:bg-slate-800"
+            >
+              Upload & Import
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
-function AttendanceRow({ employee, record, onMark, canLogAttendance }: { employee: any, record: any, onMark: any, canLogAttendance: boolean }) {
-  const [clockIn, setClockIn] = useState('09:00');
-  const [clockOut, setClockOut] = useState('17:00');
+function AttendanceRow({
+  employee,
+  record,
+  onMark,
+  canLogAttendance,
+}: {
+  employee: any;
+  record: any;
+  onMark: any;
+  canLogAttendance: boolean;
+}) {
+  const [hoursWorked,   setHoursWorked]   = useState<number | ''>('');
+  const [overtimeHours, setOvertimeHours] = useState<number | ''>('');
 
   useEffect(() => {
-    if (record?.clock_in) {
-        setClockIn(new Date(record.clock_in).toLocaleTimeString([], {hour12: false, hour: '2-digit', minute:'2-digit'}));
-    }
-    if (record?.clock_out) {
-        setClockOut(new Date(record.clock_out).toLocaleTimeString([], {hour12: false, hour: '2-digit', minute:'2-digit'}));
-    }
+    if (record?.hours_worked)   setHoursWorked(Number(record.hours_worked));
+    if (record?.overtime_hours) setOvertimeHours(Number(record.overtime_hours));
   }, [record]);
 
   return (
     <TableRow className="hover:bg-secondary/10 transition-colors">
       <TableCell>
         <div className="flex flex-col">
-            <span className="font-bold text-slate-800">{employee.first_name} {employee.last_name}</span>
-            <span className="text-[10px] text-muted-foreground uppercase">{employee.employment_category?.name || 'DAILY'}</span>
+          <span className="font-bold text-slate-800">{employee.first_name} {employee.last_name}</span>
+          <span className="text-[10px] text-muted-foreground uppercase">{employee.employment_category?.name || 'DAILY'}</span>
         </div>
       </TableCell>
       <TableCell>
@@ -474,38 +758,42 @@ function AttendanceRow({ employee, record, onMark, canLogAttendance }: { employe
         )}
       </TableCell>
       <TableCell>
-        <Input 
-          type="time" 
-          value={clockIn} 
-          onChange={(e) => setClockIn(e.target.value)}
+        <Input
+          type="number"
+          min={0}
+          placeholder="hrs"
+          value={hoursWorked}
+          onChange={(e) => setHoursWorked(e.target.value === '' ? '' : Number(e.target.value))}
           disabled={!canLogAttendance}
-          className="w-28 h-9 text-xs font-mono rounded-lg border-slate-200"
+          className="w-24 h-9 text-xs font-mono rounded-lg border-slate-200"
         />
       </TableCell>
       <TableCell>
-        <Input 
-          type="time" 
-          value={clockOut} 
-          onChange={(e) => setClockOut(e.target.value)}
+        <Input
+          type="number"
+          min={0}
+          placeholder="OT hrs"
+          value={overtimeHours}
+          onChange={(e) => setOvertimeHours(e.target.value === '' ? '' : Number(e.target.value))}
           disabled={!canLogAttendance}
-          className="w-28 h-9 text-xs font-mono rounded-lg border-slate-200"
+          className="w-24 h-9 text-xs font-mono rounded-lg border-slate-200"
         />
       </TableCell>
       {canLogAttendance && (
         <TableCell className="text-right">
           <div className="flex justify-end gap-2">
-            <Button 
+            <Button
               type="button"
-              size="sm" 
+              size="sm"
               variant="outline"
               className={`h-9 rounded-xl font-bold text-xs ${record?.attendance_status === 'PRESENT' ? 'bg-emerald-600 text-white' : 'hover:bg-emerald-50 text-emerald-600 border-emerald-100'}`}
-              onClick={(e) => { e.preventDefault(); onMark(employee.id, 'PRESENT', clockIn, clockOut); }}
+              onClick={(e) => { e.preventDefault(); onMark(employee.id, 'PRESENT', hoursWorked || undefined, overtimeHours || undefined); }}
             >
               Present
             </Button>
-            <Button 
+            <Button
               type="button"
-              size="sm" 
+              size="sm"
               variant="outline"
               className={`h-9 rounded-xl font-bold text-xs ${record?.attendance_status === 'ABSENT' ? 'bg-rose-600 text-white' : 'hover:bg-rose-50 text-rose-600 border-rose-100'}`}
               onClick={(e) => { e.preventDefault(); onMark(employee.id, 'ABSENT'); }}

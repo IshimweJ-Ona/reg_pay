@@ -10,31 +10,28 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Loader2, Plus, RotateCw, Save, ShieldCheck } from 'lucide-react';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Activity, Clock, Loader2, Plus, RotateCw, Save, ShieldCheck } from 'lucide-react';
 import { createRole, getRoles, updateRole, type Role } from '@/api/roles';
-import { getPermissions } from '@/api/permissions';
+import { getAuditLogs, type AuditLogEntry } from '@/api/audit-logs';
+import { PERMISSION_MODULES, ALL_PERMISSION_KEYS } from '@/lib/permissions';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/auth-context';
-
-type Permission = {
-  id: string;
-  uuid: string;
-  name: string;
-  module_name: string;
-  permission_key: string;
-};
+import dayjs from '@/lib/dayjs';
 
 const emptyRoleForm = {
   name: '',
   description: '',
-  permission_ids: [] as string[],
+  permission_keys: [] as string[],
 };
 
 export default function SystemSettingsPage() {
   const [loading, setLoading] = useState(true);
   const [savingRole, setSavingRole] = useState(false);
   const [roles, setRoles] = useState<Role[]>([]);
-  const [permissions, setPermissions] = useState<Permission[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
+  const [selectedAuditId, setSelectedAuditId] = useState<string>('');
+  const [auditRefreshing, setAuditRefreshing] = useState(false);
   const [selectedRoleId, setSelectedRoleId] = useState<string>('');
   const [roleForm, setRoleForm] = useState(emptyRoleForm);
   const { toast } = useToast();
@@ -43,15 +40,17 @@ export default function SystemSettingsPage() {
   const isSuperAdmin = (user?.roles ?? []).includes('SUPER_ADMIN');
 
   const selectedRole = roles.find((role) => role.id === selectedRoleId);
+  const selectedAudit = auditLogs.find((log) => log.id === selectedAuditId) ?? auditLogs[0];
 
   const permissionsByModule = useMemo(() => {
-    return permissions.reduce<Record<string, Permission[]>>((groups, permission) => {
-      const moduleName = permission.module_name || 'General';
-      groups[moduleName] = groups[moduleName] ?? [];
-      groups[moduleName].push(permission);
-      return groups;
-    }, {});
-  }, [permissions]);
+    return PERMISSION_MODULES.reduce<Record<string, Array<{ key: string; name: string }>>>(
+      (acc, mod) => {
+        acc[mod.module] = mod.permissions;
+        return acc;
+      },
+      {},
+    );
+  }, []);
 
   useEffect(() => {
     if (user && !isSuperAdmin) {
@@ -62,23 +61,26 @@ export default function SystemSettingsPage() {
   }, [isSuperAdmin, user]);
 
   useEffect(() => {
+    if (!isSuperAdmin) return;
+    refreshAuditLogs();
+    const interval = window.setInterval(refreshAuditLogs, 15000);
+    return () => window.clearInterval(interval);
+  }, [isSuperAdmin]);
+
+  useEffect(() => {
     if (!selectedRole) return;
     setRoleForm({
       name: selectedRole.name,
       description: selectedRole.description ?? '',
-      permission_ids: selectedRole.role_permissions?.map((item) => item.permission_id) ?? [],
+      permission_keys: selectedRole.permission_keys ?? [],
     });
   }, [selectedRole]);
 
   const loadData = async () => {
     setLoading(true);
     try {
-      const [rolesData, permissionsData] = await Promise.all([
-        getRoles(),
-        getPermissions(),
-      ]);
+      const rolesData = await getRoles();
       setRoles(rolesData);
-      setPermissions(Array.isArray(permissionsData) ? permissionsData : []);
       const firstRole = rolesData[0];
       if (firstRole && !selectedRoleId) {
         setSelectedRoleId(firstRole.id);
@@ -87,11 +89,38 @@ export default function SystemSettingsPage() {
       toast({
         variant: 'destructive',
         title: 'Settings failed to load',
-        description: error?.response?.data?.message ?? 'Could not load roles and permissions.',
+        description: error?.response?.data?.message ?? 'Could not load roles.',
       });
     } finally {
       setLoading(false);
     }
+  };
+
+  const refreshAuditLogs = async () => {
+    setAuditRefreshing(true);
+    try {
+      const logs = await getAuditLogs(100);
+      setAuditLogs(logs);
+      setSelectedAuditId((current) => current || logs[0]?.id || '');
+    } catch (error: any) {
+      if (!auditLogs.length) {
+        toast({
+          variant: 'destructive',
+          title: 'Audit logs failed to load',
+          description: error?.response?.data?.message ?? 'Could not load system audit logs.',
+        });
+      }
+    } finally {
+      setAuditRefreshing(false);
+    }
+  };
+
+  const formatAuditTime = (value: string) =>
+    dayjs(value).tz('Africa/Kigali').format('MMM D, YYYY HH:mm');
+
+  const renderAuditJson = (value: any) => {
+    if (!value || (Array.isArray(value) && value.length === 0)) return 'None';
+    return JSON.stringify(value, null, 2);
   };
 
   const resetCreateForm = () => {
@@ -99,12 +128,12 @@ export default function SystemSettingsPage() {
     setRoleForm(emptyRoleForm);
   };
 
-  const togglePermission = (permissionId: string, checked: boolean) => {
+  const togglePermission = (permissionKey: string, checked: boolean) => {
     setRoleForm((prev) => ({
       ...prev,
-      permission_ids: checked
-        ? Array.from(new Set([...prev.permission_ids, permissionId]))
-        : prev.permission_ids.filter((id) => id !== permissionId),
+      permission_keys: checked
+        ? Array.from(new Set([...prev.permission_keys, permissionKey]))
+        : prev.permission_keys.filter((k) => k !== permissionKey),
     }));
   };
 
@@ -119,12 +148,12 @@ export default function SystemSettingsPage() {
       const payload = {
         name: roleForm.name.trim(),
         description: roleForm.description.trim(),
-        permission_ids: roleForm.permission_ids,
+        permission_keys: roleForm.permission_keys,
       };
       const saved = selectedRoleId
         ? await updateRole(selectedRoleId, selectedRole?.is_system_role ? {
             description: payload.description,
-            permission_ids: payload.permission_ids,
+            permission_keys: payload.permission_keys,
           } : payload)
         : await createRole(payload);
 
@@ -163,6 +192,109 @@ export default function SystemSettingsPage() {
         <p className="text-muted-foreground">Create roles and control the permissions each role grants across the system.</p>
       </div>
 
+      <Card className="border-none shadow-sm">
+        <CardHeader>
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <Activity className="h-5 w-5 text-primary" /> Audit Logs
+              </CardTitle>
+              <CardDescription>Live system activity by user, time, module, action, and changed values.</CardDescription>
+            </div>
+            <Button variant="outline" className="gap-2" onClick={refreshAuditLogs} disabled={auditRefreshing}>
+              {auditRefreshing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCw className="h-4 w-4" />}
+              Refresh
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-6">
+          <div className="rounded-lg border overflow-hidden">
+            <ScrollArea className="h-[360px]">
+              <Table>
+                <TableHeader className="bg-secondary/40">
+                  <TableRow>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Time</TableHead>
+                    <TableHead>Module</TableHead>
+                    <TableHead>Action</TableHead>
+                    <TableHead>Details</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {auditLogs.length > 0 ? auditLogs.map((log) => (
+                    <TableRow
+                      key={log.id}
+                      className={`cursor-pointer ${selectedAudit?.id === log.id ? 'bg-primary/5' : ''}`}
+                      onClick={() => setSelectedAuditId(log.id)}
+                    >
+                      <TableCell className="font-semibold">{log.user?.name || log.user?.email || 'System user'}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{formatAuditTime(log.created_at)}</TableCell>
+                      <TableCell><Badge variant="outline">{log.module_name}</Badge></TableCell>
+                      <TableCell>{log.action}</TableCell>
+                      <TableCell className="max-w-[260px] truncate text-sm">{log.activity_description}</TableCell>
+                    </TableRow>
+                  )) : (
+                    <TableRow>
+                      <TableCell colSpan={5} className="py-10 text-center text-muted-foreground">No audit logs found.</TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </ScrollArea>
+          </div>
+
+          <div className="rounded-lg border bg-secondary/10 p-4">
+            {selectedAudit ? (
+              <div className="space-y-4">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Selected activity</p>
+                  <h3 className="text-base font-bold">{selectedAudit.activity_description}</h3>
+                </div>
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div>
+                    <p className="text-xs text-muted-foreground">User</p>
+                    <p className="font-semibold">{selectedAudit.user?.name}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Time</p>
+                    <p className="font-semibold">{formatAuditTime(selectedAudit.created_at)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Entity</p>
+                    <p className="font-semibold">{selectedAudit.entity_table} #{selectedAudit.entity_id}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">IP</p>
+                    <p className="font-semibold">{selectedAudit.ip_address ?? 'Not captured'}</p>
+                  </div>
+                </div>
+                {selectedAudit.employee && (
+                  <div className="rounded-md bg-white p-3 text-sm">
+                    <p className="text-xs text-muted-foreground">Employee</p>
+                    <p className="font-semibold">{selectedAudit.employee.name} {selectedAudit.employee.employee_code ? `(${selectedAudit.employee.employee_code})` : ''}</p>
+                  </div>
+                )}
+                <div className="space-y-2">
+                  <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Changed fields</p>
+                  <pre className="max-h-32 overflow-auto rounded-md bg-white p-3 text-xs">{renderAuditJson(selectedAudit.changed_fields)}</pre>
+                </div>
+                <div className="space-y-2">
+                  <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground">New values</p>
+                  <pre className="max-h-40 overflow-auto rounded-md bg-white p-3 text-xs">{renderAuditJson(selectedAudit.new_values)}</pre>
+                </div>
+              </div>
+            ) : (
+              <div className="flex h-full min-h-72 items-center justify-center text-center text-muted-foreground">
+                <div>
+                  <Clock className="mx-auto mb-2 h-8 w-8" />
+                  <p>No activity selected.</p>
+                </div>
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
       <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-6">
         <Card className="border-none shadow-sm">
           <CardHeader>
@@ -179,7 +311,7 @@ export default function SystemSettingsPage() {
             <ScrollArea className="h-[520px] pr-3">
               <div className="space-y-2">
                 {roles.map((role) => {
-                  const permissionCount = role.role_permissions?.length ?? 0;
+                  const permissionCount = role.permission_keys?.length ?? 0;
                   const active = role.id === selectedRoleId;
                   return (
                     <button
@@ -242,16 +374,19 @@ export default function SystemSettingsPage() {
             <div className="flex items-center justify-between rounded-lg border bg-secondary/20 px-4 py-3">
               <div>
                 <p className="text-sm font-bold">Assigned permissions</p>
-                <p className="text-xs text-muted-foreground">{roleForm.permission_ids.length} of {permissions.length} selected</p>
+                <p className="text-xs text-muted-foreground">{roleForm.permission_keys.length} of {ALL_PERMISSION_KEYS.length} selected</p>
               </div>
               <Select
                 value="bulk"
                 onValueChange={(value) => {
                   if (value === 'all') {
-                    setRoleForm((prev) => ({ ...prev, permission_ids: permissions.map((permission) => permission.id) }));
+                    setRoleForm((prev) => ({
+                      ...prev,
+                      permission_keys: ALL_PERMISSION_KEYS,
+                    }));
                   }
                   if (value === 'none') {
-                    setRoleForm((prev) => ({ ...prev, permission_ids: [] }));
+                    setRoleForm((prev) => ({ ...prev, permission_keys: [] }));
                   }
                 }}
               >
@@ -272,24 +407,47 @@ export default function SystemSettingsPage() {
                   <section key={moduleName} className="p-4">
                     <div className="mb-3 flex items-center justify-between gap-3">
                       <h3 className="text-sm font-bold">{moduleName}</h3>
-                      <Badge variant="secondary">{modulePermissions.length}</Badge>
+                      <div className="flex items-center gap-2">
+                        <Badge variant="secondary">{modulePermissions.length}</Badge>
+                        <button
+                          type="button"
+                          className="text-xs text-primary underline underline-offset-2"
+                          onClick={() => {
+                            const moduleKeys = modulePermissions.map((p) => p.key);
+                            const allChecked = moduleKeys.every((k) => roleForm.permission_keys.includes(k));
+                            if (allChecked) {
+                              setRoleForm((prev) => ({
+                                ...prev,
+                                permission_keys: prev.permission_keys.filter((k) => !moduleKeys.includes(k)),
+                              }));
+                            } else {
+                              setRoleForm((prev) => ({
+                                ...prev,
+                                permission_keys: Array.from(new Set([...prev.permission_keys, ...moduleKeys])),
+                              }));
+                            }
+                          }}
+                        >
+                          {modulePermissions.every((p) => roleForm.permission_keys.includes(p.key)) ? 'Deselect all' : 'Select all'}
+                        </button>
+                      </div>
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                       {modulePermissions.map((permission) => {
-                        const checked = roleForm.permission_ids.includes(permission.id);
+                        const checked = roleForm.permission_keys.includes(permission.key);
                         return (
                           <label
-                            key={permission.id}
+                            key={permission.key}
                             className="flex min-h-16 cursor-pointer items-start gap-3 rounded-lg border bg-white p-3 hover:bg-secondary/30"
                           >
                             <Checkbox
                               checked={checked}
-                              onCheckedChange={(value) => togglePermission(permission.id, Boolean(value))}
+                              onCheckedChange={(value) => togglePermission(permission.key, Boolean(value))}
                               className="mt-1"
                             />
                             <span className="min-w-0">
                               <span className="block text-sm font-semibold">{permission.name}</span>
-                              <span className="block truncate text-xs text-muted-foreground">{permission.permission_key}</span>
+                              <span className="block truncate text-xs text-muted-foreground">{permission.key}</span>
                             </span>
                           </label>
                         );

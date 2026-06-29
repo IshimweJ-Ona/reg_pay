@@ -280,7 +280,7 @@ function UsersManagementContent() {
                     </Badge>
                 </TableCell>
                 <TableCell>
-                  <PermissionGate permission="users.update" fallback={<span className="text-muted-foreground">-</span>}>
+                  <PermissionGate permission="users.update">
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <Button variant="ghost" size="icon"><MoreVertical className="h-4 w-4" /></Button>

@@ -29,7 +29,7 @@ export function useNotifications(token: string) {
             // 1. Refresh the access token first
             let freshToken = token;
             try {
-                const refreshToken = localStorage.getItem('refreshToken');
+                const refreshToken = sessionStorage.getItem('refreshToken');
                 const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/refresh`, {
                     method: 'POST',
                     credentials: 'include',

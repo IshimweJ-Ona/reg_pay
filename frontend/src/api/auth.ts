@@ -124,13 +124,13 @@ export const logoutAll = async () => {
 };
 
 export const saveTokens = (tokens: TokenPair) => {
-    localStorage.setItem("accessToken", tokens.access_token);
-    localStorage.setItem("refreshToken", tokens.refresh_token);
+    sessionStorage.setItem("accessToken", tokens.access_token);
+    sessionStorage.setItem("refreshToken", tokens.refresh_token);
 };
 
 export const clearTokens = () => {
-    localStorage.removeItem("accessToken");
-    localStorage.removeItem("refreshToken");
+    sessionStorage.removeItem("accessToken");
+    sessionStorage.removeItem("refreshToken");
 };
 
 export const decodeJwt = (token: string): JwtUser | null => {
@@ -149,6 +149,6 @@ export const decodeJwt = (token: string): JwtUser | null => {
 };
 
 export const getCurrentUserFromToken = () => {
-    const token = localStorage.getItem("accessToken");
+    const token = sessionStorage.getItem("accessToken");
     return token ? decodeJwt(token) : null;
 };

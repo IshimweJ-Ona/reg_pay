@@ -10,7 +10,7 @@ const api = axios.create({
 api.interceptors.request.use((config) => {
     const token =
         typeof window !== "undefined"
-            ? localStorage.getItem("accessToken")
+            ? sessionStorage.getItem("accessToken")
             : null;
 
     if (token) {
@@ -29,8 +29,8 @@ api.interceptors.response.use(
         if (status === 401) {
             // Only clear and redirect if we are not already on auth pages
             if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/auth')) {
-                localStorage.removeItem("accessToken");
-                localStorage.removeItem("refreshToken");
+                sessionStorage.removeItem("accessToken");
+                sessionStorage.removeItem("refreshToken");
                 window.location.href = "/auth/login";
             }
         }

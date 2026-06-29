@@ -1,14 +1,17 @@
 import api from "./axios";
+import { getWorkingLocations } from "./working_locations";
 
 export interface CreateTimeRecordPayload {
     employee_id: string;
     attendance_date: string;
-    clock_in?: string;
+    hours_worked?: number;
+    overtime_hours?: number;
     attendance_status?: "PRESENT" | "ABSENT";
 }
 
 export interface UpdateTimeRecordPayload {
-    clock_out?: string;
+    hours_worked?: number;
+    overtime_hours?: number;
     attendance_status?: "PRESENT" | "ABSENT";
 }
 
@@ -17,16 +20,11 @@ export const createTimeRecord = async (payload: CreateTimeRecordPayload) => {
     return response.data;
 };
 
-export const clockOutTimeRecord = async (
+export const updateTimeRecord = async (
     uuid: string,
     payload: UpdateTimeRecordPayload,
 ) => {
-    const response = await api.patch(`/time-records/${uuid}/clock-out`, payload);
-    return response.data;
-};
-
-export const approveTimeRecord = async (uuid: string, comment?: string) => {
-    const response = await api.patch(`/time-records/${uuid}/approve`, { comment });
+    const response = await api.patch(`/time-records/${uuid}/approve`, { Comment });
     return response.data;
 };
 
@@ -35,9 +33,12 @@ export const getTimeRecords = async () => {
     return response.data;
 };
 
-export const getTodayAttendance = async (workingLocationId?: string, category?: string) => {
+export const getTodayAttendance = async (
+    getWorkingLocationId?: string,
+    category?: string,
+) => {
     const params = new URLSearchParams();
-    if (workingLocationId) params.append("working_location_id", workingLocationId);
+    if (getWorkingLocationId) params.append("working_location_id", getWorkingLocationId);
     if (category) params.append("category", category);
     const response = await api.get(`/time-records/today?${params.toString()}`);
     return response.data;
@@ -45,28 +46,30 @@ export const getTodayAttendance = async (workingLocationId?: string, category?: 
 
 export const getAttendance = getTimeRecords;
 
-export const createAttendance = async (payload: any) => {
-    return createTimeRecord({
-        employee_id: payload.employee_id ?? payload.employee_uuid,
-        attendance_date: payload.attendance_date ?? payload.date,
-        attendance_status: payload.attendance_status ?? payload.status,
-        clock_in: payload.clock_in,
-    });
-};
-
-export const updateAttendance = async (uuid: string, payload: any) => {
-    return clockOutTimeRecord(uuid, {
-        clock_out: payload.clock_out,
-        attendance_status: payload.attendance_status ?? payload.status,
-    });
-};
-
 export const getTimeRecordsByEmployee = async (employeeId: string) => {
-    const response = await api.get(`/time-records/employee/${employeeId}`);
+    const response = await api.get(`time-records/employee/${employeeId}`);
     return response.data;
 };
 
-export const bulkCreateTimeRecords = async (records: any[], signal?: AbortSignal) => {
-    const response = await api.post("/time-records/batch-sync", { records }, { signal });
-    return response.data;
+export interface BulkCreateTimeRecordsPayload {
+    date_from: string;
+    date_to: string;
+    records: CreateTimeRecordPayload[];
+}
+
+export const bulkCreateTimeRecords = async (
+    payloadOrRecords: any[] | BulkCreateTimeRecordsPayload,
+    signal?: AbortSignal,
+) => {
+    if (Array.isArray(payloadOrRecords)) {
+        const response = await api.post(
+            "/time-records/batch-sync",
+            { records: payloadOrRecords },
+            { signal },
+        );
+        return response.data;
+    } else {
+        const response = await api.post("/time-records/bulk", payloadOrRecords, { signal, });
+        return response.data;
+    }
 };

@@ -97,7 +97,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const loadUser = async () => {
-      const token = localStorage.getItem('accessToken');
+      const token = sessionStorage.getItem('accessToken');
       if (!token) {
         setIsLoading(false);
         return;
@@ -138,7 +138,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const interval = setInterval(async () => {
       try {
-        const refreshToken = localStorage.getItem('refreshToken');
+        const refreshToken = sessionStorage.getItem('refreshToken');
         if (!refreshToken) return;
 
         const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/refresh`, {
@@ -182,7 +182,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const logout = async () => {
-    const refreshToken = localStorage.getItem('refreshToken');
+    const refreshToken = sessionStorage.getItem('refreshToken');
     try {
       if (refreshToken) await logoutRequest(refreshToken);
     } catch {
@@ -195,7 +195,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const refreshSession = async (options?: { reload?: boolean }) => {
-    const currentRefreshToken = localStorage.getItem('refreshToken');
+    const currentRefreshToken = sessionStorage.getItem('refreshToken');
     if (currentRefreshToken) {
       const tokens = await refreshToken(currentRefreshToken);
       saveTokens(tokens);
