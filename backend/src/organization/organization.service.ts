@@ -39,7 +39,6 @@ export class OrganizationService {
     dto: CreateWorkingLocationDto,
     actor: CurrentUserType,
   ) {
-    console.log('Hello');
     if (!actor.roles.includes('SUPER_ADMIN')) {
       throw new BadRequestException(
         'Only SUPER_ADMIN can create working locations.',
@@ -83,8 +82,6 @@ export class OrganizationService {
         distinct: ['code'],
         select: { code: true, name: true, description: true },
       });
-
-      console.log('Existing Departments:', existingDepartments);
 
       if (existingDepartments.length) {
         await tx.departments.createMany({

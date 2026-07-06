@@ -11,7 +11,7 @@ echo "Generating Prisma client..."
 npx prisma generate
 
 echo "Seeding database..."
-npx prisma db seed
+npm run seed:super-admin
 
 echo "Starting backend..."
 exec npm run start:prod
