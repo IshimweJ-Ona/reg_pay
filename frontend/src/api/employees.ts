@@ -9,6 +9,8 @@ export interface CreateEmployeePayload {
     national_id?: string;
     gender?: Gender;
     hire_date?: string;
+    contract_start_date?: string;
+    contract_end_date?: string;
     department_id?: string;
     working_location_id?: string;
     employment_category_id?: string;

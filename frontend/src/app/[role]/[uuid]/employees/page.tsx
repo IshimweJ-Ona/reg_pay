@@ -145,6 +145,8 @@ export default function EmployeeDirectoryPage() {
     daily_rate: '',
     tax_percentage: '0',
     custom_work_days: '',
+    contract_start_date: '',
+    contract_end_date: '',
     allowance_title: '',
     allowance_amount: '',
     allowance_description: '',
@@ -499,6 +501,8 @@ export default function EmployeeDirectoryPage() {
         phone_number: newEmployee.phone_number ? `+250${newEmployee.phone_number}` : undefined,
         national_id: newEmployee.national_id,
         gender: newEmployee.gender,
+        contract_start_date: newEmployee.contract_start_date || undefined,
+        contract_end_date: newEmployee.contract_end_date || undefined,
         department_id: newEmployee.department_id || undefined,
         employment_category_id: newEmployee.employment_category_id || undefined,
         ...(isLocationScopedManager ? {} : { working_location_id: newEmployee.working_location_id || undefined }),
@@ -544,6 +548,8 @@ export default function EmployeeDirectoryPage() {
         daily_rate: '',
         tax_percentage: '0',
         custom_work_days: '',
+        contract_start_date: '',
+        contract_end_date: '',
         allowance_title: '',
         allowance_amount: '',
         allowance_description: '',
@@ -977,6 +983,26 @@ export default function EmployeeDirectoryPage() {
                 <option value="">{isLocationScopedManager || newEmployee.working_location_id ? "Select Department" : "Select Location First"}</option>
                 {filteredDepartments.map(d => <option key={d.uuid} value={d.uuid}>{d.name}</option>)}
               </select>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label>Contract Start Date</Label>
+                <Input 
+                  type="date"
+                  value={newEmployee.contract_start_date}
+                  onChange={e => setNewEmployee(p => ({...p, contract_start_date: e.target.value}))}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Contract End Date (Optional)</Label>
+                <Input 
+                  type="date"
+                  value={newEmployee.contract_end_date}
+                  onChange={e => setNewEmployee(p => ({...p, contract_end_date: e.target.value}))}
+                />
+                <p className="text-[10px] text-muted-foreground italic">* For daily/custom employees only. After this date, employee will be paused.</p>
+              </div>
             </div>
             <div className="space-y-2">
               <Label>Payment Category</Label>
