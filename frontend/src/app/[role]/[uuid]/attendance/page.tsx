@@ -233,7 +233,7 @@ export default function AttendanceMonitoringPage() {
       //  Sheet tab name must match the master file exactly.
       // Rename the tab in Excel to "Attendance" and update below, or leave as "Sheet1".
       const sheet = workbook.sheet('Sheet1');
-      if (!sheet) throw new Error(`Sheet "Sheet1" not found in template. Available: ${workbook.sheets().map(s => s.name()).join(', ')}`);
+      if (!sheet) throw new Error(`Sheet "Sheet1" not found in template. Available: ${workbook.sheets().map((s: any) => s.name()).join(', ')}`);
 
       // Column layout: A employee_id, B employee_name, C department,
       // D overtime_hours, E worked_hours, F+ dates

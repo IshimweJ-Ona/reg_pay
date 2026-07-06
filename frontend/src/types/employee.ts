@@ -1,4 +1,3 @@
-
 export interface Employee {
   id: string;
   uuid: string;
@@ -22,4 +21,6 @@ export interface Employee {
   department_id?: string;
   working_location_id?: string;
   employment_category_id?: string;
+  contract_start_date?: string;
+  contract_end_date?: string;
 }

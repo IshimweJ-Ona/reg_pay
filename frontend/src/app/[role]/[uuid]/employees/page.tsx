@@ -101,6 +101,8 @@ function mapApiEmployee(item: any, attendanceByEmployee = new Map<string, any[]>
     department_id: item.department_id ?? '',
     working_location_id: item.working_location_id ?? '',
     employment_category_id: item.employment_category_id ?? '',
+    contract_start_date: item.contract_start_date ? new Date(item.contract_start_date).toISOString().split('T')[0] : '',
+    contract_end_date: item.contract_end_date ? new Date(item.contract_end_date).toISOString().split('T')[0] : '',
   };
 }
 
@@ -249,6 +251,8 @@ export default function EmployeeDirectoryPage() {
         daily_rate: structure.daily_rate?.toString() || '',
         tax_percentage: structure.tax_percentage?.toString() || '0',
         custom_work_days: structure.custom_work_days?.toString() || '',
+        contract_start_date: emp.contract_start_date || '',
+        contract_end_date: emp.contract_end_date || '',
         allowance_title: allowances[0]?.title || '',
         allowance_amount: allowances[0]?.amount?.toString() || '',
         allowance_description: allowances[0]?.description || '',
@@ -894,6 +898,8 @@ export default function EmployeeDirectoryPage() {
             daily_rate: '',
             tax_percentage: '0',
             custom_work_days: '',
+            contract_start_date: '',
+            contract_end_date: '',
             allowance_title: '',
             allowance_amount: '',
             allowance_description: '',

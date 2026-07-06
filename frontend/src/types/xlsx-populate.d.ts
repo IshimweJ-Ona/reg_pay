@@ -14,7 +14,8 @@ declare module 'xlsx-populate/browser/xlsx-populate' {
     interface Sheet {
         cell(cellAddress: string): Cell;
         row(rowNumber: number): Row;
-        column(columnLetter: string): any;range(start: string, end: string): any;
+        column(columnLetter: string): any;
+        range(start: string, end: string): any;
         name(name?: string): any;
         hidden(hidden?: boolean): any;
         active(active?: boolean): any;
@@ -34,9 +35,8 @@ declare module 'xlsx-populate/browser/xlsx-populate' {
         fromFileAsync(path: string): Promise<Workbook>;
         fromBlob(blob: Blob): Promise<Workbook>;
         fromBase64(base64: string): Promise<Workbook>;
-    fromDataAsync(data: ArrayBuffer): Promise<Workbook>
-
-export function fromDataAsync(arrayBuffer: ArrayBuffer) {
-      throw new Error('Function not implemented.');
-    }
-;
+        fromDataAsync(data: ArrayBuffer): Promise<Workbook>;
+    };
+    
+    export default XlsxPopulate;
+}
