@@ -40,14 +40,20 @@ export class TimeRecordsService {
       );
     }
 
+    const { hours_worked, overtime_hours } = this.normalizeHours(
+      dto.attendance_status ?? ATTENDANCE_STATUS.PRESENT,
+      dto.hours_worked,
+      dto.overtime_hours,
+    );
+
     const record = await this.prisma.$transaction(async (tx) => {
       const created = await tx.time_records.create({
         data: {
           uuid: generateUUID(),
           employee_id: employeeId,
           attendance_date: attendanceDate,
-          hours_worked: dto.hours_worked ?? 0,
-          overtime_hours: dto.overtime_hours ?? 0,
+          hours_worked,
+          overtime_hours,
           attendance_status: dto.attendance_status ?? ATTENDANCE_STATUS.PRESENT,
         },
         include: this.includes(),
@@ -179,6 +185,18 @@ export class TimeRecordsService {
         });
       }
 
+      if (
+        recordDto.attendance_status === 'ABSENT' &&
+        ((recordDto.hours_worked ?? 0) > 0 || (recordDto.overtime_hours ?? 0) > 0)
+      ) {
+        errors.push({
+          row,
+          employee_id: recordDto.employee_id,
+          message:
+            'hours_worked and overtime_hours must be 0 when attendance_status is ABSENT',
+        });
+      }
+
       if (!recordDto.attendance_date) {
         errors.push({
           row,
@@ -214,12 +232,21 @@ export class TimeRecordsService {
         errors,
       });
     }
+    
+    
+
 
     const syncedRecords = await this.prisma.$transaction(async (tx) => {
       const results: any[] = [];
       for (const recordDto of records) {
         const employeeId = BigInt(recordDto.employee_id);
         const attendanceDate = new Date(recordDto.attendance_date);
+
+        const { hours_worked, overtime_hours } = this.normalizeHours(
+          recordDto.attendance_status,
+          recordDto.hours_worked,
+          recordDto.overtime_hours,
+        );
 
         const upserted = await tx.time_records.upsert({
           where: {
@@ -230,16 +257,16 @@ export class TimeRecordsService {
           },
           update: {
             attendance_status: recordDto.attendance_status,
-            hours_worked: recordDto.hours_worked ?? 0,
-            overtime_hours: recordDto.overtime_hours ?? 0,
+            hours_worked,
+            overtime_hours,
           },
           create: {
             uuid: generateUUID(),
             employee_id: employeeId,
             attendance_date: attendanceDate,
             attendance_status: recordDto.attendance_status,
-            hours_worked: recordDto.hours_worked ?? 0,
-            overtime_hours: recordDto.overtime_hours ?? 0,
+            hours_worked,
+            overtime_hours,
           },
         });
         results.push(upserted);
@@ -292,6 +319,12 @@ export class TimeRecordsService {
         const employeeId = this.toBigInt(recordDto.employee_id, 'employee_id');
         const attendanceDate = new Date(recordDto.attendance_date);
 
+        const { hours_worked, overtime_hours } = this.normalizeHours(
+          recordDto.attendance_status,
+          recordDto.hours_worked,
+          recordDto.overtime_hours,
+        );
+
         const record = await tx.time_records.upsert({
           where: {
             employee_id_attendance_date: {
@@ -300,8 +333,8 @@ export class TimeRecordsService {
             },
           },
           update: {
-            hours_worked: recordDto.hours_worked ?? undefined,
-            overtime_hours: recordDto.overtime_hours ?? undefined,
+            hours_worked,
+            overtime_hours: overtime_hours ?? undefined,
             attendance_status:
               recordDto.attendance_status ?? ATTENDANCE_STATUS.PRESENT,
           },
@@ -309,8 +342,8 @@ export class TimeRecordsService {
             uuid: generateUUID(),
             employee_id: employeeId,
             attendance_date: attendanceDate,
-            hours_worked: recordDto.hours_worked ?? 0,
-            overtime_hours: recordDto.overtime_hours ?? 0,
+            hours_worked,
+            overtime_hours,
             attendance_status:
               recordDto.attendance_status ?? ATTENDANCE_STATUS.PRESENT,
           },
@@ -335,12 +368,19 @@ export class TimeRecordsService {
     const record = await this.findByUuidOrThrow(uuid);
     this.ensureActorCanAccessEmployee(actor, record.employee);
 
+    const resolvedStatus = dto.attendance_status ?? record.attendance_status;
+    const { hours_worked, overtime_hours } = this.normalizeHours(
+      resolvedStatus,
+      dto.hours_worked ?? Number(record.hours_worked ?? 0),
+      dto.overtime_hours ?? Number(record.overtime_hours ?? 0),
+    );
+
     const updated = await this.prisma.$transaction(async (tx) => {
       const saved = await tx.time_records.update({
         where: { id: record.id },
         data: {
-          hours_worked: dto.hours_worked ?? undefined,
-          overtime_hours: dto.overtime_hours ?? undefined,
+          hours_worked,
+          overtime_hours,
           attendance_status: dto.attendance_status ?? undefined,
         },
         include: this.includes(),
@@ -357,8 +397,9 @@ export class TimeRecordsService {
           activity_description: 'Updated attendance record.',
           action: AUDIT_ACTION.UPDATED,
           new_values: {
-            hours_worked: dto.hours_worked,
-            overtime_hours: dto.overtime_hours,
+            hours_worked,
+            overtime_hours,
+            attendance_status: dto.attendance_status ?? undefined,
           },
           changed_fields: ['hours_worked', 'overtime_hours', 'attendance_status'],
         },
@@ -550,6 +591,20 @@ export class TimeRecordsService {
               record.approvedBy.working_location_id?.toString() ?? null,
           }
         : null,
+    };
+  }
+
+  private normalizeHours(
+    status: ATTENDANCE_STATUS | undefined,
+    hoursWorked?: number,
+    overtimeHours?: number,
+  ) {
+    if (status === ATTENDANCE_STATUS.ABSENT) {
+      return { hours_worked: 0, overtime_hours: 0 };
+    }
+    return {
+      hours_worked: hoursWorked ?? 0,
+      overtime_hours: overtimeHours ?? 0,
     };
   }
 

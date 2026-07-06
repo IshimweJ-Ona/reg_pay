@@ -25,6 +25,7 @@ import { generateUUID } from '../common/utils/uuid.util';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SystemConfigService } from '../system-config/system-config.service';
+import { EmployeesService } from '../employees/employees.service';
 import { ApprovePayrollItemDto } from './dto/approve-payroll-item.dto';
 import { CreatePayrollBatchDto } from './dto/create-payroll-batch.dto';
 import { RejectPayrollItemDto } from './dto/reject-payroll-item.dto';
@@ -60,6 +61,7 @@ export class PayrollService {
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
     private readonly systemConfigService: SystemConfigService,
+    private readonly employeesService: EmployeesService,
     @Inject(CACHE_MANAGER) private cacheManager: cacheManager.Cache,
   ) {}
 
@@ -69,6 +71,9 @@ export class PayrollService {
     );
     await this.ensureWorkingLocation(workingLocationId);
     this.ensureActorCanUseWorkingLocation(actor, workingLocationId);
+
+    // Auto-pause employees with expired contracts before batch creation
+    await this.employeesService.autoPauseExpiredContracts(workingLocationId);
 
     const employees = await this.prisma.employees.findMany({
       where: {

@@ -30,6 +30,7 @@ enum STATUS_USER {
   SUSPENDED
   PENDING
   REJECTED
+  PAUSED
 }
 
 /* =========================================================
@@ -575,6 +576,8 @@ model Employees {
   gender GENDER?
 
   hire_date DateTime? @db.Date
+  contract_start_date DateTime? @db.Date
+  contract_end_date DateTime? @db.Date
 
   department_id BigInt?
   working_location_id BigInt?

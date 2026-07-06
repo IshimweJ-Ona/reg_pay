@@ -803,6 +803,93 @@ export class EmployeesService {
     );
   }
 
+  /**
+   * Auto-pause employees whose contract end date has passed
+   * Only applies to DAILY and CUSTOM employment categories
+   */
+  async autoPauseExpiredContracts(workingLocationId?: bigint) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    // Find daily/custom employees with expired contracts
+    const expiredEmployees = await this.prisma.employees.findMany({
+      where: {
+        status: STATUS_USER.ACTIVE,
+        contract_end_date: {
+          lt: today,
+        },
+        employment_category: {
+          name: {
+            in: ['DAILY', 'CUSTOM'],
+          },
+        },
+        ...(workingLocationId && { working_location_id: workingLocationId }),
+        deleted_at: null,
+      },
+      include: this.employeeIncludes(),
+    });
+
+    if (expiredEmployees.length === 0) {
+      return { paused_count: 0 };
+    }
+
+    // Update all expired employees to PAUSED status
+    await this.prisma.$transaction(async (tx) => {
+      for (const employee of expiredEmployees) {
+        await tx.employees.update({
+          where: { id: employee.id },
+          data: { status: STATUS_USER.PAUSED },
+        });
+
+        // Log the pause action
+        await tx.employee_history.create({
+          data: {
+            uuid: generateUUID(),
+            employee_id: employee.id,
+            action_type: ACTION_TYPE.SUSPENDED,
+            old_department_id: employee.department_id,
+            new_department_id: employee.department_id,
+            old_location_id: employee.working_location_id,
+            new_location_id: employee.working_location_id,
+            old_employment_category_id: employee.employment_category_id,
+            new_employment_category_id: employee.employment_category_id,
+            status: STATUS_ACTIVE_INACTIVE.INACTIVE,
+            reason: `Contract ended on ${employee.contract_end_date?.toISOString().split('T')[0]}. Employee paused automatically.`,
+            changed_by: BigInt(1), // System user
+            approved_by: BigInt(1),
+          },
+        });
+
+        // Create audit log
+        await tx.audit_logs.create({
+          data: {
+            user_id: BigInt(1), // System user
+            employee_id: employee.id,
+            entity_table: 'employees',
+            entity_id: employee.id,
+            module_name: 'EMPLOYEES',
+            activity_type: ACTIVITY_TYPE.UPDATE,
+            activity_description: 'Employee auto-paused: contract end date expired.',
+            action: AUDIT_ACTION.UPDATED,
+            old_values: {
+              status: employee.status,
+            },
+            new_values: {
+              status: STATUS_USER.PAUSED,
+              contract_end_date: employee.contract_end_date?.toISOString(),
+            },
+            changed_fields: ['status'],
+          },
+        });
+      }
+    });
+
+    await this.clearEmployeeCache();
+    this.notificationsService.broadcast({ type: 'employees_updated' });
+
+    return { paused_count: expiredEmployees.length };
+  }
+
   private async changeStatus(
     uuid: string,
     status: STATUS_USER,
