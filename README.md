@@ -23,7 +23,7 @@ Comprehensive Payroll and Employee Management System for REG (Rwanda Energy Grou
 1. Clone the repository.
 2. Start Docker Desktop.
 3. Review `env.docker` and change the local passwords/secrets if needed.
-4. Run `docker compose --env-file env.docker up --build`.
+4. Run `docker compose --env-file .env.docker up --build`.
 5. The backend will be available at `http://localhost:5000`.
 6. The frontend will be available at `http://localhost:3001`.
 
