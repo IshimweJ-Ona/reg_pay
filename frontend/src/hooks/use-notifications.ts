@@ -65,7 +65,7 @@ export function useNotifications(token: string) {
 
                     if (data.type === 'heartbeat') return;
 
-                    if (data.type === 'employees_updated' || data.type === 'attendance_updated') {
+                    if (data.type === 'employees_updated' || data.type === 'attendance_updated' || data.type === 'permissions_updated') {
                         console.log('System sync event received:', data.type);
                         window.dispatchEvent(new CustomEvent('system_update', { detail: data }));
                         return;

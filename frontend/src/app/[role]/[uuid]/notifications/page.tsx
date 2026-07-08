@@ -6,8 +6,9 @@ import { Bell, Check, AlertCircle, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { getNotifications, markAsRead, markAllAsRead, Notification } from '@/api/notifications';
-import { approveUser, rejectUser } from '@/api/users';
+import { approveUser, rejectUser, approveUserTransfer, rejectUserTransfer } from '@/api/users';
 import { approvePayrollBatch, rejectPayrollBatch } from '@/api/payroll';
+import { approveEmployeeTransfer, rejectEmployeeTransfer } from '@/api/employees';
 import { useToast } from '@/hooks/use-toast';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -30,12 +31,17 @@ export default function NotificationsPage() {
     loadNotifications();
   }, []);
 
+  useEffect(() => {
+    window.addEventListener('notifications_updated', loadNotifications);
+    return () => window.removeEventListener('notifications_updated', loadNotifications);
+  }, []);
+
   const handleApproveRegistration = async (nUuid: string, uUuid: string) => {
     try {
       await approveUser(uUuid, {});
       await markAsRead(nUuid);
       toast({ title: "Account approved", description: "The user now has system access." });
-      await loadNotifications();
+      window.dispatchEvent(new CustomEvent('notifications_updated'));
     } catch (error: any) {
       toast({ variant: "destructive", title: "Approval failed", description: error?.response?.data?.message });
     }
@@ -46,7 +52,7 @@ export default function NotificationsPage() {
       await rejectUser(uUuid, "Denied from notifications page.");
       await markAsRead(nUuid);
       toast({ variant: "destructive", title: "Account denied" });
-      await loadNotifications();
+      window.dispatchEvent(new CustomEvent('notifications_updated'));
     } catch {
       toast({ variant: "destructive", title: "Denial failed" });
     }
@@ -57,15 +63,47 @@ export default function NotificationsPage() {
       await approvePayrollBatch(bUuid, "Approved from notifications page.");
       await markAsRead(nUuid);
       toast({ title: "Payroll approved" });
-      await loadNotifications();
+      window.dispatchEvent(new CustomEvent('notifications_updated'));
     } catch {
       toast({ variant: "destructive", title: "Approval failed" });
     }
   };
 
+  const handleApproveTransfer = async (nUuid: string, transferUuid: string, title: string) => {
+    try {
+      const isEmployee = title.toLowerCase().includes('employee');
+      if (isEmployee) {
+        await approveEmployeeTransfer(transferUuid);
+      } else {
+        await approveUserTransfer(transferUuid);
+      }
+      await markAsRead(nUuid);
+      toast({ title: "Transfer Approved", description: "The request has moved to the next level or finalized." });
+      window.dispatchEvent(new CustomEvent('notifications_updated'));
+    } catch (error: any) {
+      toast({ variant: "destructive", title: "Transfer approval failed", description: error?.response?.data?.message });
+    }
+  };
+
+  const handleDenyTransfer = async (nUuid: string, transferUuid: string, title: string) => {
+    try {
+      const isEmployee = title.toLowerCase().includes('employee');
+      if (isEmployee) {
+        await rejectEmployeeTransfer(transferUuid, "Denied from notifications page.");
+      } else {
+        await rejectUserTransfer(transferUuid, "Denied from notifications page.");
+      }
+      await markAsRead(nUuid);
+      toast({ variant: "destructive", title: "Transfer Rejected" });
+      window.dispatchEvent(new CustomEvent('notifications_updated'));
+    } catch {
+      toast({ variant: "destructive", title: "Transfer rejection failed" });
+    }
+  };
+
   const handleMarkAllRead = async () => {
     await markAllAsRead();
-    await loadNotifications();
+    window.dispatchEvent(new CustomEvent('notifications_updated'));
   };
 
   const filtered = notifications.filter(n => 
@@ -153,8 +191,18 @@ export default function NotificationsPage() {
                           <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" onClick={() => handleApprovePayroll(n.uuid, n.reference_id!)}>
                             <Check className="h-4 w-4 mr-2" /> Approve Batch
                           </Button>
-                          <Button size="sm" variant="outline" className="text-destructive hover:bg-destructive/5" onClick={() => rejectPayrollBatch(n.reference_id!, "Rejected from notifications").then(loadNotifications)}>
+                          <Button size="sm" variant="outline" className="text-destructive hover:bg-destructive/5" onClick={() => rejectPayrollBatch(n.reference_id!, "Rejected from notifications").then(() => window.dispatchEvent(new CustomEvent('notifications_updated')))}>
                             Reject Batch
+                          </Button>
+                        </>
+                      )}
+                      {n.type === 'TRANSFER_REQUEST' && (
+                        <>
+                          <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" onClick={() => handleApproveTransfer(n.uuid, n.reference_id!, n.title)}>
+                            <Check className="h-4 w-4 mr-2" /> Approve Transfer
+                          </Button>
+                          <Button size="sm" variant="outline" className="text-destructive hover:bg-destructive/5" onClick={() => handleDenyTransfer(n.uuid, n.reference_id!, n.title)}>
+                            Reject Transfer
                           </Button>
                         </>
                       )}

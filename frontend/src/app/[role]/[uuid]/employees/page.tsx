@@ -43,10 +43,18 @@ import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/hooks/use-toast';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Employee } from '@/types/employee';
-import { getEmployees, suspendEmployee, createEmployee, updateEmployee } from '@/api/employees';
+import { getEmployees, suspendEmployee, createEmployee, updateEmployee, transferEmployee } from '@/api/employees';
 import { getTimeRecords } from '@/api/attendance';
 import { getWorkingLocations, getDepartments } from '@/api/working_locations';
-import { getAvatarUrl } from '@/lib/utils';
+import { getAvatarUrl, formatDisplayName } from '@/lib/utils';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { 
   createAllowance, 
   updateAllowance,
@@ -85,8 +93,8 @@ function mapApiEmployee(item: any, attendanceByEmployee = new Map<string, any[]>
     bigIntId: item.id || '',
     employeeId: item.uuid || '',
     fullName: `${item.first_name || ''} ${item.last_name || ''}`.trim() || 'Unknown Name',
-    department: item.department?.name ?? 'Unassigned',
-    location: item.working_location?.name ?? 'Unassigned',
+    department: formatDisplayName(item.department?.name),
+    location: formatDisplayName(item.working_location?.name),
     salary,
     status: item.status || 'ACTIVE',
     attendanceRate: timeRecords.length ? Math.round((presentCount / timeRecords.length) * 100) : 0,
@@ -122,6 +130,13 @@ export default function EmployeeDirectoryPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [initialEmployeeData, setInitialEmployeeData] = useState<any>(null);
   
+  // Employee Transfer State
+  const [transferEmployeeData, setTransferEmployeeData] = useState<Employee | null>(null);
+  const [transferLocationId, setTransferLocationId] = useState<string>('');
+  const [transferDepartmentId, setTransferDepartmentId] = useState<string>('');
+  const [transferDepartments, setTransferDepartments] = useState<any[]>([]);
+  const [transferReason, setTransferReason] = useState<string>('');
+  
   const [locations, setLocations] = useState<any[]>([]);
   const [departments, setDepartments] = useState<any[]>([]);
   const [filteredDepartments, setFilteredDepartments] = useState<any[]>([]);
@@ -155,6 +170,56 @@ export default function EmployeeDirectoryPage() {
   });
 
   const { toast } = useToast();
+
+  const handleTransferLocationChange = async (locationUuid: string) => {
+    setTransferLocationId(locationUuid);
+    setTransferDepartmentId('');
+    setTransferDepartments([]);
+    if (locationUuid) {
+      try {
+        const data = await getDepartments(locationUuid);
+        setTransferDepartments(data.departments || (Array.isArray(data) ? data : []));
+      } catch (error) {
+        console.error('Failed to fetch transfer departments:', error);
+      }
+    }
+  };
+
+  const handleTransferSubmit = async () => {
+    if (!transferEmployeeData) return;
+    if (!transferLocationId || !transferDepartmentId) {
+      toast({
+        variant: "destructive",
+        title: "Validation error",
+        description: "Target location and department are required."
+      });
+      return;
+    }
+    
+    setIsSubmitting(true);
+    try {
+      await transferEmployee(transferEmployeeData.uuid, {
+        working_location_id: transferLocationId,
+        department_id: transferDepartmentId,
+        reason: transferReason || undefined
+      });
+      toast({
+        title: "Transfer request submitted",
+        description: `Transfer request for ${transferEmployeeData.fullName} has been submitted for approval.`
+      });
+      setTransferEmployeeData(null);
+      loadEmployees();
+    } catch (error: any) {
+      console.error('Failed to submit transfer request:', error);
+      toast({
+        variant: "destructive",
+        title: "Transfer submission failed",
+        description: error?.response?.data?.message || "An error occurred while submitting the transfer request."
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   const handleLocationChange = async (locationUuid: string) => {
     setNewEmployee(prev => ({ ...prev, working_location_id: locationUuid, department_id: '' }));
@@ -614,9 +679,8 @@ export default function EmployeeDirectoryPage() {
       category.uuid === newEmployee.employment_category_id,
   );
   const selectedFrequency = selectedCategory?.payroll_frequency;
-  const isAttendant = user?.roles?.includes('ATTENDANT') ?? false;
-  const canCreateEmployee = hasPermission('employees.create') && !isAttendant;
-  const canUpdateEmployee = hasPermission('employees.update') && !isAttendant;
+  const canCreateEmployee = hasPermission('employees.create');
+  const canUpdateEmployee = hasPermission('employees.update');
   const isLocationScopedManager =
     user?.roles?.some((role) =>
       ['BRANCH_MANAGER'].includes(role),
@@ -713,7 +777,7 @@ export default function EmployeeDirectoryPage() {
               <option value="ALL">All scoped locations</option>
               {locations.map((location) => (
                 <option key={location.uuid} value={String(location.id ?? location.uuid)}>
-                  {location.name}
+                  {formatDisplayName(location.name)}
                 </option>
               ))}
             </select>
@@ -736,7 +800,7 @@ export default function EmployeeDirectoryPage() {
                 )
                 .map((department) => (
                   <option key={department.uuid} value={String(department.id ?? department.uuid)}>
-                    {department.name}
+                    {formatDisplayName(department.name)}
                   </option>
                 ))}
             </select>
@@ -853,6 +917,26 @@ export default function EmployeeDirectoryPage() {
                       {canUpdateEmployee && (
                         <DropdownMenuItem onClick={() => handleEditClick(emp)}>
                           <Edit className="mr-2 h-4 w-4" /> Edit Profile
+                        </DropdownMenuItem>
+                      )}
+                      {hasPermission('employees.transfer') && (
+                        <DropdownMenuItem onClick={async () => {
+                          setTransferEmployeeData(emp);
+                          setTransferLocationId(emp.working_location_id || '');
+                          setTransferDepartmentId(emp.department_id || '');
+                          setTransferReason('');
+                          if (emp.working_location_id) {
+                            try {
+                              const data = await getDepartments(emp.working_location_id);
+                              setTransferDepartments(data.departments || (Array.isArray(data) ? data : []));
+                            } catch (e) {
+                              setTransferDepartments([]);
+                            }
+                          } else {
+                            setTransferDepartments([]);
+                          }
+                        }}>
+                          <MapPin className="mr-2 h-4 w-4" /> Transfer Employee
                         </DropdownMenuItem>
                       )}
                       <DropdownMenuItem onClick={() => handleViewDetails(emp)}>
@@ -973,7 +1057,7 @@ export default function EmployeeDirectoryPage() {
                   onChange={e => handleLocationChange(e.target.value)}
                 >
                   <option value="">Select Location</option>
-                  {locations.map(l => <option key={l.uuid} value={l.uuid}>{l.name}</option>)}
+                  {locations.map(l => <option key={l.uuid} value={l.uuid}>{formatDisplayName(l.name)}</option>)}
                 </select>
               </div>
             )}
@@ -987,7 +1071,7 @@ export default function EmployeeDirectoryPage() {
                 disabled={!isLocationScopedManager && !newEmployee.working_location_id}
               >
                 <option value="">{isLocationScopedManager || newEmployee.working_location_id ? "Select Department" : "Select Location First"}</option>
-                {filteredDepartments.map(d => <option key={d.uuid} value={d.uuid}>{d.name}</option>)}
+                {filteredDepartments.map(d => <option key={d.uuid} value={d.uuid}>{formatDisplayName(d.name)}</option>)}
               </select>
             </div>
 
@@ -1301,6 +1385,95 @@ export default function EmployeeDirectoryPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog open={!!transferEmployeeData} onOpenChange={(open) => !open && setTransferEmployeeData(null)}>
+        <DialogContent className="sm:max-w-[425px] bg-white border-none shadow-2xl rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-headline font-bold">Transfer Employee</DialogTitle>
+            <DialogDescription className="text-muted-foreground text-sm">
+              Submit a transfer request for this employee. The transfer requires approval before it is applied.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-5 py-4">
+            <div className="rounded-2xl bg-secondary/10 p-4 text-xs space-y-2 border border-secondary/20">
+              <p className="font-bold text-[10px] uppercase tracking-wider text-muted-foreground">Employee details</p>
+              <p className="font-bold text-base text-slate-800">{transferEmployeeData?.fullName}</p>
+              
+              <div className="grid grid-cols-2 gap-4 pt-3 mt-2 border-t border-slate-200/60">
+                <div>
+                  <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider">Current Location</p>
+                  <p className="font-bold text-xs text-slate-700 mt-1">{transferEmployeeData?.location || 'Unassigned'}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider">Current Department</p>
+                  <p className="font-bold text-xs text-slate-700 mt-1">{transferEmployeeData?.department || 'Unassigned'}</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-xs font-bold text-slate-700 uppercase tracking-wider">Target Location</Label>
+              <select
+                aria-label="Target Location"
+                className="w-full h-11 px-3 rounded-xl border border-slate-200 bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                value={transferLocationId}
+                onChange={(e) => handleTransferLocationChange(e.target.value)}
+              >
+                <option value="">Select Location</option>
+                {locations.map(l => (
+                  <option key={l.uuid} value={l.uuid}>
+                    {formatDisplayName(l.name)}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-xs font-bold text-slate-700 uppercase tracking-wider">Target Department</Label>
+              <select
+                aria-label="Target Department"
+                className="w-full h-11 px-3 rounded-xl border border-slate-200 bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                value={transferDepartmentId}
+                onChange={(e) => setTransferDepartmentId(e.target.value)}
+                disabled={!transferLocationId}
+              >
+                <option value="">{transferLocationId ? "Select Department" : "Select Location First"}</option>
+                {transferDepartments.map(d => (
+                  <option key={d.uuid} value={d.uuid}>
+                    {formatDisplayName(d.name)}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-xs font-bold text-slate-700 uppercase tracking-wider">Reason for Transfer</Label>
+              <textarea
+                aria-label="Reason for Transfer"
+                className="w-full min-h-[90px] p-3 rounded-xl border border-slate-200 bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                placeholder="Describe the reason for transfer..."
+                value={transferReason}
+                onChange={(e) => setTransferReason(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" className="rounded-xl" onClick={() => setTransferEmployeeData(null)} disabled={isSubmitting}>
+              Cancel
+            </Button>
+            <Button className="rounded-xl bg-primary hover:bg-primary/95" onClick={handleTransferSubmit} disabled={isSubmitting || !transferLocationId || !transferDepartmentId}>
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Submitting...
+                </>
+              ) : (
+                "Submit Transfer"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

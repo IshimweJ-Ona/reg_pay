@@ -3,16 +3,31 @@
 
 import { AuthProvider, useAuth, isAdminRole } from '@/context/auth-context';
 import { Sidebar } from '@/components/layout/sidebar';
-import { useRouter, useParams } from 'next/navigation';
+import { useRouter, useParams, usePathname } from 'next/navigation';
 import { useEffect } from 'react';
 import { SectionErrorBoundary } from '@/components/layout/section-error-boundary';
 import { cn } from '@/lib/utils';
 import { ProtectedRoute } from '@/components/auth/protected-route';
 
 function DashboardLayoutContent({ children }: { children: React.ReactNode }) {
-  const { user, isLoading } = useAuth();
+  const { user, isLoading, refreshPermissions, hasPermission } = useAuth();
   const router = useRouter();
   const params = useParams();
+  const pathname = usePathname();
+
+  useEffect(() => {
+    if (!isLoading && user) {
+      refreshPermissions();
+    }
+  }, [pathname, isLoading]);
+
+  useEffect(() => {
+    if (isLoading || !user) return;
+    const interval = setInterval(() => {
+      refreshPermissions();
+    }, 15000);
+    return () => clearInterval(interval);
+  }, [isLoading, user]);
 
   useEffect(() => {
     if (!isLoading) {
@@ -45,7 +60,7 @@ function DashboardLayoutContent({ children }: { children: React.ReactNode }) {
     return null;
   }
 
-  const isManagement = isAdminRole(user.role);
+  const isManagement = hasPermission('employees.read') || hasPermission('payroll.read') || hasPermission('users.read') || hasPermission('attendance.read');
 
   return (
     <ProtectedRoute>

@@ -22,14 +22,19 @@ export interface AuditLogEntry {
     last_name: string;
     email: string;
     name: string;
+    working_location?: { id: string; name: string } | null;
+    department?: { id: string; name: string } | null;
+    roles?: string[];
   };
   employee?: {
     id: string;
     uuid: string;
     first_name: string;
     last_name: string;
-    employee_code?: string | null;
     name: string;
+    national_id?: string | null;
+    working_location?: { id: string; name: string } | null;
+    department?: { id: string; name: string } | null;
   } | null;
 }
 

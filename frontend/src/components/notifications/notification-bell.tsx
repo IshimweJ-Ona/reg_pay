@@ -11,6 +11,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { rejectUser, approveUserTransfer, rejectUserTransfer } from '@/api/users';
+import { approveEmployeeTransfer, rejectEmployeeTransfer } from '@/api/employees';
 import { getNotifications, getUnreadCount, markAsRead, markAllAsRead, Notification } from '@/api/notifications';
 import { approvePayrollBatch, rejectPayrollBatch } from '@/api/payroll';
 import { useToast } from '@/hooks/use-toast';
@@ -47,6 +48,11 @@ export function NotificationBell({ type }: { type: 'admin' | 'user' }) {
 
   useEffect(() => {
     loadNotifications();
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener('notifications_updated', loadNotifications);
+    return () => window.removeEventListener('notifications_updated', loadNotifications);
   }, []);
 
   const allNotifications = useMemo(() => {
@@ -88,12 +94,17 @@ export function NotificationBell({ type }: { type: 'admin' | 'user' }) {
     }
   };
 
-  const handleApproveTransfer = async (notificationUuid: string, transferUuid: string) => {
+  const handleApproveTransfer = async (notificationUuid: string, transferUuid: string, title: string) => {
     try {
-      await approveUserTransfer(transferUuid);
+      const isEmployee = title.toLowerCase().includes('employee');
+      if (isEmployee) {
+        await approveEmployeeTransfer(transferUuid);
+      } else {
+        await approveUserTransfer(transferUuid);
+      }
       await markAsRead(notificationUuid);
       toast({ title: "Transfer Approved", description: "The request has moved to the next level or finalized." });
-      await loadNotifications();
+      window.dispatchEvent(new CustomEvent('notifications_updated'));
     } catch (error: any) {
       toast({
         variant: "destructive",
@@ -103,12 +114,17 @@ export function NotificationBell({ type }: { type: 'admin' | 'user' }) {
     }
   };
 
-  const handleDenyTransfer = async (notificationUuid: string, transferUuid: string) => {
+  const handleDenyTransfer = async (notificationUuid: string, transferUuid: string, title: string) => {
     try {
-      await rejectUserTransfer(transferUuid, "Rejected via notifications.");
+      const isEmployee = title.toLowerCase().includes('employee');
+      if (isEmployee) {
+        await rejectEmployeeTransfer(transferUuid, "Rejected via notifications.");
+      } else {
+        await rejectUserTransfer(transferUuid, "Rejected via notifications.");
+      }
       await markAsRead(notificationUuid);
       toast({ variant: "destructive", title: "Transfer Rejected", description: "The request has been returned to the requestor." });
-      await loadNotifications();
+      window.dispatchEvent(new CustomEvent('notifications_updated'));
     } catch (error: any) {
       toast({
         variant: "destructive",
@@ -123,7 +139,7 @@ export function NotificationBell({ type }: { type: 'admin' | 'user' }) {
       await approvePayrollBatch(batchUuid, "Approved from notifications.");
       await markAsRead(notificationUuid);
       toast({ title: "Payroll approved", description: "The batch has moved to the next approval step." });
-      await loadNotifications();
+      window.dispatchEvent(new CustomEvent('notifications_updated'));
     } catch (error: any) {
       toast({
         variant: "destructive",
@@ -135,14 +151,17 @@ export function NotificationBell({ type }: { type: 'admin' | 'user' }) {
 
   const handleRejectPayroll = async (notificationUuid: string, batchUuid: string) => {
     router.push(`${basePath}/payroll/${batchUuid}`);
-    if (accessToken) await markAsRead(notificationUuid);
+    if (accessToken) {
+      await markAsRead(notificationUuid);
+      window.dispatchEvent(new CustomEvent('notifications_updated'));
+    }
   };
 
   const handleMarkAllRead = async () => {
     try {
       await markAllAsRead();
       setSSEUnreadCount(0);
-      await loadNotifications();
+      window.dispatchEvent(new CustomEvent('notifications_updated'));
     } catch (error) {
       console.error('Failed to mark all as read:', error);
     }
@@ -151,7 +170,7 @@ export function NotificationBell({ type }: { type: 'admin' | 'user' }) {
   const handleMarkRead = async (uuid: string) => {
     try {
       await markAsRead(uuid);
-      await loadNotifications();
+      window.dispatchEvent(new CustomEvent('notifications_updated'));
     } catch (error) {
       console.error('Failed to mark as read:', error);
     }
@@ -160,7 +179,10 @@ export function NotificationBell({ type }: { type: 'admin' | 'user' }) {
   const handleNotificationOpen = async (notification: Notification) => {
     const redirect = (notification.metadata as any)?.redirect;
     if (redirect) {
-      if (!notification.is_read) await markAsRead(notification.uuid);
+      if (!notification.is_read) {
+        await markAsRead(notification.uuid);
+        window.dispatchEvent(new CustomEvent('notifications_updated'));
+      }
       const targetPath = redirect.startsWith('/') ? redirect : `${basePath}/${redirect}`;
       router.push(targetPath);
     }
@@ -196,9 +218,9 @@ export function NotificationBell({ type }: { type: 'admin' | 'user' }) {
               <div key={n.uuid} className={`p-4 border-b last:border-0 relative group transition-colors ${n.is_read ? 'bg-white opacity-80' : 'bg-blue-50/30'}`}>
                 <div className="flex gap-4">
                   <div className={`h-10 w-10 shrink-0 rounded-full flex items-center justify-center ${
-                    n.type === 'REGISTRATION_REQUEST' ? 'bg-rose-100 text-rose-600' : 'bg-blue-100 text-blue-600'
+                    n.type === 'REGISTRATION_REQUEST' ? 'bg-rose-100 text-rose-600' : n.type === 'TRANSFER_REQUEST' ? 'bg-amber-100 text-amber-600' : 'bg-blue-100 text-blue-600'
                   }`}>
-                    {n.type === 'REGISTRATION_REQUEST' ? <AlertCircle className="h-4 w-4" /> : <Bell className="h-4 w-4" />}
+                    {n.type === 'REGISTRATION_REQUEST' ? <AlertCircle className="h-4 w-4" /> : n.type === 'TRANSFER_REQUEST' ? <AlertCircle className="h-4 w-4" /> : <Bell className="h-4 w-4" />}
                   </div>
                   <div className="flex flex-col gap-1 min-w-0 flex-1">
                     <div className="flex justify-between items-start">
@@ -258,6 +280,17 @@ export function NotificationBell({ type }: { type: 'admin' | 'user' }) {
                       </div>
                     )}
                     
+                    {n.type === 'TRANSFER_REQUEST' && !n.is_read && n.reference_id && (
+                      <div className="mt-2 flex gap-2">
+                        <Button size="sm" className="h-7 flex-1 px-2 text-[10px] bg-emerald-600 hover:bg-emerald-700" onClick={() => handleApproveTransfer(n.uuid, n.reference_id!, n.title)}>
+                          <Check className="h-3 w-3 mr-1" /> Approve
+                        </Button>
+                        <Button size="sm" variant="outline" className="h-7 flex-1 px-2 text-[10px] text-destructive hover:bg-destructive/5" onClick={() => handleDenyTransfer(n.uuid, n.reference_id!, n.title)}>
+                          Reject
+                        </Button>
+                      </div>
+                    )}
+                    
                     <div className="flex items-center justify-between mt-1">
                       <span className="text-[9px] font-bold text-muted-foreground/60 uppercase tracking-widest">
                         {new Date(n.created_at).toLocaleString()}
@@ -285,7 +318,7 @@ export function NotificationBell({ type }: { type: 'admin' | 'user' }) {
         </ScrollArea>
         <DropdownMenuSeparator className="m-0" />
         <div className="p-2 bg-secondary/10">
-          <Button variant="ghost" className="w-full text-[10px] font-bold h-8 uppercase tracking-widest">
+          <Button variant="ghost" className="w-full text-[10px] font-bold h-8 uppercase tracking-widest" onClick={() => router.push(`${basePath}/notifications`)}>
             View All History
           </Button>
         </div>

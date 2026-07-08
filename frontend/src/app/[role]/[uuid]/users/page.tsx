@@ -89,7 +89,7 @@ export default function UsersManagementPage() {
 }
 
 function UsersManagementContent() {
-  const { user: currentUser } = useAuth();
+  const { user: currentUser, hasPermission } = useAuth();
   const [users, setUsers] = useState<User[]>([]);
   const [roles, setRoles] = useState<any[]>([]);
   const [allPermissions, setAllPermissions] = useState<any[]>([]);
@@ -380,7 +380,7 @@ function UsersManagementContent() {
                 </div>
               </div>
 
-              {['SUPER_ADMIN'].includes(currentUser?.role || '') && (
+              {hasPermission('permissions.assign') && (
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
                     <Label className="text-base font-bold">Security Overrides</Label>

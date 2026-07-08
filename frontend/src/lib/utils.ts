@@ -12,3 +12,9 @@ export function getAvatarUrl(path?: string | null) {
   const baseUrl = process.env.NEXT_PUBLIC_API_URL?.replace('/api', '') || 'http://localhost:5000';
   return `${baseUrl}${path}`;
 }
+
+export function formatDisplayName(name?: string | null): string {
+  if (!name) return 'Unassigned';
+  return name.replace(/[_\-\.]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+

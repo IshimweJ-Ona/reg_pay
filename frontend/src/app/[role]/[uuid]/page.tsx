@@ -1,10 +1,9 @@
-
 "use client";
 
 import React, { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Users, FileCheck, AlertCircle, Activity, Clock, ShieldAlert, Bell, FileText, Calendar, ChevronRight, Plus } from 'lucide-react';
-import { useAuth, isAdminRole } from '@/context/auth-context';
+import { useAuth } from '@/context/auth-context';
 import { getEmployees } from '@/api/employees';
 import { getPayrollBatches } from '@/api/payroll';
 import { Employee } from '@/types/employee';
@@ -15,7 +14,7 @@ import Link from 'next/link';
 import { PermissionGate } from '@/components/auth/permission-gate';
 
 export default function DashboardPage() {
-  const { user } = useAuth();
+  const { user, hasPermission } = useAuth();
   const router = useRouter();
   const params = useParams();
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -25,9 +24,11 @@ export default function DashboardPage() {
   const uuid = params.uuid as string;
   const basePath = `/${role}/${uuid}`;
 
+  const isManagement = hasPermission('employees.read') || hasPermission('payroll.read') || hasPermission('users.read') || hasPermission('attendance.read');
+
   useEffect(() => {
     async function loadData() {
-      if (!isAdminRole(user?.role)) {
+      if (!isManagement) {
         return;
       }
       try {
@@ -39,11 +40,10 @@ export default function DashboardPage() {
         setBatches(batchRes.batches || (Array.isArray(batchRes) ? batchRes : []));
       } catch (error) {
         console.error('Dashboard data load failed:', error);
-      } finally {
       }
     }
     if (user) loadData();
-  }, [user]);
+  }, [user, isManagement]);
 
   // Handle Pending Registration State
   if (user?.status === 'PENDING') {
@@ -78,7 +78,7 @@ export default function DashboardPage() {
   }
 
   // If not admin/management, show User Dashboard
-  if (!isAdminRole(user?.role)) {
+  if (!isManagement) {
     return (
       <div className="space-y-10 max-w-7xl mx-auto">
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 border-b pb-8">

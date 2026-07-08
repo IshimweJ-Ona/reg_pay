@@ -16,11 +16,11 @@ import { getMonthlyTaxes, updateMonthlyTax, deactivateMonthlyTax, MonthlyTax } f
 import { useToast } from '@/hooks/use-toast';
 
 export default function TaxSetupPage() {
-  const { user } = useAuth();
+  const { user, hasPermission } = useAuth();
   const router = useRouter();
   const params = useParams();
   const { toast } = useToast();
-  const isSuperAdmin = (user?.roles ?? []).includes('SUPER_ADMIN');
+  const canManageConfig = hasPermission('system-config.manage');
 
   const [taxes, setTaxes] = useState<MonthlyTax[]>([]);
   const [loading, setLoading] = useState(true);
@@ -28,12 +28,12 @@ export default function TaxSetupPage() {
   const [newTax, setNewTax] = useState({ name: '', rate: '' });
 
   useEffect(() => {
-    if (user && !isSuperAdmin) {
+    if (user && !canManageConfig) {
       router.replace(`/${params.role}/${params.uuid}`);
       return;
     }
     loadTaxes();
-  }, [user, isSuperAdmin, router, params]);
+  }, [user, canManageConfig, router, params]);
 
   const loadTaxes = async () => {
     setLoading(true);
@@ -62,21 +62,17 @@ export default function TaxSetupPage() {
     try {
       await updateMonthlyTax(newTax.name.trim(), Number(newTax.rate));
       await loadTaxes();
-      
-      const now = new Date();
-      const isFirstDay = now.getDate() === 1;
-      
       setNewTax({ name: '', rate: '' });
       toast({
         title: 'Success',
-        description: `tax updated will apply automatically to the following month except change on the first day of month then it applies to that month. Otherwise to the following month.`,
+        description: `Tax updated will apply automatically.`,
       });
     } catch (error: any) {
       console.error('Failed to create tax:', error);
       toast({
         variant: 'destructive',
         title: 'Creation Failed',
-        description: error?.response?.data?.message || "Internal server error. Check terminal.",
+        description: error?.response?.data?.message || "Operation failed.",
       });
     } finally {
       setSaving(false);
@@ -87,18 +83,18 @@ export default function TaxSetupPage() {
     try {
       await deactivateMonthlyTax(uuid);
       await loadTaxes();
-      toast({ title: 'Success', description: 'Tax deactivated successfully. It will not count for the following months.' });
+      toast({ title: 'Success', description: 'Tax deactivated successfully.' });
     } catch (error: any) {
       console.error('Failed to deactivate tax:', error);
       toast({
         variant: 'destructive',
         title: 'Action Failed',
-        description: error?.response?.data?.message || "Operation failed. Check terminal.",
+        description: error?.response?.data?.message || "Operation failed.",
       });
     }
   };
 
-  if (!user || !isSuperAdmin) return null;
+  if (!user || !canManageConfig) return null;
 
   return (
     <div className="space-y-8">
@@ -162,8 +158,16 @@ export default function TaxSetupPage() {
 
       <Card className="border-none shadow-sm">
         <CardHeader>
-          <CardTitle>Manage Group Taxes</CardTitle>
-          <CardDescription>Create or update taxes that will be applied to all monthly employees.</CardDescription>
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <CardTitle>Manage Group Taxes</CardTitle>
+              <CardDescription>Create or update taxes that will be applied to all monthly employees.</CardDescription>
+            </div>
+            <Button variant="outline" className="gap-2" onClick={loadTaxes} disabled={loading}>
+              <RotateCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+              Refresh
+            </Button>
+          </div>
         </CardHeader>
         <CardContent className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-[1fr_200px_150px] gap-4 items-end bg-secondary/20 p-4 rounded-xl border border-dashed">

@@ -34,6 +34,7 @@ interface AuthContextType {
   hasPermission: (permission: string) => boolean;
   accessToken: string | null;
   refreshSession: (options?: { reload?: boolean }) => Promise<void>;
+  refreshPermissions: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -212,6 +213,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const refreshPermissions = async () => {
+    try {
+      const profile = await getMyProfile();
+      if (profile?.profile) {
+        applyProfile(profile.profile, user);
+      }
+    } catch (err) {
+      console.error('Failed to refresh permissions:', err);
+    }
+  };
+
+  useEffect(() => {
+    const handleSystemUpdate = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail && detail.type === 'permissions_updated') {
+        console.log('Permissions updated event received. Refreshing permissions...');
+        refreshPermissions();
+      }
+    };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('system_update', handleSystemUpdate);
+    }
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('system_update', handleSystemUpdate);
+      }
+    };
+  }, [user]);
+
   const hasPermission = (permission: string) => {
     if (!user) return false;
     if (user.roles?.some((role) => ['SUPER_ADMIN'].includes(role))) return true;
@@ -219,7 +249,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, login, register, logout, isLoading, hasPermission, accessToken, refreshSession }}>
+    <AuthContext.Provider value={{ user, login, register, logout, isLoading, hasPermission, accessToken, refreshSession, refreshPermissions }}>
       {children}
     </AuthContext.Provider>
   );

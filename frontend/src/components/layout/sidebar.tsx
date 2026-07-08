@@ -1,4 +1,3 @@
-
 "use client";
 
 import React from 'react';
@@ -7,7 +6,7 @@ import { usePathname, useParams } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { 
   LayoutDashboard, Users, MapPin, Building2, UserCircle, 
-  Calendar, CreditCard, FileText, Settings, LogOut, ShieldCheck, Bell, Percent
+  Calendar, CreditCard, FileText, Settings, LogOut, ShieldCheck, Bell, Percent, Activity
 } from 'lucide-react';
 import { useAuth } from '@/context/auth-context';
 import { Button } from '@/components/ui/button';
@@ -26,7 +25,6 @@ interface SidebarMenuItem {
   href: string;
   icon: LucideIcon;
   permission?: string;
-  roles?: string[];
 }
 
 export function Sidebar({ type }: SidebarProps) {
@@ -41,7 +39,7 @@ export function Sidebar({ type }: SidebarProps) {
 
   const adminMenuItems: SidebarMenuItem[] = [
     { name: 'Dashboard', href: `${basePath}`, icon: LayoutDashboard },
-    { name: 'Users', href: `${basePath}/users`, icon: Users, permission: 'users.read', roles: ['SUPER_ADMIN', 'BRANCH_MANAGER'] },
+    { name: 'Users', href: `${basePath}/users`, icon: Users, permission: 'users.read' },
     { name: 'Employees', href: `${basePath}/employees`, icon: UserCircle, permission: 'employees.read' },
     { 
       name: 'Branches', 
@@ -52,24 +50,25 @@ export function Sidebar({ type }: SidebarProps) {
     { name: 'Departments', href: `${basePath}/departments`, icon: Building2, permission: 'departments.manage' },
     { name: 'Attendance', href: `${basePath}/attendance`, icon: Calendar, permission: 'attendance.read' },
     { name: 'Payroll Engine', href: `${basePath}/payroll`, icon: FileText, permission: 'payroll.read' },
-    { name: 'Tax Setup', href: `${basePath}/payments`, icon: Percent, roles: ['SUPER_ADMIN'] },
+    { name: 'Tax Setup', href: `${basePath}/payments`, icon: Percent, permission: 'system-config.manage' },
+    { name: 'Audit Logs', href: `${basePath}/audit-logs`, icon: Activity, permission: 'audit.view' },
     { name: 'Notifications', href: `${basePath}/notifications`, icon: Bell },
     { name: 'Profile', href: `${basePath}/profile`, icon: UserCircle },
-    { name: 'Settings', href: `${basePath}/settings`, icon: Settings, roles: ['SUPER_ADMIN'] },
+    { name: 'Settings', href: `${basePath}/settings`, icon: Settings, permission: 'roles.manage' },
   ];
 
   const userMenuItems: SidebarMenuItem[] = [
     { name: 'Dashboard', href: `${basePath}`, icon: LayoutDashboard },
     { name: 'Employees', href: `${basePath}/employees`, icon: UserCircle, permission: 'employees.read' },
-    { name: 'Team Access', href: `${basePath}/users`, icon: Users, permission: 'users.read', roles: ['SUPER_ADMIN', 'BRANCH_MANAGER'] },
+    { name: 'Team Access', href: `${basePath}/users`, icon: Users, permission: 'users.read' },
     { name: 'My Payroll', href: `${basePath}/payroll`, icon: FileText, permission: 'payroll.read' },
     { name: 'Attendance', href: `${basePath}/attendance`, icon: Calendar, permission: 'attendance.read' },
+    { name: 'Audit Logs', href: `${basePath}/audit-logs`, icon: Activity, permission: 'audit.view' },
     { name: 'Notifications', href: `${basePath}/notifications`, icon: Bell },
     { name: 'Profile', href: `${basePath}/profile`, icon: UserCircle },
   ];
 
   const menuItems = type === 'admin' ? adminMenuItems : userMenuItems;
-  const userRoles = user?.roles ?? [];
 
   return (
     <aside className={cn(
@@ -96,7 +95,6 @@ export function Sidebar({ type }: SidebarProps) {
         <nav className="space-y-1 py-4">
           {menuItems.map((item) => {
             if (item.permission && !hasPermission(item.permission)) return null;
-            if (item.roles && !item.roles.some(role => userRoles.includes(role))) return null;
 
             const isActive = pathname === item.href || pathname.startsWith(item.href + '/');
             return (

@@ -4,7 +4,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { 
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow 
 } from "@/components/ui/table";
-import XlsxPopulate from 'xlsx-populate/browser/xlsx-populate';
+import ExcelJS from 'exceljs';
 import { Search, Download, UserCheck, Clock, AlertTriangle, Upload, History } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -36,15 +36,6 @@ import { AttendanceSyncPopover } from '@/components/attendance/attendance-sync-p
 
 const PRESENT_SYMBOL = 'P';
 const ABSENT_SYMBOL = 'A';
-
-// Helper to create a workbook from an ArrayBuffer. Some builds expose
-// fromDataAsync while others expose fromData — normalize both.
-async function fromDataAsync(data: ArrayBuffer | Uint8Array) {
-  const xp: any = XlsxPopulate as any;
-  if (typeof xp.fromDataAsync === 'function') return xp.fromDataAsync(data);
-  if (typeof xp.fromData === 'function') return Promise.resolve(xp.fromData(data));
-  throw new Error('XlsxPopulate does not provide fromDataAsync/fromData');
-}
 
 export default function AttendanceMonitoringPage() {
   const [records, setRecords] = useState<any[]>([]);
@@ -97,7 +88,6 @@ export default function AttendanceMonitoringPage() {
       (todayRecs || []).forEach((r: any) => {
         syncedTodayMap[r.employee_id] = r;
       });
-      // We don't overwrite pendingSync, but todayRecordsMap will use syncedTodayMap
       setRecords(prev => [...prev, ...todayRecs]);
 
       const duration = (performance.now() - startTime) / 1000;
@@ -133,7 +123,6 @@ export default function AttendanceMonitoringPage() {
     try {
       await startSync(logs);
       setPendingSync({});
-      // Refresh historical data to show the newly synced records
       fetchData();
     } catch (error) {
       console.error('Sync failed:', error);
@@ -142,14 +131,12 @@ export default function AttendanceMonitoringPage() {
 
   const todayRecordsMap = useMemo(() => {
     const map: Record<string, any> = {};
-    // Records from the backend
     records.forEach(rec => {
       const recDate = dayjs(rec.attendance_date).tz('Africa/Kigali').format('YYYY-MM-DD');
       if (recDate === todayStr) {
         map[rec.employee_id] = rec;
       }
     });
-    // Pending syncs take precedence for local UI updates
     Object.values(pendingSync).forEach(ps => {
         map[ps.employee_id] = ps;
     });
@@ -184,14 +171,14 @@ export default function AttendanceMonitoringPage() {
   ) => {
     const existing = todayRecordsMap[employeeId];
     if (existing && !canUpdateAttendance) {
-      toast({ variant: 'destructive', title: 'Permission denied', description: 'Cannot updae existing logs.' });
+      toast({ variant: 'destructive', title: 'Permission denied', description: 'Cannot update existing logs.' });
       return;
     }
 
     const log = {
       employee_id: employeeId,
       attendance_date: new Date().toISOString(),
-      attendace_status: status,
+      attendance_status: status,
       hours_worked: status === 'PRESENT' ? hoursWorked : undefined,
       overtime_hours: status === 'PRESENT' ? overtimeHours : undefined,
     };
@@ -200,10 +187,9 @@ export default function AttendanceMonitoringPage() {
     toast({ title: 'Logged Locally', description: 'Attendance cached. Use "Sync Now" to finalize.' });
   };
 
-  // ── Downloads the .xlsm master template, pre-filled with employees + date columns ──
+  // ── Downloads a plain .xlsx template built entirely in-memory with ExcelJS ──
   const downloadTemplate = async () => {
     if (!importDateFrom || !importDateTo) {
-
       if (employees.length === 0) {
         toast({ variant: 'destructive', title: 'No Employees', description: 'No employees found to generate the template.' });
         return;
@@ -227,41 +213,134 @@ export default function AttendanceMonitoringPage() {
     }
 
     try {
-      const res = await fetch('/templates/attendance_master.xlsm');
-      const arrayBuffer = await res.arrayBuffer();
-      const workbook = await fromDataAsync(arrayBuffer);
-      //  Sheet tab name must match the master file exactly.
-      // Rename the tab in Excel to "Attendance" and update below, or leave as "Sheet1".
-      const sheet = workbook.sheet('Sheet1');
-      if (!sheet) throw new Error(`Sheet "Sheet1" not found in template. Available: ${workbook.sheets().map((s: any) => s.name()).join(', ')}`);
+      const workbook = new ExcelJS.Workbook();
+      workbook.creator = 'REG Pay';
+      workbook.created = new Date();
+      const sheet = workbook.addWorksheet('Attendance');
 
-      // Column layout: A employee_id, B employee_name, C department,
-      // D overtime_hours, E worked_hours, F+ dates
-      const DATE_START_COL = 6;
-      dates.forEach((d, i) => {
-        sheet.cell(1, DATE_START_COL + i).value(d);
+      // ── Column definitions ──
+      // A=employee_id (locked), B=employee_name (locked), C=department (locked),
+      // D=overtime_hours (editable, blank), E=worked_hours (editable, blank),
+      // F=row_status (editable, P/A dropdown), G onward=one column per date
+      const DATE_START_COL = 7; // Column G (1-based)
+      const ROW_STATUS_COL = 6; // Column F (1-based)
+
+      // ── Header row ──
+      const headers = ['employee_id', 'employee_name', 'department', 'overtime_hours', 'worked_hours', 'row_status', ...dates];
+      const headerRow = sheet.getRow(1);
+      headers.forEach((h, i) => {
+        const cell = headerRow.getCell(i + 1);
+        cell.value = h;
+        cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF2C3E50' } };
+        cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+        cell.border = {
+          top: { style: 'thin' },
+          left: { style: 'thin' },
+          bottom: { style: 'thin' },
+          right: { style: 'thin' },
+        };
       });
+      headerRow.height = 30;
 
+      // ── Data rows ──
       employees.forEach((emp, i) => {
-        const row = i + 2;
-        sheet.cell(row, 1).value(emp.id.toString());                                        // employee_id
-        sheet.cell(row, 2).value(`${emp.first_name ?? ''} ${emp.last_name ?? ''}`.trim());   // employee_name
-        sheet.cell(row, 3).value(emp.department?.name ?? '');                                // department
-        sheet.cell(row, 4).value('');                                                        // overtime_hours (blank, user fills)
-        sheet.cell(row, 5).value('');                                                        // worked_hours (blank, user fills)
+        const rowNum = i + 2;
+        const row = sheet.getRow(rowNum);
+
+        // A: employee_id (locked)
+        const cellA = row.getCell(1);
+        cellA.value = emp.id.toString();
+        cellA.protection = { locked: true };
+
+        // B: employee_name (locked)
+        const cellB = row.getCell(2);
+        cellB.value = `${emp.first_name ?? ''} ${emp.last_name ?? ''}`.trim();
+        cellB.protection = { locked: true };
+
+        // C: department (locked)
+        const cellC = row.getCell(3);
+        cellC.value = emp.department?.name ?? '';
+        cellC.protection = { locked: true };
+
+        // D: overtime_hours (editable, blank)
+        const cellD = row.getCell(4);
+        cellD.value = '';
+        cellD.protection = { locked: false };
+
+        // E: worked_hours (editable, blank)
+        const cellE = row.getCell(5);
+        cellE.value = '';
+        cellE.protection = { locked: false };
+
+        // F: row_status (editable, P/A dropdown)
+        const cellF = row.getCell(6);
+        cellF.value = '';
+        cellF.protection = { locked: false };
+        cellF.dataValidation = {
+          type: 'list',
+          formulae: ['"P,A"'],
+          allowBlank: true,
+          errorStyle: 'error',
+          errorTitle: 'Invalid Entry',
+          error: 'Only P (Present) or A (Absent) are allowed.',
+        };
+
+        // G onward: date columns with formula =IF($F{row}="","",$F{row})
+        dates.forEach((_, dIdx) => {
+          const col = DATE_START_COL + dIdx;
+          const cell = row.getCell(col);
+          cell.value = { formula: `IF($F$${rowNum}="","",$F$${rowNum})` };
+          cell.protection = { locked: false };
+          cell.dataValidation = {
+            type: 'list',
+            formulae: ['"P,A"'],
+            allowBlank: true,
+            errorStyle: 'error',
+            errorTitle: 'Invalid Entry',
+            error: 'Only P (Present) or A (Absent) are allowed.',
+          };
+        });
       });
 
-      const blob = await workbook.outputAsync();
-      const url = URL.createObjectURL(blob as Blob);
+      // ── Column widths ──
+      sheet.getColumn(1).width = 14;  // employee_id
+      sheet.getColumn(2).width = 30;  // employee_name
+      sheet.getColumn(3).width = 25;  // department
+      sheet.getColumn(4).width = 16;  // overtime_hours
+      sheet.getColumn(5).width = 16;  // worked_hours
+      sheet.getColumn(6).width = 14;  // row_status
+      dates.forEach((_, dIdx) => {
+        sheet.getColumn(DATE_START_COL + dIdx).width = 14;
+      });
+
+      // ── Freeze header row ──
+      sheet.views = [{ state: 'frozen', ySplit: 1 }];
+
+      // ── Protect sheet (required for cell-level locking to take effect) ──
+      await sheet.protect('', {
+        selectLockedCells: true,
+        selectUnlockedCells: true,
+        formatCells: false,
+        formatColumns: false,
+        formatRows: false,
+        insertRows: false,
+        deleteRows: false,
+      });
+
+      // ── Generate buffer and trigger download ──
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `attendance_template_${importDateFrom}_to_${importDateTo}.xlsm`;
+      a.download = `attendance_template_${importDateFrom}_to_${importDateTo}.xlsx`;
       a.click();
       URL.revokeObjectURL(url);
 
       toast({
         title: 'Template Downloaded',
-        description: 'Select any cell in a row, then use the Mark Row Present/Absent buttons — or type P/A per date manually.',
+        description: 'Type P/A in row_status (F) to auto-fill all dates, or fill per-date cells individually.',
       });
     } catch (err) {
       console.error('Template generation error:', err);
@@ -272,7 +351,7 @@ export default function AttendanceMonitoringPage() {
   const handleImportUpload = () => {
     if (!importFile) return;
     if (!importDateFrom || !importDateTo) {
-      toast({ variant: 'destructive', title: 'Date Range required', description: 'Please selecet a date range.' });
+      toast({ variant: 'destructive', title: 'Date Range required', description: 'Please select a date range.' });
       return;
     }
     const start = dayjs(importDateFrom);
@@ -289,7 +368,7 @@ export default function AttendanceMonitoringPage() {
     const reader = new FileReader();
     reader.onload = async (evt) => {
       try {
-        const wb = XLSX.read(evt.target?.result, { type: 'binary' });
+        const wb = XLSX.read(evt.target?.result, { type: 'binary', raw: false });
         const ws = wb.Sheets[wb.SheetNames[0]];
         const raw = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][];
 
@@ -301,7 +380,7 @@ export default function AttendanceMonitoringPage() {
         const headers: string[] = raw[0].map((h: any) => String(h ?? '').trim());
 
         // Column layout: A employee_id, B employee_name, C department,
-        // D overtime_hours, E worked_hours, F+ dates
+        // D overtime_hours, E worked_hours, F row_status, G+ dates
         if (headers[0] !== 'employee_id' || headers[1] !== 'employee_name' || headers[2] !== 'department') {
           toast({ variant: 'destructive', title: 'Import Rejected', description: 'Columns A, B, C must be employee_id, employee_name, department.' });
           return;
@@ -310,8 +389,12 @@ export default function AttendanceMonitoringPage() {
           toast({ variant: 'destructive', title: 'Import Rejected', description: 'Columns D and E must be overtime_hours and worked_hours.' });
           return;
         }
+        if (headers[5] !== 'row_status') {
+          toast({ variant: 'destructive', title: 'Import Rejected', description: 'Column F must be row_status.' });
+          return;
+        }
 
-        const dateHeaders = headers.slice(5);
+        const dateHeaders = headers.slice(6);
         if (dateHeaders.length === 0) {
           toast({ variant: 'destructive', title: 'Import Rejected', description: 'No date columns found in template.' });
           return;
@@ -335,6 +418,7 @@ export default function AttendanceMonitoringPage() {
           const departmentRaw = row[2];
           const overrideOT = row[3];
           const workedHrs = row[4];
+          const rowStatus = row[5]; // row_status at index 5
 
           if (empIdRaw === undefined || empIdRaw === null || empIdRaw === '') continue;
 
@@ -377,7 +461,7 @@ export default function AttendanceMonitoringPage() {
 
           for (let d = 0; d < dateHeaders.length; d++) {
             const dateHeaderRaw = dateHeaders[d];
-            const cellValue = row[5 + d];
+            const cellValue = row[6 + d]; // date columns start at index 6
 
             // Determine attendance status
             let attendance_status: 'PRESENT' | 'ABSENT';

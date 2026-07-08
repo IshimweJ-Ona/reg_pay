@@ -44,6 +44,7 @@ export const PERMISSION_MODULES: PermissionModule[] = [
       { key: 'employees.update',   name: 'Employees Update'   },
       { key: 'employees.approve',  name: 'Employees Approve'  },
       { key: 'employees.transfer', name: 'Employees Transfer' },
+      { key: 'employees.transfer_approve', name: 'Employees Transfer Approve' },
       { key: 'employees.suspend',  name: 'Employees Suspend'  },
     ],
   },
@@ -81,6 +82,18 @@ export const PERMISSION_MODULES: PermissionModule[] = [
     permissions: [
       { key: 'notifications.read',   name: 'Notifications Read'   },
       { key: 'notifications.manage', name: 'Notifications Manage' },
+    ],
+  },
+  {
+    module: 'AUDIT',
+    permissions: [
+      { key: 'audit.view', name: 'Audit Logs View' },
+    ],
+  },
+  {
+    module: 'SYSTEM_CONFIG',
+    permissions: [
+      { key: 'system-config.manage', name: 'System Config Manage' },
     ],
   },
 ];
