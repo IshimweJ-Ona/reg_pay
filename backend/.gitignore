@@ -6,6 +6,8 @@
 
 # Prisma
 node_modules/.prisma
+prisma/migrations/migration_lock.toml
+
 
 # Uploads
 uploads/
