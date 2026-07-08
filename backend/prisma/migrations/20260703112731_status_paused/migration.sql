@@ -1,7 +1,0 @@
--- AlterTable
-ALTER TABLE `employees` ADD COLUMN `contract_end_date` DATE NULL,
-    ADD COLUMN `contract_start_date` DATE NULL,
-    MODIFY `status` ENUM('ACTIVE', 'INACTIVE', 'SUSPENDED', 'PENDING', 'REJECTED', 'PAUSED') NOT NULL DEFAULT 'ACTIVE';
-
--- AlterTable
-ALTER TABLE `users` MODIFY `status` ENUM('ACTIVE', 'INACTIVE', 'SUSPENDED', 'PENDING', 'REJECTED', 'PAUSED') NOT NULL DEFAULT 'ACTIVE';

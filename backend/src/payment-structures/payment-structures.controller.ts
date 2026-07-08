@@ -10,7 +10,6 @@ import {
 } from '@nestjs/common';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Permissions } from '../auth/decorators/permissions.decorator';
-import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../auth/guards/permissions.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -25,14 +24,6 @@ import { UpdateEmployeeDeductionDto } from './dto/update-employee-deduction.dto'
 import { CreateAllowanceDto } from './dto/create-allowance.dto';
 
 @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
-@Roles(
-  'SUPER_ADMIN',
-  'HR',
-  'HR_MANAGER',
-  'ACCOUNTANT',
-  'FINANCE',
-  'BRANCH_MANAGER',
-)
 @Controller('payment-structures')
 export class PaymentStructuresController {
   constructor(

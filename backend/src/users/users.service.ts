@@ -613,6 +613,8 @@ export class UsersService {
       });
     });
 
+    this.notificationsService.broadcast({ type: 'permissions_updated' });
+
     return {
       message: 'User roles updated.',
       user: this.serializeUser(updatedUser),
@@ -689,12 +691,6 @@ export class UsersService {
     dto: UpdateUserPermissionOverrideDto,
     actor: CurrentUserType,
   ) {
-    if (!actor.roles.includes('SUPER_ADMIN')) {
-      throw new ForbiddenException(
-        'Only the super administrator can update user permissions.',
-      );
-    }
-
     const [user, permission] = await Promise.all([
       this.findUserByUuidOrThrow(uuid),
       this.resolvePermission(permissionInput),
@@ -770,6 +766,8 @@ export class UsersService {
 
     await this.cacheManager.del(`users:all:${actor.userId}::`);
     await this.cacheManager.del('users:pending:');
+
+    this.notificationsService.broadcast({ type: 'permissions_updated' });
 
     return {
       message: dto.is_allowed

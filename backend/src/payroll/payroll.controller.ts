@@ -12,7 +12,6 @@ import {
 import type { Response } from 'express';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Permissions } from '../auth/decorators/permissions.decorator';
-import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../auth/guards/permissions.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -23,7 +22,6 @@ import { RejectPayrollItemDto } from './dto/reject-payroll-item.dto';
 import { PayrollService } from './payroll.service';
 
 @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
-@Roles('SUPER_ADMIN', 'BRANCH_MANAGER', 'ACCOUNTANT', 'FINANCE')
 @Controller('payroll')
 export class PayrollController {
   constructor(private readonly payrollService: PayrollService) {}

@@ -53,6 +53,7 @@ export const PERMISSION_MODULES: PermissionModule[] = [
       { key: 'employees.update',   name: 'Employees Update'   },
       { key: 'employees.approve',  name: 'Employees Approve'  },
       { key: 'employees.transfer', name: 'Employees Transfer' },
+      { key: 'employees.transfer_approve', name: 'Employees Transfer Approve' },
       { key: 'employees.suspend',  name: 'Employees Suspend'  },
     ],
   },
@@ -90,6 +91,18 @@ export const PERMISSION_MODULES: PermissionModule[] = [
     permissions: [
       { key: 'notifications.read',   name: 'Notifications Read'   },
       { key: 'notifications.manage', name: 'Notifications Manage' },
+    ],
+  },
+  {
+    module: 'AUDIT',
+    permissions: [
+      { key: 'audit.view', name: 'Audit Logs View' },
+    ],
+  },
+  {
+    module: 'SYSTEM_CONFIG',
+    permissions: [
+      { key: 'system-config.manage', name: 'System Config Manage' },
     ],
   },
 ];
@@ -142,7 +155,7 @@ export const BASELINE_ROLE_PERMISSIONS: Record<string, string[]> = {
     'users.suspend', 'users.transfer',
     'branch-manager.manage', 'branches.manage', 'departments.manage',
     'employees.create', 'employees.read', 'employees.update',
-    'employees.approve', 'employees.transfer', 'employees.suspend',
+    'employees.approve', 'employees.transfer', 'employees.transfer_approve', 'employees.suspend',
     'attendance.create', 'attendance.read', 'attendance.update', 'attendance.approve',
     'payment-structures.create', 'payment-structures.read',
     'payment-structures.update', 'payment-structures.delete',
@@ -150,6 +163,7 @@ export const BASELINE_ROLE_PERMISSIONS: Record<string, string[]> = {
     'payroll.create', 'payroll.read', 'payroll.manage',
     'payroll.approve', 'payroll.reports',
     'notifications.read', 'notifications.manage',
+    'audit.view', 'system-config.manage',
   ],
   ACCOUNTANT: [
     'employees.read', 'attendance.read',

@@ -81,24 +81,6 @@ CREATE TABLE `Departments` (
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 -- CreateTable
-CREATE TABLE `Department_managers` (
-    `id` BIGINT NOT NULL AUTO_INCREMENT,
-    `uuid` CHAR(36) NOT NULL,
-    `department_id` BIGINT NOT NULL,
-    `user_id` BIGINT NOT NULL,
-    `is_active` BOOLEAN NOT NULL DEFAULT true,
-    `assigned_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    `unassigned_at` DATETIME(3) NULL,
-    `assigned_by` BIGINT NOT NULL,
-
-    UNIQUE INDEX `Department_managers_uuid_key`(`uuid`),
-    INDEX `idx_department_manager_department`(`department_id`),
-    INDEX `idx_department_manager_user`(`user_id`),
-    INDEX `idx_department_manager_active`(`is_active`),
-    PRIMARY KEY (`id`)
-) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-
--- CreateTable
 CREATE TABLE `Users` (
     `id` BIGINT NOT NULL AUTO_INCREMENT,
     `uuid` CHAR(36) NOT NULL,
@@ -112,7 +94,7 @@ CREATE TABLE `Users` (
     `reset_password_token` VARCHAR(255) NULL,
     `reset_password_expires` DATETIME(3) NULL,
     `gender` ENUM('MALE', 'FEMALE') NOT NULL,
-    `status` ENUM('ACTIVE', 'INACTIVE', 'SUSPENDED', 'PENDING', 'REJECTED') NOT NULL DEFAULT 'ACTIVE',
+    `status` ENUM('ACTIVE', 'INACTIVE', 'SUSPENDED', 'PENDING', 'REJECTED', 'PAUSED') NOT NULL DEFAULT 'ACTIVE',
     `avatar_url` TEXT NULL,
     `last_login_at` DATETIME(3) NULL,
     `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
@@ -262,10 +244,12 @@ CREATE TABLE `Employees` (
     `national_id` VARCHAR(50) NULL,
     `gender` ENUM('MALE', 'FEMALE') NULL,
     `hire_date` DATE NULL,
+    `contract_start_date` DATE NULL,
+    `contract_end_date` DATE NULL,
     `department_id` BIGINT NULL,
     `working_location_id` BIGINT NULL,
     `employment_category_id` BIGINT NULL,
-    `status` ENUM('ACTIVE', 'INACTIVE', 'SUSPENDED', 'PENDING', 'REJECTED') NOT NULL DEFAULT 'ACTIVE',
+    `status` ENUM('ACTIVE', 'INACTIVE', 'SUSPENDED', 'PENDING', 'REJECTED', 'PAUSED') NOT NULL DEFAULT 'ACTIVE',
     `created_by` BIGINT NULL,
     `avatar_url` TEXT NULL,
     `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
@@ -708,15 +692,6 @@ ALTER TABLE `Branch_managers` ADD CONSTRAINT `Branch_managers_assigned_by_fkey` 
 
 -- AddForeignKey
 ALTER TABLE `Departments` ADD CONSTRAINT `Departments_working_location_id_fkey` FOREIGN KEY (`working_location_id`) REFERENCES `Working_locations`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE `Department_managers` ADD CONSTRAINT `Department_managers_department_id_fkey` FOREIGN KEY (`department_id`) REFERENCES `Departments`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE `Department_managers` ADD CONSTRAINT `Department_managers_user_id_fkey` FOREIGN KEY (`user_id`) REFERENCES `Users`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE `Department_managers` ADD CONSTRAINT `Department_managers_assigned_by_fkey` FOREIGN KEY (`assigned_by`) REFERENCES `Users`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE `Users` ADD CONSTRAINT `Users_working_location_id_fkey` FOREIGN KEY (`working_location_id`) REFERENCES `Working_locations`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;

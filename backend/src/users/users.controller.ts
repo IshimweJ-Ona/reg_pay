@@ -23,7 +23,6 @@ import { diskStorage } from 'multer';
 import { extname } from 'path';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Permissions } from '../auth/decorators/permissions.decorator';
-import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../auth/guards/permissions.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -44,7 +43,6 @@ export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
-  @Roles('SUPER_ADMIN', 'BRANCH_MANAGER')
   @Permissions('users.create')
   @Post()
   @ApiOperation({
@@ -67,7 +65,6 @@ export class UsersController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
-  @Roles('SUPER_ADMIN', 'BRANCH_MANAGER')
   @Permissions('users.read')
   @Get()
   @ApiOperation({
@@ -88,7 +85,6 @@ export class UsersController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
-  @Roles('SUPER_ADMIN', 'BRANCH_MANAGER')
   @Permissions('users.read')
   @Get('pending')
   @ApiOperation({
@@ -105,7 +101,6 @@ export class UsersController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
-  @Roles('SUPER_ADMIN', 'BRANCH_MANAGER')
   @Permissions('users.approve')
   @Patch(':uuid/approve')
   @ApiOperation({
@@ -124,7 +119,6 @@ export class UsersController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
-  @Roles('SUPER_ADMIN', 'BRANCH_MANAGER')
   @Permissions('users.approve')
   @Patch(':uuid/reject')
   @ApiOperation({
@@ -143,7 +137,6 @@ export class UsersController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
-  @Roles('SUPER_ADMIN', 'BRANCH_MANAGER')
   @Permissions('users.suspend')
   @Patch(':uuid/suspend')
   @ApiOperation({
@@ -158,7 +151,6 @@ export class UsersController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
-  @Roles('SUPER_ADMIN', 'BRANCH_MANAGER')
   @Permissions('users.suspend')
   @Patch(':uuid/reactivate')
   @ApiOperation({
@@ -175,7 +167,6 @@ export class UsersController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
-  @Roles('SUPER_ADMIN', 'BRANCH_MANAGER')
   @Permissions('users.update')
   @Patch(':uuid/roles')
   @ApiOperation({
@@ -193,7 +184,6 @@ export class UsersController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
-  @Roles('SUPER_ADMIN')
   @Permissions('users.update')
   @Patch(':uuid/permissions/:permission/override')
   @ApiOperation({
@@ -218,7 +208,6 @@ export class UsersController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
-  @Roles('SUPER_ADMIN', 'BRANCH_MANAGER')
   @Permissions('users.update')
   @Post('bulk-profile-images')
   @UseInterceptors(
@@ -254,7 +243,6 @@ export class UsersController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
-  @Roles('SUPER_ADMIN', 'BRANCH_MANAGER')
   @Permissions('users.transfer')
   @Post(':uuid/transfer-requests')
   @ApiOperation({
@@ -276,7 +264,6 @@ export class UsersController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
-  @Roles('SUPER_ADMIN', 'BRANCH_MANAGER')
   @Permissions('users.transfer')
   @Patch('transfer-requests/:uuid/approve')
   @ApiOperation({
@@ -294,7 +281,6 @@ export class UsersController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
-  @Roles('SUPER_ADMIN', 'BRANCH_MANAGER')
   @Patch('transfer-requests/:uuid/reject')
   @ApiOperation({
     summary: 'Reject user transfer',

@@ -586,25 +586,6 @@ async function main() {
       });
     }
   
-    // ── Register in department_managers for admin dept ────────────
-    if (adminDeptId) {
-      const existingDm = await prisma.department_managers.findFirst({
-        where: { department_id: adminDeptId, user_id: bmUser.id },
-      });
-  
-      if (!existingDm) {
-        await prisma.department_managers.create({
-          data: {
-            uuid:          generateUUID(),
-            department_id: adminDeptId,
-            user_id:       bmUser.id,
-            is_active:     true,
-            assigned_by:   superAdmin.id,
-          },
-        });
-      }
-    }
-  
     // ── Create pre-seeded user session (so BM can login immediately) ──
     // This gives them a valid refresh token without needing to call /auth/login first.
     // The token hash is deterministic — useful for testing API calls directly.
@@ -756,8 +737,8 @@ async function main() {
           uuid:        generateUUID(),
           employee_id:       employee.id,
           payroll_frequency: freq,
-          basic_salary:      300000 + (i * 750),   // RWF 300k–600k range
-          daily_rate:        i % 3 === 1 ? 12000 + (i * 50) : 0,
+          basic_salary:      freq === EMPLOYMENT_TYPE.MONTHLY ? 150000 : 0,
+          daily_rate:        freq === EMPLOYMENT_TYPE.MONTHLY ? 5000 : 3000,
           overtime_rate:     2000,
           custom_work_days:  freq === EMPLOYMENT_TYPE.CUSTOM ? 20 : null,
           tax_percentage:    taxPct,

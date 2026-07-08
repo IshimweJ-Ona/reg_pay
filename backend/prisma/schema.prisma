@@ -258,7 +258,7 @@ model Departments {
   employees Employees[]
 
   user_departments User_departments[]
-  department_managers Department_managers[]
+
   workflow_steps Approval_workflow_steps[]
 
   oldEmployeeHistories Employee_history[] @relation("OldDepartment")
@@ -267,29 +267,6 @@ model Departments {
   @@unique([working_location_id, code])
   @@unique([working_location_id, name])
   @@index([working_location_id], name: "idx_department_location")
-}
-
-model Department_managers {
-  id BigInt @id @default(autoincrement())
-  uuid String @unique @db.Char(36)
-
-  department_id BigInt
-  user_id BigInt
-
-  is_active Boolean @default(true)
-
-  assigned_at DateTime @default(now())
-  unassigned_at DateTime?
-
-  assigned_by BigInt
-
-  department Departments @relation(fields: [department_id], references: [id])
-  user Users @relation("DepartmentManagerUser", fields: [user_id], references: [id])
-  assignedBy Users @relation("DepartmentManagerAssignedBy", fields: [assigned_by], references: [id])
-
-  @@index([department_id], name: "idx_department_manager_department")
-  @@index([user_id], name: "idx_department_manager_user")
-  @@index([is_active], name: "idx_department_manager_active")
 }
 
 /* =========================================================
@@ -346,8 +323,6 @@ model Users {
 
   branch_manager_records Branch_managers[] @relation("BranchManagerUser")
   branch_manager_assignments Branch_managers[] @relation("BranchManagerAssignedBy")
-  department_manager_records Department_managers[] @relation("DepartmentManagerUser")
-  department_manager_assignments Department_managers[] @relation("DepartmentManagerAssignedBy")
 
   working_locations_created Working_locations[] @relation("WorkingLocationCreatedBy")
   working_locations_updated Working_locations[] @relation("WorkingLocationUpdatedBy")
@@ -569,9 +544,9 @@ model Employees {
   last_name String @db.VarChar(100)
 
   email String? @unique @db.VarChar(150)
-  phone_number String? @unique @db.VarChar(20)
+  phone_number String? @unique @db.VarChar(15)
 
-  national_id String? @unique @db.VarChar(50)
+  national_id String? @unique @db.VarChar(16)
 
   gender GENDER?
 

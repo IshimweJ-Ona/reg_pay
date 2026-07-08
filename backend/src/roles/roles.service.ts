@@ -14,11 +14,13 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateRoleDto } from './dto/create-role.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
 import { ALL_PERMISSION_KEYS } from '../common/constants/permissions.constants';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class RolesService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly notificationsService: NotificationsService,
     @Inject(CACHE_MANAGER) private cacheManager: cacheManager.Cache,
   ) {}
 
@@ -86,6 +88,7 @@ export class RolesService {
       return created;
     });
 
+    this.notificationsService.broadcast({ type: 'permissions_updated' });
     await this.clearRbacCaches();
     return this.findOne(role.id);
   }
@@ -135,6 +138,7 @@ export class RolesService {
       });
     });
 
+    this.notificationsService.broadcast({ type: 'permissions_updated' });
     await this.clearRbacCaches();
     return this.findOne(roleId);
   }

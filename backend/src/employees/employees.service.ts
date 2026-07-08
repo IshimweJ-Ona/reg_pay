@@ -155,8 +155,12 @@ export class EmployeesService {
               uuid: generateUUID(),
               employee_id: created.id,
               payroll_frequency: category.payroll_frequency,
-              basic_salary: dto.basic_salary ?? '0',
-              daily_rate: dto.daily_rate ?? '0',
+              basic_salary: category.payroll_frequency === 'MONTHLY'
+                ? (dto.basic_salary ?? '150000')
+                : '0',
+              daily_rate: category.payroll_frequency === 'MONTHLY'
+                ? (dto.daily_rate ?? '5000')
+                : (dto.daily_rate ?? '3000'),
               overtime_rate: '0',
               tax_percentage: dto.tax_percentage ?? '0',
               custom_work_days: dto.custom_work_days,
@@ -434,11 +438,11 @@ export class EmployeesService {
           const structureData = {
             payroll_frequency: category.payroll_frequency,
             basic_salary: isMonthly
-              ? (dto.basic_salary ?? currentStructure?.basic_salary ?? '0')
+              ? (dto.basic_salary ?? (currentStructure?.basic_salary && Number(currentStructure.basic_salary) !== 0 ? currentStructure.basic_salary.toString() : '150000'))
               : '0',
             daily_rate: isMonthly
-              ? '0'
-              : (dto.daily_rate ?? currentStructure?.daily_rate ?? '0'),
+              ? (dto.daily_rate ?? (currentStructure?.daily_rate && Number(currentStructure.daily_rate) !== 0 ? currentStructure.daily_rate.toString() : '5000'))
+              : (dto.daily_rate ?? (currentStructure?.daily_rate && Number(currentStructure.daily_rate) !== 0 ? currentStructure.daily_rate.toString() : '3000')),
             overtime_rate: currentStructure?.overtime_rate ?? '0',
             tax_percentage:
               dto.tax_percentage ?? currentStructure?.tax_percentage ?? '0',
@@ -624,13 +628,13 @@ export class EmployeesService {
       throw new BadRequestException('Transfer request has no employee.');
     }
 
+    const hasTransferApprove = actor.permissions.includes('employees.transfer_approve') || this.isSystemAdmin(actor);
     const isAdmin = this.isSystemAdmin(actor);
-    const isBM = actor.roles.some((role) => ['BRANCH_MANAGER'].includes(role));
 
     if (request.current_level === 'BRANCH_MANAGER') {
-      if (!isBM && !isAdmin) {
+      if (!hasTransferApprove) {
         throw new ForbiddenException(
-          'Only a Branch Manager can approve this at this level.',
+          'Only a user with transfer approval permission can approve this at this level.',
         );
       }
 

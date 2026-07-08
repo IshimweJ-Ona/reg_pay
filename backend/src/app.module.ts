@@ -13,6 +13,7 @@ import { UsersModule } from './users/users.module';
 import { RolesModule } from './roles/roles.module';
 import { PermissionsModule } from './permissions/permissions.module';
 import { OrganizationModule } from './organization/organization.module';
+import { DepartmentsModule } from './departments/department.model';
 import { EmployeesModule } from './employees/employees.module';
 import { TimeRecordsModule } from './time-records/time-records.module';
 import { PaymentStructuresModule } from './payment-structures/payment-structures.module';
@@ -43,6 +44,8 @@ import { WorkingLocationScopeInterceptor } from './common/interceptors/working-l
     UsersModule,
 
     OrganizationModule,
+
+    DepartmentsModule,
 
     EmployeesModule,
 

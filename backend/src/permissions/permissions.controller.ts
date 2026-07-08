@@ -9,7 +9,6 @@ import {
 } from '@nestjs/common';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Permissions } from '../auth/decorators/permissions.decorator';
-import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../auth/guards/permissions.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -19,7 +18,6 @@ import { AssignUserPermissionDto } from './dto/assign-user-permission.dto';
 import { PermissionsService } from './permissions.service';
 
 @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
-@Roles('SUPER_ADMIN', 'BRANCH_MANAGER')
 @Controller('permissions')
 export class PermissionsController {
   constructor(private readonly permissionsService: PermissionsService) {}
@@ -32,7 +30,6 @@ export class PermissionsController {
   }
 
   @Permissions('permissions.assign')
-  @Roles('SUPER_ADMIN')
   @Post('assign-role')
   assignToRole(
     @Body() dto: AssignPermissionDto,
@@ -42,7 +39,6 @@ export class PermissionsController {
   }
 
   @Permissions('permissions.assign')
-  @Roles('SUPER_ADMIN')
   @Delete('assign-role')
   removeFromRole(
     @Query() dto: AssignPermissionDto,

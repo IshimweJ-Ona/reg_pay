@@ -10,7 +10,6 @@ import {
 } from '@nestjs/common';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Permissions } from '../auth/decorators/permissions.decorator';
-import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../auth/guards/permissions.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -22,16 +21,6 @@ import { BulkImportDto } from './dto/bulk-import.dto';
 import { TimeRecordsService } from './time-records.service';
 
 @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
-@Roles(
-  'SUPER_ADMIN',
-  'BRANCH_MANAGER',
-  'HR',
-  'HR_MANAGER',
-  'ACCOUNTANT',
-  'FINANCE',
-  'ATTENDANT',
-  'DEPARTMENT_MANAGER',
-)
 @Controller('time-records')
 export class TimeRecordsController {
   constructor(private readonly timeRecordsService: TimeRecordsService) {}

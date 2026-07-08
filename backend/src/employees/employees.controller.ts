@@ -20,7 +20,6 @@ import {
 } from '@nestjs/swagger';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Permissions } from '../auth/decorators/permissions.decorator';
-import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../auth/guards/permissions.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -47,7 +46,6 @@ export class EmployeesController {
   // POST /employees
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  @Roles('SUPER_ADMIN', 'BRANCH_MANAGER', 'HR')
   @Permissions('employees.create')
   @ApiOperation({
     summary: 'Create a new employee',
@@ -75,14 +73,6 @@ export class EmployeesController {
 
   // GET /employees
   @Get()
-  @Roles(
-    'SUPER_ADMIN',
-    'BRANCH_MANAGER',
-    'HR',
-    'ACCOUNTANT',
-    'ATTENDANT',
-    'FINANCE',
-  )
   @Permissions('employees.read')
   @ApiOperation({
     summary: 'List all employees',
@@ -120,14 +110,6 @@ export class EmployeesController {
 
   // GET /employees/:uuid
   @Get(':uuid')
-  @Roles(
-    'SUPER_ADMIN',
-    'BRANCH_MANAGER',
-    'HR',
-    'ACCOUNTANT',
-    'ATTENDANT',
-    'FINANCE',
-  )
   @Permissions('employees.read')
   @ApiOperation({
     summary: 'Get employee by UUID',
@@ -160,7 +142,6 @@ export class EmployeesController {
 
   // PATCH /employees/:uuid
   @Patch(':uuid')
-  @Roles('SUPER_ADMIN', 'BRANCH_MANAGER', 'HR')
   @Permissions('employees.update')
   @ApiOperation({
     summary: 'Update employee profile',
@@ -201,7 +182,6 @@ export class EmployeesController {
 
   // PATCH /employees/:uuid/transfer
   @Patch(':uuid/transfer')
-  @Roles('SUPER_ADMIN', 'BRANCH_MANAGER')
   @Permissions('employees.transfer')
   @ApiOperation({
     summary: 'Initiate an employee transfer',
@@ -239,8 +219,7 @@ export class EmployeesController {
 
   // PATCH /employees/transfer-requests/:uuid/approve
   @Patch('transfer-requests/:uuid/approve')
-  @Roles('SUPER_ADMIN', 'BRANCH_MANAGER')
-  @Permissions('employees.transfer')
+  @Permissions('employees.transfer_approve')
   @ApiOperation({
     summary: 'Approve a pending employee transfer request',
     description:
@@ -275,8 +254,7 @@ export class EmployeesController {
 
   // PATCH /employees/transfer-requests/:uuid/reject
   @Patch('transfer-requests/:uuid/reject')
-  @Roles('SUPER_ADMIN', 'BRANCH_MANAGER')
-  @Permissions('employees.transfer')
+  @Permissions('employees.transfer_approve')
   @ApiOperation({
     summary: 'Reject a pending employee transfer request',
     description:
@@ -316,7 +294,6 @@ export class EmployeesController {
 
   // PATCH /employees/:uuid/suspend
   @Patch(':uuid/suspend')
-  @Roles('SUPER_ADMIN', 'BRANCH_MANAGER', 'HR')
   @Permissions('employees.suspend')
   @ApiOperation({
     summary: 'Suspend an employee',
@@ -351,7 +328,6 @@ export class EmployeesController {
 
   // PATCH /employees/:uuid/reactivate
   @Patch(':uuid/reactivate')
-  @Roles('SUPER_ADMIN', 'BRANCH_MANAGER', 'HR')
   @Permissions('employees.update')
   @ApiOperation({
     summary: 'Reactivate a suspended employee',

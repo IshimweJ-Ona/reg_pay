@@ -17,11 +17,13 @@ import {
   PermissionModule,
   ALL_PERMISSION_KEYS,
 } from '../common/constants/permissions.constants';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class PermissionsService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly notificationsService: NotificationsService,
     @Inject(CACHE_MANAGER) private cacheManager: cacheManager.Cache,
   ) {}
 
@@ -47,6 +49,7 @@ export class PermissionsService {
       });
     }
 
+    this.notificationsService.broadcast({ type: 'permissions_updated' });
     await this.cacheManager.del('roles:all');
 
     return {
@@ -70,6 +73,7 @@ export class PermissionsService {
       });
     }
 
+    this.notificationsService.broadcast({ type: 'permissions_updated' });
     await this.cacheManager.del('roles:all');
 
     return { message: 'Permission removed from role.' };
@@ -117,6 +121,8 @@ export class PermissionsService {
       return created;
     });
 
+    this.notificationsService.broadcast({ type: 'permissions_updated' });
+
     return {
       message: 'Permission assigned to user.',
       user_permission: this.serializeUserPermission(assignment),
@@ -159,6 +165,8 @@ export class PermissionsService {
         },
       }),
     ]);
+
+    this.notificationsService.broadcast({ type: 'permissions_updated' });
 
     return { message: 'Permission removed from user.' };
   }
