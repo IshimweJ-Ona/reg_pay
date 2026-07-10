@@ -37,6 +37,17 @@ import { AttendanceSyncPopover } from '@/components/attendance/attendance-sync-p
 const PRESENT_SYMBOL = 'P';
 const ABSENT_SYMBOL = 'A';
 
+// Keys an existing/incoming record by employee + date so we can diff
+// the uploaded file against what's already stored, cell by cell.
+function recordKey(employeeId: string, attendanceDate: string) {
+  return `${employeeId}_${attendanceDate}`;
+}
+
+// Normalizes hours for comparison: null/undefined/blank all mean "0".
+function normalizedHours(value: any) {
+  return Number(value ?? 0);
+}
+
 export default function AttendanceMonitoringPage() {
   const [records, setRecords] = useState<any[]>([]);
   const [employees, setEmployees] = useState<any[]>([]);
@@ -48,6 +59,11 @@ export default function AttendanceMonitoringPage() {
   const [importDateFrom, setImportDateFrom] = useState('');
   const [importDateTo, setImportDateTo] = useState('');
   const [importFile, setImportFile] = useState<File | null>(null);
+  const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
+  const [exportType, setExportType] = useState<'csv' | 'excel' | null>(null);
+  const [exportPreset, setExportPreset] = useState<'LAST_MONTH' | 'LAST_YEAR' | 'CUSTOM' | 'SINGLE_DAY'>('CUSTOM');
+  const [exportDateFrom, setExportDateFrom] = useState('');
+  const [exportDateTo, setExportDateTo] = useState('');
   const { toast } = useToast();
   const { user, hasPermission } = useAuth();
   const { startSync, syncState, pendingSync, setPendingSync } = useAttendanceSync();
@@ -62,22 +78,24 @@ export default function AttendanceMonitoringPage() {
     const startTime = performance.now();
     setLoading(true);
     try {
+      // Optimization: only request the window we actually display (past 5
+      // days, excluding today - today comes from getTodayAttendance below)
+      // instead of pulling every time_record row in the database.
+      const fiveDaysAgo = getRwandaTime().subtract(5, 'day').startOf('day');
+      const yesterday = getRwandaTime().subtract(1, 'day').endOf('day');
+
       const [recs, empsResponse, todayRecs] = await Promise.all([
-        getTimeRecords(),
+        getTimeRecords({
+          start_date: fiveDaysAgo.format('YYYY-MM-DD'),
+          end_date: yesterday.format('YYYY-MM-DD'),
+          working_location_id: user?.location,
+        }),
         getEmployees(),
         getTodayAttendance(user?.location, activeTab === 'ALL' ? undefined : activeTab)
       ]);
       const employeeList = empsResponse.employees || (Array.isArray(empsResponse) ? empsResponse : []);
 
-      // Optimization: Filter history to past 5 days (excluding today)
-      const fiveDaysAgo = getRwandaTime().subtract(5, 'day').startOf('day');
-      const todayStart = getRwandaTime().startOf('day');
-
       const filteredRecs = (Array.isArray(recs) ? recs : [])
-        .filter(r => {
-          const recDate = dayjs(r.attendance_date).tz('Africa/Kigali');
-          return recDate.isSameOrAfter(fiveDaysAgo) && recDate.isBefore(todayStart);
-        })
         .sort((a, b) => dayjs(b.attendance_date).unix() - dayjs(a.attendance_date).unix());
 
       setRecords(filteredRecs);
@@ -348,18 +366,14 @@ export default function AttendanceMonitoringPage() {
     }
   };
 
+  // ── Uploads a filled template. Dates come from the file's own header
+  // row (no re-typing a range). Before sending anything to the server,
+  // every parsed employee+date cell is diffed against what's already
+  // stored: unchanged cells are skipped/rejected client-side, and only
+  // genuinely new or changed cells get sent. Re-uploading an unchanged
+  // file sends nothing at all. ──
   const handleImportUpload = () => {
     if (!importFile) return;
-    if (!importDateFrom || !importDateTo) {
-      toast({ variant: 'destructive', title: 'Date Range required', description: 'Please select a date range.' });
-      return;
-    }
-    const start = dayjs(importDateFrom);
-    const end = dayjs(importDateTo);
-    if (end.isBefore(start)) {
-      toast({ variant: 'destructive', title: 'Invalid range', description: 'date_to must be greater than or equal to date_from.' });
-      return;
-    }
     if (importFile.size > 5 * 1024 * 1024) {
       toast({ variant: 'destructive', title: 'File too large', description: 'Max file size is 5MB.' });
       return;
@@ -400,6 +414,19 @@ export default function AttendanceMonitoringPage() {
           return;
         }
 
+        // The template already carries its own date range as column
+        // headers — parse it from the file instead of asking the user
+        // to retype a range that's already baked in.
+        const parsedDateHeaders = dateHeaders.map((h) => dayjs(h, 'DD/MM/YYYY', true));
+        const invalidIdx = parsedDateHeaders.findIndex((d) => !d.isValid());
+        if (invalidIdx !== -1) {
+          toast({ variant: 'destructive', title: 'Import Rejected', description: `Invalid date column header: "${dateHeaders[invalidIdx]}".` });
+          return;
+        }
+
+        const derivedDateFrom = parsedDateHeaders.reduce((min, d) => (d.isBefore(min) ? d : min));
+        const derivedDateTo = parsedDateHeaders.reduce((max, d) => (d.isAfter(max) ? d : max));
+
         if (raw.length - 1 > 500) {
           toast({ variant: 'destructive', title: 'Too many rows', description: 'Limit is 500 rows. Please split the file.' });
           return;
@@ -408,7 +435,7 @@ export default function AttendanceMonitoringPage() {
         const employeeMap = new Map<string, any>();
         employees.forEach((emp) => employeeMap.set(emp.id.toString(), emp));
 
-        const processedLogs: any[] = [];
+        const allProcessedLogs: any[] = [];
 
         for (let i = 1; i < raw.length; i++) {
           const row = raw[i];
@@ -418,7 +445,6 @@ export default function AttendanceMonitoringPage() {
           const departmentRaw = row[2];
           const overrideOT = row[3];
           const workedHrs = row[4];
-          const rowStatus = row[5]; // row_status at index 5
 
           if (empIdRaw === undefined || empIdRaw === null || empIdRaw === '') continue;
 
@@ -462,6 +488,7 @@ export default function AttendanceMonitoringPage() {
           for (let d = 0; d < dateHeaders.length; d++) {
             const dateHeaderRaw = dateHeaders[d];
             const cellValue = row[6 + d]; // date columns start at index 6
+            const parsedDate = parsedDateHeaders[d];
 
             // Determine attendance status
             let attendance_status: 'PRESENT' | 'ABSENT';
@@ -493,17 +520,7 @@ export default function AttendanceMonitoringPage() {
               return;
             }
 
-            const parsedDate = dayjs(dateHeaderRaw, 'DD/MM/YYYY');
-            if (!parsedDate.isValid()) {
-              toast({ variant: 'destructive', title: 'Validation Error', description: `Invalid date column header: "${dateHeaderRaw}".` });
-              return;
-            }
-            if (parsedDate.isBefore(start, 'day') || parsedDate.isAfter(end, 'day')) {
-              toast({ variant: 'destructive', title: 'Validation Error', description: `Date "${dateHeaderRaw}" is outside the selected range.` });
-              return;
-            }
-
-            processedLogs.push({
+            allProcessedLogs.push({
               employee_id: empIdStr,
               attendance_date: parsedDate.format('YYYY-MM-DD'),
               attendance_status,
@@ -513,19 +530,73 @@ export default function AttendanceMonitoringPage() {
           }
         }
 
-        if (processedLogs.length === 0) {
+        if (allProcessedLogs.length === 0) {
           toast({ variant: 'destructive', title: 'Nothing to import', description: 'No filled attendance cells found.' });
+          return;
+        }
+
+        // ── Diff against what's already stored ──
+        // Pull the current full set of time records and key them by
+        // employee_id + date so each parsed cell can be compared to
+        // what's on file. Only cells that are new or genuinely changed
+        // get sent; everything identical to what's stored is skipped.
+        let existingRecords: any[] = [];
+        try {
+          const fetched = await getTimeRecords({
+            start_date: importDateFrom,
+            end_date: importDateTo,
+          });
+          existingRecords = Array.isArray(fetched) ? fetched : [];
+        } catch (err) {
+          console.error('Failed to fetch existing records for diffing:', err);
+          toast({ variant: 'destructive', title: 'Import Failed', description: 'Could not verify existing records before import.' });
+          return;
+        }
+
+        const existingMap = new Map<string, any>();
+        existingRecords.forEach((rec: any) => {
+          const dateStr = dayjs(rec.attendance_date).format('YYYY-MM-DD');
+          existingMap.set(recordKey(String(rec.employee_id), dateStr), rec);
+        });
+
+        const changedLogs: any[] = [];
+        let skippedCount = 0;
+
+        for (const log of allProcessedLogs) {
+          const existing = existingMap.get(recordKey(log.employee_id, log.attendance_date));
+
+          const isUnchanged =
+            existing &&
+            existing.attendance_status === log.attendance_status &&
+            normalizedHours(existing.hours_worked) === normalizedHours(log.hours_worked) &&
+            normalizedHours(existing.overtime_hours) === normalizedHours(log.overtime_hours);
+
+          if (isUnchanged) {
+            skippedCount += 1;
+          } else {
+            changedLogs.push(log);
+          }
+        }
+
+        if (changedLogs.length === 0) {
+          toast({
+            title: 'No Changes Detected',
+            description: `All ${allProcessedLogs.length} record(s) already match what's stored. Nothing was imported.`,
+          });
           return;
         }
 
         setLoading(true);
         await bulkCreateTimeRecords({
-          date_from: importDateFrom,
-          date_to: importDateTo,
-          records: processedLogs,
+          date_from: derivedDateFrom.format('YYYY-MM-DD'),
+          date_to: derivedDateTo.format('YYYY-MM-DD'),
+          records: changedLogs,
         });
 
-        toast({ title: 'Import Success', description: `${processedLogs.length} attendance records imported.` });
+        toast({
+          title: 'Import Success',
+          description: `${changedLogs.length} record(s) imported. ${skippedCount} skipped (no change).`,
+        });
         setIsImportOpen(false);
         setImportFile(null);
         fetchData();
@@ -544,24 +615,28 @@ export default function AttendanceMonitoringPage() {
     reader.readAsBinaryString(importFile);
   };
 
+  // ── Today's live snapshot export (LOG view). No date range needed —
+  // this is always "right now". ──
   const handleExport = (type: 'csv' | 'excel') => {
-    const dataToExport = viewMode === 'HISTORY' ? filteredHistory : filteredEmployees.map(emp => {
+    const dataToExport = filteredEmployees.map(emp => {
       const rec = todayRecordsMap[emp.id];
       return {
         ...emp,
         attendance_status: rec?.attendance_status ?? 'NOT LOGGED',
         attendance_date: todayStr,
-        clock_in: rec?.clock_in,
-        clock_out: rec?.clock_out
+        hours_worked: rec?.hours_worked,
+        overtime_hours: rec?.overtime_hours,
       };
     });
 
     const exportData = dataToExport.map((rec: any) => ({
-      Personnel: rec.first_name ? `${rec.first_name} ${rec.last_name}` : `${rec.employee?.first_name ?? ''} ${rec.employee?.last_name ?? ''}`,
-      Department: rec.department?.name || rec.employee?.department?.name,
-      Category: rec.employment_category?.name || rec.employee?.payment_structures?.[0]?.payroll_frequency,
+      Personnel: `${rec.first_name ?? ''} ${rec.last_name ?? ''}`,
+      Department: rec.department?.name,
+      Category: rec.employment_category?.name,
       Date: new Date(rec.attendance_date).toLocaleDateString(),
-      Status: rec.attendance_status
+      Status: rec.attendance_status,
+      'Hours Worked': rec.hours_worked ?? '',
+      'Overtime Hours': rec.overtime_hours ?? '',
     }));
 
     const dateStr = new Date().toISOString().split('T')[0];
@@ -569,6 +644,111 @@ export default function AttendanceMonitoringPage() {
 
     if (type === 'csv') exportToCSV(exportData, path);
     else if (type === 'excel') exportToExcel(exportData, path);
+  };
+
+  // ── Entry point for the Export dropdown. LOG view exports today's
+  // snapshot immediately (no range makes sense there). HISTORY view
+  // opens the date-range picker, since "history" is meaningless without
+  // choosing a period. ──
+  const handleExportClick = (type: 'csv' | 'excel') => {
+    if (viewMode === 'LOG') {
+      handleExport(type);
+      return;
+    }
+    setExportType(type);
+    setExportPreset('CUSTOM');
+    setExportDateFrom('');
+    setExportDateTo('');
+    setIsExportDialogOpen(true);
+  };
+
+  // Resolves the active preset into a concrete [from, to] range.
+  const resolveExportRange = (): { from: dayjs.Dayjs; to: dayjs.Dayjs; label: string } | null => {
+    if (exportPreset === 'LAST_MONTH') {
+      const from = dayjs().subtract(1, 'month').startOf('month');
+      const to = dayjs().subtract(1, 'month').endOf('month');
+      return { from, to, label: from.format('MMMM YYYY') };
+    }
+    if (exportPreset === 'LAST_YEAR') {
+      const from = dayjs().subtract(1, 'year').startOf('year');
+      const to = dayjs().subtract(1, 'year').endOf('year');
+      return { from, to, label: from.format('YYYY') };
+    }
+    if (exportPreset === 'SINGLE_DAY') {
+      if (!exportDateFrom) return null;
+      const day = dayjs(exportDateFrom).startOf('day');
+      return { from: day, to: day, label: day.format('DD MMM YYYY') };
+    }
+    // CUSTOM
+    if (!exportDateFrom || !exportDateTo) return null;
+    const from = dayjs(exportDateFrom).startOf('day');
+    const to = dayjs(exportDateTo).startOf('day');
+    return { from, to, label: `${from.format('DD MMM YYYY')} – ${to.format('DD MMM YYYY')}` };
+  };
+
+  // ── History export with a real date range. Fetches the full record
+  // set fresh (not the 5-day-limited `records` state), filters by the
+  // chosen range, and tells the user plainly if there's nothing there
+  // instead of silently exporting an empty file. ──
+  const performHistoryExport = async () => {
+    if (!exportType) return;
+
+    const range = resolveExportRange();
+    if (!range) {
+      toast({ variant: 'destructive', title: 'Date required', description: 'Please choose a date or date range.' });
+      return;
+    }
+
+    if (range.to.isBefore(range.from, 'day')) {
+      toast({ variant: 'destructive', title: 'Invalid range', description: 'date_to must be greater than or equal to date_from.' });
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const allRecords = await getTimeRecords({
+        start_date: range.from.format('YYYY-MM-DD'),
+        end_date: range.to.format('YYYY-MM-DD'),
+      });
+      const recordsInRange = (Array.isArray(allRecords) ? allRecords : []).filter((r: any) => {
+        const recDate = dayjs(r.attendance_date).startOf('day');
+        return (recDate.isAfter(range.from, 'day') || recDate.isSame(range.from, 'day'))
+          && (recDate.isBefore(range.to, 'day') || recDate.isSame(range.to, 'day'));
+      });
+
+      if (recordsInRange.length === 0) {
+        toast({
+          variant: 'destructive',
+          title: 'No Attendance Records Found',
+          description: `No attendance records exist for ${range.label}. If you meant to log attendance for this period, use the Bulk Import button to download a template for these dates.`,
+        });
+        return;
+      }
+
+      const exportData = recordsInRange.map((rec: any) => ({
+        Personnel: `${rec.employee?.first_name ?? ''} ${rec.employee?.last_name ?? ''}`.trim() || rec.employee_id,
+        Department: rec.employee?.department?.name ?? 'Unassigned',
+        Category: rec.employee?.payment_structures?.[0]?.payroll_frequency ?? '',
+        Date: new Date(rec.attendance_date).toLocaleDateString(),
+        Status: rec.attendance_status,
+        'Hours Worked': rec.hours_worked ?? '',
+        'Overtime Hours': rec.overtime_hours ?? '',
+      }));
+
+      const fromStr = range.from.format('YYYY-MM-DD');
+      const toStr = range.to.format('YYYY-MM-DD');
+      const path = `REG_Pay/time_records/attendance_export/${fromStr}_to_${toStr}`;
+
+      if (exportType === 'csv') exportToCSV(exportData, path);
+      else exportToExcel(exportData, path);
+
+      setIsExportDialogOpen(false);
+    } catch (err) {
+      console.error('History export error:', err);
+      toast({ variant: 'destructive', title: 'Export Failed', description: 'Could not fetch records for export.' });
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -606,8 +786,8 @@ export default function AttendanceMonitoringPage() {
               <Button variant="outline" className="h-11 shadow-sm"><Download className="mr-2 h-4 w-4" /> Export</Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent>
-              <DropdownMenuItem onClick={() => handleExport('csv')}>CSV</DropdownMenuItem>
-              <DropdownMenuItem onClick={() => handleExport('excel')}>Excel</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handleExportClick('csv')}>CSV</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handleExportClick('excel')}>Excel</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -762,7 +942,7 @@ export default function AttendanceMonitoringPage() {
           <DialogHeader>
             <DialogTitle className="text-xl font-bold">Bulk Import Attendance</DialogTitle>
             <DialogDescription className="text-sm text-slate-500">
-              Select a date range to generate a template or upload your filled template.
+              Select a date range to generate a template, or upload a filled template — only rows/dates that changed will be imported.
             </DialogDescription>
           </DialogHeader>
 
@@ -818,7 +998,7 @@ export default function AttendanceMonitoringPage() {
                 <p className="text-xs text-slate-600 font-medium">
                   {importFile ? importFile.name : 'Click to select Excel/CSV file'}
                 </p>
-                <p className="text-[10px] text-slate-400 mt-1">Maximum size 5MB</p>
+                <p className="text-[10px] text-slate-400 mt-1">Maximum size 5MB · Only changed rows/dates get imported</p>
                 <input
                   id="dialog-file-input"
                   type="file"
@@ -846,10 +1026,121 @@ export default function AttendanceMonitoringPage() {
             </Button>
             <Button
               onClick={handleImportUpload}
-              disabled={!importFile || !importDateFrom || !importDateTo || employees.length === 0}
+              disabled={!importFile || employees.length === 0}
               className="h-10 rounded-xl text-xs font-semibold px-6 bg-slate-900 text-white hover:bg-slate-800"
             >
               Upload & Import
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isExportDialogOpen} onOpenChange={(open) => {
+        setIsExportDialogOpen(open);
+        if (!open) { setExportType(null); setExportDateFrom(''); setExportDateTo(''); }
+      }}>
+        <DialogContent className="max-w-md bg-white rounded-3xl p-6 border shadow-lg">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-bold">Export Attendance History</DialogTitle>
+            <DialogDescription className="text-sm text-slate-500">
+              Choose the period you want to export.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 my-4">
+            <div className="grid grid-cols-2 gap-2">
+              <Button
+                type="button"
+                variant={exportPreset === 'LAST_MONTH' ? 'default' : 'outline'}
+                className="h-10 rounded-xl text-xs font-semibold"
+                onClick={() => setExportPreset('LAST_MONTH')}
+              >
+                Last Month
+              </Button>
+              <Button
+                type="button"
+                variant={exportPreset === 'LAST_YEAR' ? 'default' : 'outline'}
+                className="h-10 rounded-xl text-xs font-semibold"
+                onClick={() => setExportPreset('LAST_YEAR')}
+              >
+                Last Year
+              </Button>
+              <Button
+                type="button"
+                variant={exportPreset === 'CUSTOM' ? 'default' : 'outline'}
+                className="h-10 rounded-xl text-xs font-semibold"
+                onClick={() => setExportPreset('CUSTOM')}
+              >
+                Custom Range
+              </Button>
+              <Button
+                type="button"
+                variant={exportPreset === 'SINGLE_DAY' ? 'default' : 'outline'}
+                className="h-10 rounded-xl text-xs font-semibold"
+                onClick={() => setExportPreset('SINGLE_DAY')}
+              >
+                Single Day
+              </Button>
+            </div>
+
+            {exportPreset === 'CUSTOM' && (
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-slate-600">Date From</label>
+                  <Input
+                    type="date"
+                    value={exportDateFrom}
+                    onChange={(e) => setExportDateFrom(e.target.value)}
+                    className="h-10 rounded-xl"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-slate-600">Date To</label>
+                  <Input
+                    type="date"
+                    value={exportDateTo}
+                    onChange={(e) => setExportDateTo(e.target.value)}
+                    className="h-10 rounded-xl"
+                  />
+                </div>
+              </div>
+            )}
+
+            {exportPreset === 'SINGLE_DAY' && (
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-600">Date</label>
+                <Input
+                  type="date"
+                  value={exportDateFrom}
+                  onChange={(e) => setExportDateFrom(e.target.value)}
+                  className="h-10 rounded-xl"
+                />
+              </div>
+            )}
+
+            {(exportPreset === 'LAST_MONTH' || exportPreset === 'LAST_YEAR') && (
+              <p className="text-xs text-slate-500 bg-slate-50 rounded-xl p-3">
+                {exportPreset === 'LAST_MONTH'
+                  ? `Exporting: ${dayjs().subtract(1, 'month').format('MMMM YYYY')}`
+                  : `Exporting: ${dayjs().subtract(1, 'year').format('YYYY')}`}
+              </p>
+            )}
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="ghost"
+              onClick={() => setIsExportDialogOpen(false)}
+              className="h-10 rounded-xl text-xs font-semibold"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={performHistoryExport}
+              disabled={loading}
+              className="h-10 rounded-xl text-xs font-semibold px-6 bg-slate-900 text-white hover:bg-slate-800"
+            >
+              {loading ? 'Exporting...' : 'Export'}
             </Button>
           </DialogFooter>
         </DialogContent>
