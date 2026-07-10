@@ -29,6 +29,7 @@ import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
 import { SuspendEmployeeDto } from './dto/suspend-employee.dto';
 import { TransferEmployeeDto } from './dto/transfer-employee.dto';
+import { BulkImportEmployeeDto } from './dto/bulk-import-employee.dto';
 import {
   EmployeeEntity,
   PaginatedEmployeesEntity,
@@ -69,6 +70,36 @@ export class EmployeesController {
     @CurrentUser() actor: CurrentUserType,
   ) {
     return this.employeesService.create(dto, actor);
+  }
+
+  // POST /employees/bulk-import
+  @Post('bulk-import')
+  @HttpCode(HttpStatus.CREATED)
+  @Permissions('employees.create')
+  @ApiOperation({
+    summary: 'Bulk import employees',
+    description:
+      'Imports multiple employees in a single request. Accepts an array of employee ' +
+      'objects. Each employee will be validated individually. Returns results with ' +
+      'any errors encountered per row. Maximum 500 employees per request.',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Bulk import completed (may include partial errors)',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Validation error or too many employees.',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Restricted permission or role.',
+  })
+  bulkImport(
+    @Body() dto: BulkImportEmployeeDto,
+    @CurrentUser() actor: CurrentUserType,
+  ) {
+    return this.employeesService.bulkImport(dto, actor);
   }
 
   // GET /employees

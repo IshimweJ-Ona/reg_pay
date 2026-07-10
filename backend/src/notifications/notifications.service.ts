@@ -77,21 +77,66 @@ export class NotificationsService {
         reference_id: dto.referenceId,
         metadata: dto.metadata,
       },
+      include: {
+        sender: {
+          select: {
+            first_name: true,
+            last_name: true,
+          },
+        },
+        user: {
+          select: {
+            uuid: true,
+            first_name: true,
+            last_name: true,
+            email: true,
+            phone_number: true,
+            working_location: { select: { name: true } },
+            department: { select: { name: true } },
+          },
+        },
+      },
     });
 
-    //Push real-time SSE event immediately after saving
+    // For REGISTRATION_REQUEST, also fetch the reference user record
+    let referenceUser: {
+      uuid: string;
+      first_name: string;
+      last_name: string;
+      email: string;
+      phone_number: string;
+      working_location: { name: string } | null;
+      department: { name: string } | null;
+    } | null = null;
+    if (dto.type === 'REGISTRATION_REQUEST' && dto.referenceId) {
+      referenceUser = await this.prisma.users.findUnique({
+        where: { uuid: dto.referenceId },
+        select: {
+          uuid: true,
+          first_name: true,
+          last_name: true,
+          email: true,
+          phone_number: true,
+          working_location: { select: { name: true } },
+          department: { select: { name: true } },
+        },
+      });
+    }
+
+    // Push real-time SSE event immediately after saving
     const serialized = {
       ...notification,
       id: notification.id.toString(),
       user_id: notification.user_id?.toString(),
       sender_id: notification.sender_id?.toString(),
+      user: referenceUser ?? notification.user,
     };
 
     if (dto.userId) {
       // Push to specific user
       this.pushToUser(dto.userId.toString(), serialized);
     } else {
-      // null userId = admin/global notication, broadcast to all
+      // null userId = admin/global notification, broadcast to all
       this.broadcast(serialized);
     }
 

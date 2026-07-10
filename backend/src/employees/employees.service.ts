@@ -31,6 +31,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { SuspendEmployeeDto } from './dto/suspend-employee.dto';
 import { TransferEmployeeDto } from './dto/transfer-employee.dto';
+import { BulkImportEmployeeDto, BulkImportEmployeeItem } from './dto/bulk-import-employee.dto';
 
 import { NotificationsService } from '../notifications/notifications.service';
 import { PaymentStructuresService } from '../payment-structures/payment-structures.service';
@@ -805,6 +806,193 @@ export class EmployeesService {
       'Employee reactivated.',
       actor,
     );
+  }
+
+  async bulkImport(dto: BulkImportEmployeeDto, actor: CurrentUserType) {
+    if (!dto.employees || dto.employees.length === 0) {
+      throw new BadRequestException('No employees provided for bulk import.');
+    }
+
+    if (dto.employees.length > 500) {
+      throw new BadRequestException('Maximum 500 employees allowed per bulk import.');
+    }
+
+    const results: any[] = [];
+    const errors: { row: number; message: string }[] = [];
+
+    for (let i = 0; i < dto.employees.length; i++) {
+      const item = dto.employees[i];
+      const rowNum = i + 1;
+
+      try {
+        if (!item.first_name || !item.last_name) {
+          throw new BadRequestException('First name and last name are required.');
+        }
+
+        const managerScoped =
+          actor?.roles?.some((role) => ['BRANCH_MANAGER'].includes(role)) &&
+          !this.isSystemAdmin(actor);
+        const effectiveWorkingLocationInput =
+          managerScoped && actor?.working_location_id
+            ? actor.working_location_id
+            : item.working_location_id;
+        const workingLocationId = effectiveWorkingLocationInput
+          ? await this.resolveWorkingLocationId(effectiveWorkingLocationInput)
+          : null;
+
+        const departmentId = item.department_id
+          ? await this.resolveDepartmentId(item.department_id, workingLocationId)
+          : null;
+
+        const categoryId = item.employment_category_id
+          ? this.toBigInt(item.employment_category_id, 'employment_category_id')
+          : null;
+
+        if (workingLocationId && departmentId) {
+          await this.ensureOrganization(workingLocationId, departmentId);
+        }
+
+        if (categoryId) {
+          await this.ensureEmploymentCategory(categoryId);
+        }
+
+        this.ensureActorCanUseScope(
+          actor,
+          workingLocationId,
+          departmentId,
+          'bulk import employees',
+        );
+
+        const created = await this.prisma.$transaction(async (tx) => {
+          // Duplicate checks
+          if (item.email) {
+            const existing = await tx.employees.findFirst({
+              where: { email: item.email, deleted_at: null },
+              select: { uuid: true },
+            });
+            if (existing) {
+              throw new BadRequestException(
+                `An employee with email "${item.email}" already exists (uuid: ${existing.uuid}).`,
+              );
+            }
+          }
+
+          if (item.phone_number) {
+            const existing = await tx.employees.findFirst({
+              where: { phone_number: item.phone_number, deleted_at: null },
+              select: { uuid: true },
+            });
+            if (existing) {
+              throw new BadRequestException(
+                `An employee with phone number "${item.phone_number}" already exists (uuid: ${existing.uuid}).`,
+              );
+            }
+          }
+
+          if (item.national_id) {
+            const existing = await tx.employees.findFirst({
+              where: { national_id: item.national_id, deleted_at: null },
+              select: { uuid: true },
+            });
+            if (existing) {
+              throw new BadRequestException(
+                `An employee with national ID "${item.national_id}" already exists (uuid: ${existing.uuid}).`,
+              );
+            }
+          }
+
+          const created = await tx.employees.create({
+            data: {
+              uuid: generateUUID(),
+              first_name: item.first_name,
+              last_name: item.last_name,
+              email: item.email,
+              phone_number: item.phone_number,
+              national_id: item.national_id,
+              gender: item.gender as any,
+              contract_start_date: item.contract_start_date ? new Date(item.contract_start_date) : null,
+              contract_end_date: item.contract_end_date ? new Date(item.contract_end_date) : null,
+              department_id: departmentId,
+              working_location_id: workingLocationId,
+              employment_category_id: categoryId,
+              status: STATUS_USER.ACTIVE,
+              created_by: BigInt(actor.userId),
+            },
+            include: this.employeeIncludes(),
+          });
+
+          // Create payment structure if category and salary info provided
+          if (categoryId && (item.basic_salary || item.daily_rate)) {
+            const category = await tx.employment_categories.findUnique({
+              where: { id: categoryId },
+            });
+            if (category) {
+              await tx.payment_structures.create({
+                data: {
+                  uuid: generateUUID(),
+                  employee_id: created.id,
+                  payroll_frequency: category.payroll_frequency,
+                  basic_salary: category.payroll_frequency === 'MONTHLY'
+                    ? (item.basic_salary ?? '150000')
+                    : '0',
+                  daily_rate: category.payroll_frequency === 'MONTHLY'
+                    ? (item.daily_rate ?? '5000')
+                    : (item.daily_rate ?? '3000'),
+                  overtime_rate: '0',
+                  tax_percentage: item.tax_percentage ?? '0',
+                  effective_from: new Date(),
+                },
+              });
+            }
+          }
+
+          await tx.audit_logs.create({
+            data: {
+              user_id: BigInt(actor.userId),
+              employee_id: created.id,
+              entity_table: 'employees',
+              entity_id: created.id,
+              module_name: 'EMPLOYEES',
+              activity_type: ACTIVITY_TYPE.CREATE,
+              activity_description: 'Bulk imported employee profile.',
+              action: AUDIT_ACTION.CREATED,
+              new_values: {
+                working_location_id: workingLocationId?.toString() ?? null,
+                department_id: departmentId?.toString() ?? null,
+                employment_category_id: categoryId?.toString() ?? null,
+              },
+            },
+          });
+
+          return created;
+        });
+
+        results.push(this.serializeEmployee(created));
+      } catch (error: any) {
+        errors.push({
+          row: rowNum,
+          message: error?.message ?? 'Unknown error occurred',
+        });
+      }
+    }
+
+    await this.clearEmployeeCache();
+    this.notificationsService.broadcast({ type: 'employees_updated' });
+
+    if (errors.length > 0) {
+      return {
+        imported: results.length,
+        total: dto.employees.length,
+        employees: results,
+        errors,
+      };
+    }
+
+    return {
+      imported: results.length,
+      total: dto.employees.length,
+      employees: results,
+    };
   }
 
   /**
