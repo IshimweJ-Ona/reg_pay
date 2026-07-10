@@ -93,30 +93,28 @@ export class TimeRecordsService {
       throw new BadRequestException('No records to import.')
     }
 
-    let dateFrom: dayjs.Dayjs;
-    let dateTo: dayjs.Dayjs;
+    let dateFrom: Date;
+    let dateTo: Date;
 
     if (dto.date_from && dto.date_to) {
-      dateFrom = dayjs(dto.date_from).startOf('day');
-      dateTo = dayjs(dto.date_to).startOf('day');
+      dateFrom = new Date(dto.date_from);
+      dateTo = new Date(dto.date_to);
     } else {
       const recordDates = records
-        .map((r) => dayjs(r.attendance_date).startOf('day'))
-        .filter((d) => d.isValid());
+        .map((r) => new Date(r.attendance_date))
+        .filter((d) => !isNaN(d.getTime()));
 
-        if (recordDates.length === 0) {
-          throw new BadRequestException(
-            'No valid attendance_date values found in records.',
-          );
-        }
+      if (recordDates.length === 0) {
+        throw new BadRequestException(
+          'No valid attendance_date values found in records.',
+        );
+      }
 
-        dateFrom = recordDates.reduce((min, d) => (d.isBefore(min) ? d : min));
-        dateTo = recordDates.reduce((max, d) => (d.isAfter(max) ? d : max));
+      dateFrom = new Date(Math.min(...recordDates.map((d) => d.getTime())));
+      dateTo = new Date(Math.max(...recordDates.map((d) => d.getTime())));
     }
 
-
-
-    if (dateTo.isBefore(dateFrom)) {
+    if (dateTo.getTime() < dateFrom.getTime()) {
       throw new BadRequestException(
         'date_to must be greater than or equal to date_from.',
       );
@@ -224,21 +222,21 @@ export class TimeRecordsService {
           message: 'attendance_date is required',
         });
       } else {
-        const attendanceDate = dayjs(recordDto.attendance_date).startOf('day');
-        if (!attendanceDate.isValid()) {
+        const attendanceDate = new Date(recordDto.attendance_date);
+        if (isNaN(attendanceDate.getTime())) {
           errors.push({
             row,
             employee_id: recordDto.employee_id,
             message: 'attendance_date must be a valid date',
           });
         } else if (
-          attendanceDate.isBefore(dateFrom) ||
-          attendanceDate.isAfter(dateTo)
+          attendanceDate.getTime() < dateFrom.getTime() ||
+          attendanceDate.getTime() > dateTo.getTime()
         ) {
           errors.push({
             row,
             employee_id: recordDto.employee_id,
-            message: `attendance_date must be within the range [${dto.date_from}, ${dto.date_to}]`,
+            message: `attendance_date must be within the range [${dto.date_from || dateFrom.toISOString().split('T')[0]}, ${dto.date_to || dateTo.toISOString().split('T')[0]}]`,
           });
         }
       }
