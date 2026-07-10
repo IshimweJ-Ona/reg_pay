@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateConfigDto } from './dto/update-config.dto';
 import { generateUUID } from '../common/utils/uuid.util';
+import { DEFAULT_OVERTIME_RATE_PER_HOUR } from '../common/utils/payroll-calc.util';
 import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc';
 import timezone from 'dayjs/plugin/timezone';
@@ -145,5 +146,21 @@ export class SystemConfigService {
       id: tax.id.toString(),
       rate: Number(tax.rate),
     };
+  }
+
+  
+  async getOvertimeRatePerHour(): Promise<number> {
+    const config = await this.prisma.system_config.findUnique({
+      where: { key: 'OVERTIME_RATE_PER_HOUR' },
+    });
+
+    if (!config || config.value === null || config.value === undefined || config.value === '') {
+      return DEFAULT_OVERTIME_RATE_PER_HOUR;
+    }
+
+    const parsed = Number(config.value);
+    return Number.isFinite(parsed) && parsed >= 0
+      ? parsed
+      : DEFAULT_OVERTIME_RATE_PER_HOUR;
   }
 }

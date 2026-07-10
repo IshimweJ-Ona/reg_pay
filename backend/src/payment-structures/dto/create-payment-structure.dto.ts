@@ -28,12 +28,17 @@ export class CreatePaymentStructureDto {
   @IsEnum(EMPLOYMENT_TYPE)
   payroll_frequency: EMPLOYMENT_TYPE;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     example: '800000.00',
-    description: 'The monthly basic salary of the employee in RWF.',
+    description:
+      'The monthly basic salary of the employee in RWF. For CUSTOM ' +
+      '(fixed-term) employees this is auto-calculated as daily_rate x ' +
+      "contract days from the employee's contract dates, so it can be " +
+      'omitted; any value supplied here is ignored for CUSTOM contracts.',
   })
+  @IsOptional()
   @IsDecimal()
-  basic_salary: string;
+  basic_salary?: string;
 
   @ApiProperty({
     example: '30000.00',
@@ -43,12 +48,17 @@ export class CreatePaymentStructureDto {
   @IsDecimal()
   daily_rate: string;
 
-  @ApiProperty({
-    example: '1.5',
-    description: 'The multiplier for overtime hours (e.g., 1.5 for 150%).',
+  @ApiPropertyOptional({
+    example: '0',
+    description:
+      'Deprecated: overtime is now paid at a flat platform-wide rate per ' +
+      'hour (default 2,500 RWF/hr, configurable in system settings), so ' +
+      'this per-employee multiplier is no longer used in payroll ' +
+      'calculations. Kept for backward compatibility only.',
   })
+  @IsOptional()
   @IsDecimal()
-  overtime_rate: string;
+  overtime_rate?: string;
 
   @ApiProperty({
     example: '15.0',

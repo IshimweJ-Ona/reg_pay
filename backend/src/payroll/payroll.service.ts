@@ -29,6 +29,10 @@ import { EmployeesService } from '../employees/employees.service';
 import { ApprovePayrollItemDto } from './dto/approve-payroll-item.dto';
 import { CreatePayrollBatchDto } from './dto/create-payroll-batch.dto';
 import { RejectPayrollItemDto } from './dto/reject-payroll-item.dto';
+import {
+  calculateOvertimePay,
+  getContractDays,
+} from '../common/utils/payroll-calc.util';
 import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc';
 import timezone from 'dayjs/plugin/timezone';
@@ -1075,6 +1079,8 @@ export class PayrollService {
     employee: {
       id: bigint;
       hire_date?: Date | null;
+      contract_start_date?: Date | null;
+      contract_end_date?: Date | null;
     },
     dto: CreatePayrollBatchDto,
   ): Promise<PayrollCalculation | null> {
@@ -1141,13 +1147,27 @@ export class PayrollService {
     );
 
     const frequency = paymentStructure.payroll_frequency;
-    const requestedWorkDays =
-      dto.work_days ?? paymentStructure.custom_work_days ?? presentDays;
 
-    // Determine expectedWorkDays
+    // Flat-rate overtime bonus (default 2,500 RWF/hr, configurable via
+    // system_config) replaces the old per-employee overtime_rate multiplier
+    // for every payroll frequency.
+    const overtimeRatePerHour = await this.systemConfigService.getOvertimeRatePerHour();
+
+    // CUSTOM (fixed-term) employees are anchored to their contract's own day
+    // count rather than the calendar month, so daily_rate x contract days
+    // becomes the "full period" baseline that attendance is measured against.
+    const contractDays =
+      employee.contract_start_date && employee.contract_end_date
+        ? getContractDays(employee.contract_start_date, employee.contract_end_date)
+        : null;
+
+    // Determine expectedWorkDays - manual overrides always win, then CUSTOM
+    // contract days, then any custom_work_days override, then the calendar.
     let expectedWorkDays = periodCalendarDays;
     if (dto.work_days !== undefined && dto.work_days !== null) {
       expectedWorkDays = dto.work_days;
+    } else if (frequency === EMPLOYMENT_TYPE.CUSTOM && contractDays) {
+      expectedWorkDays = contractDays;
     } else if (paymentStructure.custom_work_days !== undefined && paymentStructure.custom_work_days !== null) {
       expectedWorkDays = paymentStructure.custom_work_days;
     }
@@ -1157,14 +1177,9 @@ export class PayrollService {
 
     const prorationRatio = presentDays / expectedWorkDays;
 
-    // Determine days worked for eligibility
-    const daysWorked =
-      frequency === EMPLOYMENT_TYPE.MONTHLY
-        ? presentDays
-        : frequency === EMPLOYMENT_TYPE.CUSTOM
-          ? requestedWorkDays
-          : presentDays;
-
+    // Attendance is now the single source of truth for the 21-day
+    // tax/allowance eligibility threshold across every frequency.
+    const daysWorked = presentDays;
     const isOver21Days = daysWorked > 21;
 
     let baseAmount = 0;
@@ -1173,11 +1188,11 @@ export class PayrollService {
     if (frequency === EMPLOYMENT_TYPE.MONTHLY) {
       baseAmount = Number(paymentStructure.basic_salary);
     } else {
-      const daysToPay =
-        frequency === EMPLOYMENT_TYPE.CUSTOM
-          ? requestedWorkDays
-          : presentDays;
-      baseAmount = Number(paymentStructure.daily_rate) * daysToPay;
+      // DAILY and CUSTOM: attendance drives what actually gets paid out.
+      // A present day earns the daily_rate; an absent day earns 0 and is
+      // deducted from the amount owed - this is identical for DAILY workers
+      // and CUSTOM (fixed-term contract) employees.
+      baseAmount = Number(paymentStructure.daily_rate) * presentDays;
     }
 
     // Apply manual overrides from DTO
@@ -1209,7 +1224,7 @@ export class PayrollService {
 
     if (frequency === EMPLOYMENT_TYPE.MONTHLY) {
       const basicSalary = baseAmount;
-      const fullOvertime = Number(paymentStructure.overtime_rate) * overtimeHours;
+      const fullOvertime = calculateOvertimePay(overtimeHours, overtimeRatePerHour);
       allowanceEligible = true;
 
       allowances = await this.prisma.allowances.findMany({
@@ -1264,52 +1279,75 @@ export class PayrollService {
       taxAmount = fullTax * prorationRatio;
       totalDeductions = fullTaxAndDeductions * prorationRatio;
       netAmount = dailyNetRate * presentDays;
-    } else {
-      allowanceEligible = isOver21Days;
-      overtimeAmount = Number(paymentStructure.overtime_rate) * overtimeHours;
+    } else if (isOver21Days) {
+      // DAILY & CUSTOM, past the 21-day threshold: mirror the MONTHLY
+      // approach - compute base/overtime/allowance/tax on the FULL
+      // (pre-attendance) period, then prorate the entire result down by
+      // how many days were actually present. Tax is only ever applied
+      // once an employee has passed 21 days worked.
+      allowanceEligible = true;
 
-      allowances = allowanceEligible
-        ? await this.prisma.allowances.findMany({
-            where: { employee_id: employee.id, is_active: true },
-          })
-        : [];
-      allowanceAmount = allowances.reduce(
+      const fullBase = Number(paymentStructure.daily_rate) * expectedWorkDays;
+      const fullOvertime = calculateOvertimePay(overtimeHours, overtimeRatePerHour);
+
+      allowances = await this.prisma.allowances.findMany({
+        where: { employee_id: employee.id, is_active: true },
+      });
+      const fullAllowance = allowances.reduce(
         (sum, allowance) => sum + Number(allowance.amount),
         0,
       );
 
+      const fullGross = fullBase + fullOvertime + fullAllowance;
+      monthlyGrossBeforeProration = fullGross;
+
+      const monthlyTaxes = await this.systemConfigService.findMonthlyTaxesAtDate(periodEnd);
+      const fullTax = monthlyTaxes.reduce((sum, tax) => {
+        return sum + fullGross * (Number(tax.rate) / 100);
+      }, 0);
+
+      const employeeDeductions = await this.prisma.employee_deductions.findMany({
+        where: {
+          employee_id: employee.id,
+          is_active: true,
+          start_date: { lte: periodEnd },
+          OR: [{ end_date: null }, { end_date: { gte: periodStart } }],
+        },
+        include: { deduction_type: true },
+      });
+      const fullConfiguredDeductions = employeeDeductions.reduce((sum, deduction) => {
+        if (deduction.deduction_type.deduction_mode === 'PERCENTAGE') {
+          return (
+            sum +
+            fullGross *
+              (Number(deduction.deduction_type.percentage_value) / 100)
+          );
+        }
+        return sum + Number(deduction.deduction_type.amount);
+      }, 0);
+
+      const fullTaxAndDeductions = fullTax + fullConfiguredDeductions;
+      const fullNetAfterTax = fullGross - fullTaxAndDeductions;
+      monthlyNetBeforeProration = fullNetAfterTax;
+
+      dailyNetRate = fullNetAfterTax / expectedWorkDays;
+
+      baseAmount = fullBase * prorationRatio; // == daily_rate * presentDays
+      overtimeAmount = fullOvertime * prorationRatio;
+      allowanceAmount = fullAllowance * prorationRatio;
+      grossAmount = fullGross * prorationRatio;
+      taxAmount = fullTax * prorationRatio;
+      totalDeductions = fullTaxAndDeductions * prorationRatio;
+      netAmount = dailyNetRate * presentDays;
+    } else {
+      // DAILY & CUSTOM, 21 days or fewer worked: no tax, no allowances -
+      // straightforward attendance-driven pay plus the flat overtime bonus.
+      allowanceEligible = false;
+      overtimeAmount = calculateOvertimePay(overtimeHours, overtimeRatePerHour);
+      allowanceAmount = 0;
       grossAmount = baseAmount + overtimeAmount + allowanceAmount;
-
-      let configuredDeductions = 0;
-      if (isOver21Days) {
-        const monthlyTaxes = await this.systemConfigService.findMonthlyTaxesAtDate(periodEnd);
-        taxAmount = monthlyTaxes.reduce((sum, tax) => {
-          return sum + grossAmount * (Number(tax.rate) / 100);
-        }, 0);
-
-        const employeeDeductions = await this.prisma.employee_deductions.findMany({
-          where: {
-            employee_id: employee.id,
-            is_active: true,
-            start_date: { lte: periodEnd },
-            OR: [{ end_date: null }, { end_date: { gte: periodStart } }],
-          },
-          include: { deduction_type: true },
-        });
-
-        configuredDeductions = employeeDeductions.reduce((sum, deduction) => {
-          if (deduction.deduction_type.deduction_mode === 'PERCENTAGE') {
-            return (
-              sum +
-              grossAmount *
-                (Number(deduction.deduction_type.percentage_value) / 100)
-            );
-          }
-          return sum + Number(deduction.deduction_type.amount);
-        }, 0);
-      }
-
-      totalDeductions = configuredDeductions + taxAmount;
+      taxAmount = 0;
+      totalDeductions = 0;
       netAmount = Math.max(0, grossAmount - totalDeductions);
     }
 
@@ -1321,21 +1359,21 @@ export class PayrollService {
       taxAmount,
       attendanceDays: presentDays,
       payrollWorkDays:
-        frequency === EMPLOYMENT_TYPE.CUSTOM
-          ? requestedWorkDays
-          : frequency === EMPLOYMENT_TYPE.MONTHLY
-            ? expectedWorkDays
-            : null,
+        frequency === EMPLOYMENT_TYPE.CUSTOM || frequency === EMPLOYMENT_TYPE.DAILY
+          ? presentDays
+          : expectedWorkDays,
       payrollStartDate: periodStart,
       payrollEndDate: periodEnd,
       metadata: {
         configured_frequency: frequency,
         present_days: presentDays,
         expected_work_days: expectedWorkDays,
-        daily_net_rate: frequency === EMPLOYMENT_TYPE.MONTHLY ? dailyNetRate : null,
-        monthly_gross_before_proration: frequency === EMPLOYMENT_TYPE.MONTHLY ? monthlyGrossBeforeProration : null,
-        monthly_net_before_proration: frequency === EMPLOYMENT_TYPE.MONTHLY ? monthlyNetBeforeProration : null,
-        proration_ratio: frequency === EMPLOYMENT_TYPE.MONTHLY ? prorationRatio : null,
+        contract_days: contractDays,
+        overtime_rate_per_hour: overtimeRatePerHour,
+        daily_net_rate: dailyNetRate,
+        monthly_gross_before_proration: monthlyGrossBeforeProration || null,
+        monthly_net_before_proration: monthlyNetBeforeProration || null,
+        proration_ratio: prorationRatio,
         overtime_hours: overtimeHours,
         allowance_eligible: allowanceEligible,
         // original metadata fields

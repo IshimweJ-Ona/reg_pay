@@ -82,6 +82,32 @@ export class CreateEmployeeDto {
   hire_date?: string;
 
   @ApiPropertyOptional({
+    type: String,
+    format: 'date',
+    example: '2026-01-01',
+    description:
+      'Contract start date. Required (together with contract_end_date) for ' +
+      'CUSTOM (fixed-term) employees so their contract total can be ' +
+      'auto-calculated as daily_rate x contract days.',
+  })
+  @IsOptional()
+  @IsDateString()
+  contract_start_date?: string;
+
+  @ApiPropertyOptional({
+    type: String,
+    format: 'date',
+    example: '2026-06-30',
+    description:
+      'Contract end date. Required (together with contract_start_date) for ' +
+      'CUSTOM (fixed-term) employees so their contract total can be ' +
+      'auto-calculated as daily_rate x contract days.',
+  })
+  @IsOptional()
+  @IsDateString()
+  contract_end_date?: string;
+
+  @ApiPropertyOptional({
     example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
     description: 'UUID of the department this employee belongs to.',
   })

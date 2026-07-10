@@ -35,6 +35,7 @@ import { BulkImportEmployeeDto, BulkImportEmployeeItem } from './dto/bulk-import
 
 import { NotificationsService } from '../notifications/notifications.service';
 import { PaymentStructuresService } from '../payment-structures/payment-structures.service';
+import { calculateCustomContractTotal } from '../common/utils/payroll-calc.util';
 
 @Injectable()
 export class EmployeesService {
@@ -136,6 +137,8 @@ export class EmployeesService {
           national_id: dto.national_id,
           gender: dto.gender,
           hire_date: dto.hire_date ? new Date(dto.hire_date) : null,
+          contract_start_date: dto.contract_start_date ? new Date(dto.contract_start_date) : null,
+          contract_end_date: dto.contract_end_date ? new Date(dto.contract_end_date) : null,
           department_id: departmentId,
           working_location_id: workingLocationId,
           employment_category_id: categoryId,
@@ -151,6 +154,11 @@ export class EmployeesService {
           where: { id: categoryId },
         });
         if (category) {
+          const isCustom = category.payroll_frequency === 'CUSTOM';
+          const dailyRate = category.payroll_frequency === 'MONTHLY'
+            ? (dto.daily_rate ?? '5000')
+            : (dto.daily_rate ?? '3000');
+
           await tx.payment_structures.create({
             data: {
               uuid: generateUUID(),
@@ -158,10 +166,15 @@ export class EmployeesService {
               payroll_frequency: category.payroll_frequency,
               basic_salary: category.payroll_frequency === 'MONTHLY'
                 ? (dto.basic_salary ?? '150000')
-                : '0',
-              daily_rate: category.payroll_frequency === 'MONTHLY'
-                ? (dto.daily_rate ?? '5000')
-                : (dto.daily_rate ?? '3000'),
+                : isCustom
+                  ? this.resolveCustomBasicSalary(
+                      dailyRate,
+                      created.contract_start_date,
+                      created.contract_end_date,
+                      dto.basic_salary ?? '0',
+                    )
+                  : '0',
+              daily_rate: dailyRate,
               overtime_rate: '0',
               tax_percentage: dto.tax_percentage ?? '0',
               custom_work_days: dto.custom_work_days,
@@ -211,6 +224,27 @@ export class EmployeesService {
     this.notificationsService.broadcast({ type: 'employees_updated' });
 
     return this.serializeEmployee(employee);
+  }
+
+  /**
+   * For CUSTOM (fixed-term) employees, basic_salary isn't user-entered - it's
+   * the full contract value: daily_rate x contract days. Falls back to the
+   * supplied/default value when contract dates aren't set yet.
+   */
+  private resolveCustomBasicSalary(
+    dailyRate: string,
+    contractStartDate?: Date | null,
+    contractEndDate?: Date | null,
+    fallback = '0',
+  ): string {
+    if (contractStartDate && contractEndDate) {
+      return calculateCustomContractTotal(
+        Number(dailyRate),
+        contractStartDate,
+        contractEndDate,
+      ).toString();
+    }
+    return fallback;
   }
 
   // Helper to clear all employee-related caches
@@ -401,6 +435,14 @@ export class EmployeesService {
       if (dto.gender !== undefined) employeeUpdateData.gender = dto.gender;
       if (dto.hire_date !== undefined)
         employeeUpdateData.hire_date = new Date(dto.hire_date);
+      if (dto.contract_start_date !== undefined)
+        employeeUpdateData.contract_start_date = dto.contract_start_date
+          ? new Date(dto.contract_start_date)
+          : null;
+      if (dto.contract_end_date !== undefined)
+        employeeUpdateData.contract_end_date = dto.contract_end_date
+          ? new Date(dto.contract_end_date)
+          : null;
       if (departmentId !== undefined)
         employeeUpdateData.department_id = departmentId;
       if (workingLocationId !== undefined)
@@ -414,13 +456,15 @@ export class EmployeesService {
         include: this.employeeIncludes(),
       });
 
-      // 2. Update Salary (Payment Structure) if salary/category fields changed
+      // 2. Update Salary (Payment Structure) if salary/category/contract fields changed
       const targetCategoryId = categoryId ?? employee.employment_category_id;
       const hasSalaryPatch =
         dto.basic_salary !== undefined ||
         dto.daily_rate !== undefined ||
         dto.tax_percentage !== undefined ||
         dto.custom_work_days !== undefined ||
+        dto.contract_start_date !== undefined ||
+        dto.contract_end_date !== undefined ||
         categoryId !== undefined;
 
       if (targetCategoryId && hasSalaryPatch) {
@@ -436,14 +480,23 @@ export class EmployeesService {
           const isMonthly = category.payroll_frequency === 'MONTHLY';
           const isCustom = category.payroll_frequency === 'CUSTOM';
 
+          const resolvedDailyRate = isMonthly
+            ? (dto.daily_rate ?? (currentStructure?.daily_rate && Number(currentStructure.daily_rate) !== 0 ? currentStructure.daily_rate.toString() : '5000'))
+            : (dto.daily_rate ?? (currentStructure?.daily_rate && Number(currentStructure.daily_rate) !== 0 ? currentStructure.daily_rate.toString() : '3000'));
+
           const structureData = {
             payroll_frequency: category.payroll_frequency,
             basic_salary: isMonthly
               ? (dto.basic_salary ?? (currentStructure?.basic_salary && Number(currentStructure.basic_salary) !== 0 ? currentStructure.basic_salary.toString() : '150000'))
-              : '0',
-            daily_rate: isMonthly
-              ? (dto.daily_rate ?? (currentStructure?.daily_rate && Number(currentStructure.daily_rate) !== 0 ? currentStructure.daily_rate.toString() : '5000'))
-              : (dto.daily_rate ?? (currentStructure?.daily_rate && Number(currentStructure.daily_rate) !== 0 ? currentStructure.daily_rate.toString() : '3000')),
+              : isCustom
+                ? this.resolveCustomBasicSalary(
+                    resolvedDailyRate,
+                    saved.contract_start_date,
+                    saved.contract_end_date,
+                    dto.basic_salary ?? currentStructure?.basic_salary?.toString() ?? '0',
+                  )
+                : '0',
+            daily_rate: resolvedDailyRate,
             overtime_rate: currentStructure?.overtime_rate ?? '0',
             tax_percentage:
               dto.tax_percentage ?? currentStructure?.tax_percentage ?? '0',
@@ -927,6 +980,11 @@ export class EmployeesService {
               where: { id: categoryId },
             });
             if (category) {
+              const isCustom = category.payroll_frequency === 'CUSTOM';
+              const dailyRate = category.payroll_frequency === 'MONTHLY'
+                ? (item.daily_rate ?? '5000')
+                : (item.daily_rate ?? '3000');
+
               await tx.payment_structures.create({
                 data: {
                   uuid: generateUUID(),
@@ -934,10 +992,15 @@ export class EmployeesService {
                   payroll_frequency: category.payroll_frequency,
                   basic_salary: category.payroll_frequency === 'MONTHLY'
                     ? (item.basic_salary ?? '150000')
-                    : '0',
-                  daily_rate: category.payroll_frequency === 'MONTHLY'
-                    ? (item.daily_rate ?? '5000')
-                    : (item.daily_rate ?? '3000'),
+                    : isCustom
+                      ? this.resolveCustomBasicSalary(
+                          dailyRate,
+                          created.contract_start_date,
+                          created.contract_end_date,
+                          item.basic_salary ?? '0',
+                        )
+                      : '0',
+                  daily_rate: dailyRate,
                   overtime_rate: '0',
                   tax_percentage: item.tax_percentage ?? '0',
                   effective_from: new Date(),

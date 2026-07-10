@@ -37,11 +37,14 @@ export class BulkImportRecordDto {
 }
 
 export class BulkImportDto {
+  
+  @IsOptional()
   @IsDateString()
-  date_from: string;
+  date_from?: string;
 
+  @IsOptional()
   @IsDateString()
-  date_to: string;
+  date_to?: string;
 
   @IsArray()
   @ValidateNested({ each: true })

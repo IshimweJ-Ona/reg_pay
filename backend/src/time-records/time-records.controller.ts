@@ -84,8 +84,19 @@ export class TimeRecordsController {
 
   @Permissions('attendance.read')
   @Get()
-  findAll(@CurrentUser() actor: CurrentUserType) {
-    return this.timeRecordsService.findAll(actor);
+  findAll(
+    @CurrentUser() actor: CurrentUserType,
+    @Query('start_date') startDate?: string,
+    @Query('end_date') endDate?: string,
+    @Query('working_location_id') workingLocationId?: string,
+    @Query('employee_id') employeeId?: string,
+  ) {
+    return this.timeRecordsService.findAll(actor, {
+      start_date: startDate,
+      end_date: endDate,
+      working_location_id: workingLocationId,
+      employee_id: employeeId,
+    });
   }
 
   @Permissions('attendance.read')
@@ -93,7 +104,12 @@ export class TimeRecordsController {
   findByEmplloyee(
     @Param('employeeId') employeeId: string,
     @CurrentUser() actor: CurrentUserType,
+    @Query('start_date') startDate?: string,
+    @Query('end_date') endDate?: string,
   ) {
-    return this.timeRecordsService.findByEmployee(employeeId, actor);
+    return this.timeRecordsService.findByEmployee(employeeId, actor, {
+      start_date: startDate,
+      end_date: endDate,
+    });
   }
 }

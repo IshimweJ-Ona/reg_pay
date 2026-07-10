@@ -86,14 +86,35 @@ export class TimeRecordsService {
   }
 
   async bulkCreate(dto: BulkImportDto, actor: CurrentUserType) {
-    if (!dto.date_from || !dto.date_to) {
-      throw new BadRequestException(
-        'date_from and date_to are required for bulk imports.',
-      );
+
+    const records = dto.records || [];
+
+    if ( records.length === 0) {
+      throw new BadRequestException('No records to import.')
     }
 
-    const dateFrom = dayjs(dto.date_from).startOf('day');
-    const dateTo = dayjs(dto.date_to).startOf('day');
+    let dateFrom: dayjs.Dayjs;
+    let dateTo: dayjs.Dayjs;
+
+    if (dto.date_from && dto.date_to) {
+      dateFrom = dayjs(dto.date_from).startOf('day');
+      dateTo = dayjs(dto.date_to).startOf('day');
+    } else {
+      const recordDates = records
+        .map((r) => dayjs(r.attendance_date).startOf('day'))
+        .filter((d) => d.isValid());
+
+        if (recordDates.length === 0) {
+          throw new BadRequestException(
+            'No valid attendance_date values found in records.',
+          );
+        }
+
+        dateFrom = recordDates.reduce((min, d) => (d.isBefore(min) ? d : min));
+        dateTo = recordDates.reduce((max, d) => (d.isAfter(max) ? d : max));
+    }
+
+
 
     if (dateTo.isBefore(dateFrom)) {
       throw new BadRequestException(
@@ -107,7 +128,6 @@ export class TimeRecordsService {
       message: string;
     }> = [];
 
-    const records = dto.records || [];
     const employeeIdStrings = records
       .map((r) => r.employee_id)
       .filter((id) => /^\d+$/.test(id));
@@ -449,19 +469,61 @@ export class TimeRecordsService {
     return this.serialize(approved);
   }
 
-  async findAll(actor: CurrentUserType) {
-    const records = await this.prisma.time_records.findMany({
-      where: {
-        employee: {
-          deleted_at: null,
-          ...this.employeeScopeWhere(actor),
-        },
+  async findAll(
+    actor: CurrentUserType,
+    filters?: {
+      start_date?: string;
+      end_date?: string;
+      working_location_id?: string;
+      employee_id?: string;
+    },
+  ) {
+    const where: any = {
+      employee: {
+        deleted_at: null,
+        ...this.employeeScopeWhere(actor),
       },
+    };
+
+    if (filters?.start_date || filters?.end_date) {
+      where.attendance_date = {};
+      if (filters.start_date) where.attendance_date.gte = new Date(filters.start_date);
+      if (filters.end_date) where.attendance_date.lte = new Date(filters.end_date);
+    }
+
+    if (filters?.employee_id) {
+      where.employee_id = this.toBigInt(filters.employee_id, 'employee_id');
+    }
+
+    if (filters?.working_location_id) {
+      const wlId = await this.resolveWorkingLocationId(filters.working_location_id);
+      if (wlId === null) return [];
+      where.employee = { ...where.employee, working_location_id: wlId };
+    }
+
+    const records = await this.prisma.time_records.findMany({
+      where,
       include: this.includes(),
       orderBy: { attendance_date: 'desc' },
     });
 
     return records.map((r) => this.serialize(r));
+  }
+
+  private async resolveWorkingLocationId(value: string): Promise<bigint | null> {
+    if (/^\d+$/.test(value)) return BigInt(value);
+
+    const wlByUuid = await this.prisma.working_locations.findUnique({
+      where: { uuid: value },
+      select: { id: true },
+    });
+    if (wlByUuid) return wlByUuid.id;
+
+    const wlByName = await this.prisma.working_locations.findFirst({
+      where: { name: value, deleted_at: null },
+      select: { id: true },
+    });
+    return wlByName?.id ?? null;
   }
 
   async findToday(
@@ -475,25 +537,7 @@ export class TimeRecordsService {
     const where: any = { attendance_date: today };
 
     if (workingLocationId) {
-      let wlId: bigint | null = null;
-
-      if (/^\d+$/.test(workingLocationId)) {
-        wlId = BigInt(workingLocationId);
-      } else {
-        const wlByUuid = await this.prisma.working_locations.findUnique({
-          where: { uuid: workingLocationId },
-          select: { id: true },
-        });
-        if (wlByUuid) {
-          wlId = wlByUuid.id;
-        } else {
-          const wlByName = await this.prisma.working_locations.findFirst({
-            where: { name: workingLocationId, deleted_at: null },
-            select: { id: true },
-          });
-          if (wlByName) wlId = wlByName.id;
-        }
-      }
+      const wlId = await this.resolveWorkingLocationId(workingLocationId);
 
       if (wlId !== null) {
         where.employee = { working_location_id: wlId };
@@ -524,13 +568,24 @@ export class TimeRecordsService {
     return records.map((r) => this.serialize(r));
   }
 
-  async findByEmployee(employeeIdInput: string, actor: CurrentUserType) {
+  async findByEmployee(
+    employeeIdInput: string,
+    actor: CurrentUserType,
+    filters?: { start_date?: string; end_date?: string },
+  ) {
     const employeeId = this.toBigInt(employeeIdInput, 'employee_id');
     const employee = await this.ensureEmployee(employeeId);
     this.ensureActorCanAccessEmployee(actor, employee);
 
+    const where: any = { employee_id: employeeId };
+    if (filters?.start_date || filters?.end_date) {
+      where.attendance_date = {};
+      if (filters.start_date) where.attendance_date.gte = new Date(filters.start_date);
+      if (filters.end_date) where.attendance_date.lte = new Date(filters.end_date);
+    }
+
     const records = await this.prisma.time_records.findMany({
-      where: { employee_id: employeeId },
+      where,
       include: this.includes(),
       orderBy: { attendance_date: 'desc' },
     });

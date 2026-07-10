@@ -8,6 +8,7 @@ import type { CurrentUserType } from '../auth/types/current-user.type';
 import { generateUUID } from '../common/utils/uuid.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { calculateRwandaPaye } from '../common/utils/tax.util';
+import { calculateCustomContractTotal } from '../common/utils/payroll-calc.util';
 
 // DTOs
 import { CreatePaymentStructureDto } from './dto/create-payment-structure.dto';
@@ -44,6 +45,43 @@ export class PaymentStructuresService {
     if (!employee) {
       throw new BadRequestException('Employee does not exist.');
     }
+  }
+
+  /**
+   * For CUSTOM (fixed-term) employees, basic_salary is not user-entered -
+   * it's the full contract value: daily_rate x contract days, derived from
+   * the employee's contract_start_date/contract_end_date. This is a
+   * reference figure only; the amount actually paid out per payroll run
+   * stays attendance-driven (present days x daily_rate).
+   * For MONTHLY/DAILY, the supplied/fallback value is returned unchanged.
+   */
+  private async resolveBasicSalary(
+    employeeId: bigint,
+    payrollFrequency: string,
+    dailyRate: string,
+    fallbackBasicSalary?: string,
+  ): Promise<string> {
+    if (payrollFrequency !== EMPLOYMENT_TYPE.CUSTOM) {
+      return fallbackBasicSalary ?? '0';
+    }
+
+    const employee = await this.prisma.employees.findUnique({
+      where: { id: employeeId },
+      select: { contract_start_date: true, contract_end_date: true },
+    });
+
+    if (employee?.contract_start_date && employee?.contract_end_date) {
+      const total = calculateCustomContractTotal(
+        Number(dailyRate),
+        employee.contract_start_date,
+        employee.contract_end_date,
+      );
+      return total.toString();
+    }
+
+    // No contract dates on file yet - fall back to whatever was supplied
+    // (or 0) until the employee's contract start/end dates are set.
+    return fallbackBasicSalary ?? '0';
   }
 
   /* =====================================================
@@ -83,6 +121,13 @@ export class PaymentStructuresService {
       );
     }
 
+    const basicSalary = await this.resolveBasicSalary(
+      employeeId,
+      dto.payroll_frequency,
+      dto.daily_rate,
+      dto.basic_salary,
+    );
+
     const structure = await this.prisma.$transaction(async (tx) => {
       await tx.payment_structures.updateMany({
         where: { employee_id: employeeId, effective_to: null },
@@ -94,9 +139,9 @@ export class PaymentStructuresService {
           uuid: generateUUID(),
           employee_id: employeeId,
           payroll_frequency: dto.payroll_frequency,
-          basic_salary: dto.basic_salary,
+          basic_salary: basicSalary,
           daily_rate: dto.daily_rate,
-          overtime_rate: dto.overtime_rate,
+          overtime_rate: dto.overtime_rate ?? '0',
           tax_percentage: dto.tax_percentage,
           custom_work_days: dto.custom_work_days,
           effective_from: effectiveFrom,
@@ -130,11 +175,27 @@ export class PaymentStructuresService {
   ) {
     const existing = await this.findByUuidOrThrow(uuid);
 
+    const effectiveFrequency = dto.payroll_frequency ?? existing.payroll_frequency;
+    const effectiveDailyRate = dto.daily_rate ?? existing.daily_rate.toString();
+
+    // Recompute the CUSTOM contract total whenever the frequency, daily
+    // rate, or an explicit basic_salary override changes - otherwise leave
+    // the stored value untouched.
+    const basicSalary =
+      effectiveFrequency === EMPLOYMENT_TYPE.CUSTOM
+        ? await this.resolveBasicSalary(
+            existing.employee_id,
+            effectiveFrequency,
+            effectiveDailyRate,
+            dto.basic_salary ?? existing.basic_salary.toString(),
+          )
+        : dto.basic_salary;
+
     const updated = await this.prisma.payment_structures.update({
       where: { id: existing.id },
       data: {
         payroll_frequency: dto.payroll_frequency,
-        basic_salary: dto.basic_salary,
+        basic_salary: basicSalary,
         daily_rate: dto.daily_rate,
         overtime_rate: dto.overtime_rate,
         tax_percentage: dto.tax_percentage,
