@@ -448,7 +448,12 @@ export default function AttendanceMonitoringPage() {
 
           if (empIdRaw === undefined || empIdRaw === null || empIdRaw === '') continue;
 
-          const empIdStr = String(empIdRaw).trim();
+          let empIdStr = String(empIdRaw).trim();
+          empIdStr = empIdStr.replace(/,/g, '');
+          if (empIdStr.includes('.')) {
+            empIdStr = empIdStr.split('.')[0];
+          }
+
           if (!/^\d+$/.test(empIdStr)) {
             toast({ variant: 'destructive', title: 'Validation Error', description: `Row ${rowNum}: employee_id "${empIdStr}" must be numeric.` });
             return;
@@ -485,34 +490,41 @@ export default function AttendanceMonitoringPage() {
           const hours_worked = workedHrs !== '' && workedHrs != null ? Number(workedHrs) : undefined;
           const overtime_hours = overrideOT !== '' && overrideOT != null ? Number(overrideOT) : undefined;
 
+          const rowStatusRaw = row[5];
+          const rowStatusStr = rowStatusRaw !== undefined && rowStatusRaw !== null ? String(rowStatusRaw).trim().toUpperCase() : '';
+
           for (let d = 0; d < dateHeaders.length; d++) {
             const dateHeaderRaw = dateHeaders[d];
             const cellValue = row[6 + d]; // date columns start at index 6
             const parsedDate = parsedDateHeaders[d];
+
+            let cellValueStr = cellValue !== undefined && cellValue !== null ? String(cellValue).trim().toUpperCase() : '';
+
+            let activeSymbol = '';
+            if (cellValueStr !== '') {
+              activeSymbol = cellValueStr;
+            } else if (rowStatusStr !== '') {
+              activeSymbol = rowStatusStr;
+            }
+
+            if (activeSymbol === '') {
+              continue;
+            }
 
             // Determine attendance status
             let attendance_status: 'PRESENT' | 'ABSENT';
             let cellHoursWorked = hours_worked;
             let cellOvertimeHours = overtime_hours;
 
-            // Empty cell = ABSENT (not recorded)
-            if (cellValue === undefined || cellValue === null || cellValue === '') {
+            if (activeSymbol === PRESENT_SYMBOL) {
+              attendance_status = 'PRESENT';
+            } else if (activeSymbol === ABSENT_SYMBOL) {
               attendance_status = 'ABSENT';
               cellHoursWorked = undefined;
               cellOvertimeHours = undefined;
             } else {
-              const symbolValue = String(cellValue).trim();
-
-              if (symbolValue === PRESENT_SYMBOL) {
-                attendance_status = 'PRESENT';
-              } else if (symbolValue === ABSENT_SYMBOL) {
-                attendance_status = 'ABSENT';
-                cellHoursWorked = undefined;
-                cellOvertimeHours = undefined;
-              } else {
-                toast({ variant: 'destructive', title: 'Validation Error', description: `Row ${rowNum}, date "${dateHeaderRaw}": only P or A are allowed (got "${symbolValue}").` });
-                return;
-              }
+              toast({ variant: 'destructive', title: 'Validation Error', description: `Row ${rowNum}, date "${dateHeaderRaw}": only P or A are allowed (got "${activeSymbol}").` });
+              return;
             }
 
             if (attendance_status === 'ABSENT' && ((cellHoursWorked ?? 0) > 0 || (cellOvertimeHours ?? 0) > 0)) {
@@ -543,8 +555,8 @@ export default function AttendanceMonitoringPage() {
         let existingRecords: any[] = [];
         try {
           const fetched = await getTimeRecords({
-            start_date: importDateFrom,
-            end_date: importDateTo,
+            start_date: derivedDateFrom.format('YYYY-MM-DD'),
+            end_date: derivedDateTo.format('YYYY-MM-DD'),
           });
           existingRecords = Array.isArray(fetched) ? fetched : [];
         } catch (err) {
@@ -555,7 +567,7 @@ export default function AttendanceMonitoringPage() {
 
         const existingMap = new Map<string, any>();
         existingRecords.forEach((rec: any) => {
-          const dateStr = dayjs(rec.attendance_date).format('YYYY-MM-DD');
+          const dateStr = dayjs(rec.attendance_date).tz('Africa/Kigali').format('YYYY-MM-DD');
           existingMap.set(recordKey(String(rec.employee_id), dateStr), rec);
         });
 
@@ -633,7 +645,7 @@ export default function AttendanceMonitoringPage() {
       Personnel: `${rec.first_name ?? ''} ${rec.last_name ?? ''}`,
       Department: rec.department?.name,
       Category: rec.employment_category?.name,
-      Date: new Date(rec.attendance_date).toLocaleDateString(),
+      Date: dayjs(rec.attendance_date).tz('Africa/Kigali').format('DD/MM/YYYY'),
       Status: rec.attendance_status,
       'Hours Worked': rec.hours_worked ?? '',
       'Overtime Hours': rec.overtime_hours ?? '',
@@ -711,7 +723,7 @@ export default function AttendanceMonitoringPage() {
         end_date: range.to.format('YYYY-MM-DD'),
       });
       const recordsInRange = (Array.isArray(allRecords) ? allRecords : []).filter((r: any) => {
-        const recDate = dayjs(r.attendance_date).startOf('day');
+        const recDate = dayjs(r.attendance_date).tz('Africa/Kigali').startOf('day');
         return (recDate.isAfter(range.from, 'day') || recDate.isSame(range.from, 'day'))
           && (recDate.isBefore(range.to, 'day') || recDate.isSame(range.to, 'day'));
       });
@@ -729,7 +741,7 @@ export default function AttendanceMonitoringPage() {
         Personnel: `${rec.employee?.first_name ?? ''} ${rec.employee?.last_name ?? ''}`.trim() || rec.employee_id,
         Department: rec.employee?.department?.name ?? 'Unassigned',
         Category: rec.employee?.payment_structures?.[0]?.payroll_frequency ?? '',
-        Date: new Date(rec.attendance_date).toLocaleDateString(),
+        Date: dayjs(rec.attendance_date).tz('Africa/Kigali').format('DD/MM/YYYY'),
         Status: rec.attendance_status,
         'Hours Worked': rec.hours_worked ?? '',
         'Overtime Hours': rec.overtime_hours ?? '',
@@ -912,7 +924,7 @@ export default function AttendanceMonitoringPage() {
                     <TableRow key={rec.uuid} className="hover:bg-secondary/20 transition-colors">
                       <TableCell className="font-semibold">{`${rec.employee?.first_name ?? ''} ${rec.employee?.last_name ?? ''}`.trim() || rec.employee_id}</TableCell>
                       <TableCell>{rec.employee?.department?.name ?? 'Unassigned'}</TableCell>
-                      <TableCell className="text-muted-foreground text-xs">{new Date(rec.attendance_date).toLocaleDateString()}</TableCell>
+                      <TableCell className="text-muted-foreground text-xs">{dayjs(rec.attendance_date).tz('Africa/Kigali').format('DD/MM/YYYY')}</TableCell>
                       <TableCell>
                         <Badge className={
                           rec.attendance_status === 'PRESENT' ? 'bg-emerald-500/10 text-emerald-600' :
