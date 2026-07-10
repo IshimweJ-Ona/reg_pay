@@ -103,3 +103,27 @@ export const reactivateEmployee = async (uuid: string) => {
     const response = await api.patch(`/employees/${uuid}/reactivate`);
     return response.data;
 };
+
+export interface BulkImportEmployeePayload {
+    employees: {
+        first_name: string;
+        last_name: string;
+        email?: string;
+        phone_number?: string;
+        national_id?: string;
+        gender?: string;
+        contract_start_date?: string;
+        contract_end_date?: string;
+        department_id?: string;
+        working_location_id?: string;
+        employment_category_id?: string;
+        basic_salary?: string;
+        daily_rate?: string;
+        tax_percentage?: string;
+    }[];
+}
+
+export const bulkImportEmployees = async (payload: BulkImportEmployeePayload) => {
+    const response = await api.post("/employees/bulk-import", payload);
+    return response.data;
+};

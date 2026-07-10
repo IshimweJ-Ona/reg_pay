@@ -36,6 +36,7 @@
     "clsx": "^2.1.1",
     "dayjs": "^1.11.21",
     "embla-carousel-react": "^8.6.0",
+    "exceljs": "^4.4.0",
     "framer-motion": "^12.38.0",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.8",

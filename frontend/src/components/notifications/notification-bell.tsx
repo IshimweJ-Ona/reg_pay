@@ -20,6 +20,15 @@ import { userFriendlyError } from '@/lib/error-message';
 import { useNotifications, Notification as SSENotification } from '@/hooks/use-notifications';
 import { useAuth } from '@/context/auth-context';
 
+function renderNotificationText(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (value && typeof value === 'object') {
+    const v = value as { key?: string; name?: string };
+    return v.name ?? v.key ?? JSON.stringify(value);
+  }
+  return String(value ?? '');
+}
+
 export function NotificationBell({ type }: { type: 'admin' | 'user' }) {
   const { accessToken } = useAuth();
   const { notifications: sseNotifications, unreadCount: sseUnreadCount, setUnreadCount: setSSEUnreadCount } = useNotifications(accessToken || '');

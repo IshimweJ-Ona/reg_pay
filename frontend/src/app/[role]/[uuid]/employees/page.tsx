@@ -68,7 +68,9 @@ import {
 } from '@/api/payment-structures';
 import { useAuth } from '@/context/auth-context';
 import { exportToCSV, exportToExcel } from '@/lib/export-utils';
-import { Download } from 'lucide-react';
+import { Download, Upload } from 'lucide-react';
+import { bulkImportEmployees } from '@/api/employees';
+import * as XLSX from 'xlsx';
 
 const formatRwf = (value: number) => `RWF ${value.toLocaleString()}`;
 
@@ -169,7 +171,96 @@ export default function EmployeeDirectoryPage() {
     allowance_description: '',
   });
 
+  const [isBulkImportOpen, setIsBulkImportOpen] = useState(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importingBulk, setImportingBulk] = useState(false);
+
   const { toast } = useToast();
+
+  const handleBulkImport = async () => {
+    if (!importFile) {
+      toast({ variant: "destructive", title: "No file selected", description: "Please select an Excel/CSV file to import." });
+      return;
+    }
+    setImportingBulk(true);
+    try {
+      const reader = new FileReader();
+      reader.onload = async (evt) => {
+        try {
+          const wb = XLSX.read(evt.target?.result, { type: 'binary', raw: false });
+          const ws = wb.Sheets[wb.SheetNames[0]];
+          const raw = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][];
+          
+          if (!raw || raw.length < 2) {
+            toast({ variant: "destructive", title: "Import Rejected", description: "File is empty or has no data rows." });
+            setImportingBulk(false);
+            return;
+          }
+
+          const headers: string[] = raw[0].map((h: any) => String(h ?? '').trim().toLowerCase());
+          
+          // Expected columns: first_name, last_name, email, phone_number, national_id, gender, 
+          // contract_start_date, contract_end_date, department_id, working_location_id, 
+          // employment_category_id, basic_salary, daily_rate, tax_percentage
+          const employeeItems: any[] = [];
+          
+          for (let i = 1; i < raw.length; i++) {
+            const row = raw[i];
+            if (!row[0] && !row[1]) continue; // skip empty rows
+            
+            const item: any = {};
+            headers.forEach((header: string, idx: number) => {
+              if (header && row[idx] !== undefined && row[idx] !== null && row[idx] !== '') {
+                item[header] = String(row[idx]).trim();
+              }
+            });
+            
+            if (item.first_name && item.last_name) {
+              employeeItems.push(item);
+            }
+          }
+
+          if (employeeItems.length === 0) {
+            toast({ variant: "destructive", title: "No valid data", description: "No rows with first_name and last_name found." });
+            setImportingBulk(false);
+            return;
+          }
+
+          if (employeeItems.length > 500) {
+            toast({ variant: "destructive", title: "Too many records", description: "Maximum 500 employees per import." });
+            setImportingBulk(false);
+            return;
+          }
+
+          const result = await bulkImportEmployees({ employees: employeeItems });
+          
+          if (result.errors && result.errors.length > 0) {
+            toast({
+              title: `Imported ${result.imported}/${result.total}`,
+              description: `${result.errors.length} row(s) had errors. Check the first error: ${result.errors[0].message}`,
+            });
+          } else {
+            toast({
+              title: "Bulk Import Complete",
+              description: `${result.imported} employees imported successfully.`,
+            });
+          }
+          
+          setIsBulkImportOpen(false);
+          setImportFile(null);
+          loadEmployees();
+        } catch (err: any) {
+          toast({ variant: "destructive", title: "Import Failed", description: err?.message || "Could not process the file." });
+        } finally {
+          setImportingBulk(false);
+        }
+      };
+      reader.readAsBinaryString(importFile);
+    } catch (error: any) {
+      toast({ variant: "destructive", title: "Import Failed", description: error?.message || "Could not read the file." });
+      setImportingBulk(false);
+    }
+  };
 
   const handleTransferLocationChange = async (locationUuid: string) => {
     setTransferLocationId(locationUuid);
@@ -731,6 +822,15 @@ export default function EmployeeDirectoryPage() {
               <DropdownMenuItem onClick={() => handleExport('excel')}>Export as Excel</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+          {canCreateEmployee && (
+            <Button 
+              variant="outline"
+              className="h-11 px-6 border-dashed"
+              onClick={() => setIsBulkImportOpen(true)}
+            >
+              <Upload className="mr-2 h-4 w-4" /> Bulk Import
+            </Button>
+          )}
           {canCreateEmployee && (
             <Button 
               className="h-11 px-6 shadow-lg shadow-primary/20"
@@ -1385,6 +1485,73 @@ export default function EmployeeDirectoryPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog open={isBulkImportOpen} onOpenChange={(open) => {
+        setIsBulkImportOpen(open);
+        if (!open) setImportFile(null);
+      }}>
+        <DialogContent className="max-w-md bg-white rounded-3xl p-6 border shadow-lg">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-bold">Bulk Import Employees</DialogTitle>
+            <DialogDescription className="text-sm text-slate-500">
+              Upload an Excel or CSV file containing employee records. The file should have headers: first_name, last_name, email, phone_number, national_id, gender, contract_start_date, contract_end_date, department_id, working_location_id, employment_category_id, basic_salary, daily_rate, tax_percentage.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 my-4">
+            <div
+              className="border-2 border-dashed border-slate-200 hover:border-slate-300 transition-colors rounded-2xl p-6 text-center cursor-pointer bg-slate-50/50"
+              onClick={() => {
+                const el = document.getElementById('bulk-employee-file-input');
+                el?.click();
+              }}
+            >
+              <Upload className="mx-auto h-8 w-8 text-slate-400 mb-2" />
+              <p className="text-xs text-slate-600 font-medium">
+                {importFile ? importFile.name : 'Click to select Excel/CSV file'}
+              </p>
+              <p className="text-[10px] text-slate-400 mt-1">Maximum size 5MB, up to 500 employees</p>
+              <input
+                id="bulk-employee-file-input"
+                type="file"
+                className="hidden"
+                accept=".xlsx, .xlsm, .xls, .csv"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) setImportFile(file);
+                }}
+              />
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setIsBulkImportOpen(false);
+                setImportFile(null);
+              }}
+              className="h-10 rounded-xl text-xs font-semibold"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleBulkImport}
+              disabled={!importFile || importingBulk}
+              className="h-10 rounded-xl text-xs font-semibold px-6 bg-slate-900 text-white hover:bg-slate-800"
+            >
+              {importingBulk ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Importing...
+                </>
+              ) : (
+                "Upload & Import"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!transferEmployeeData} onOpenChange={(open) => !open && setTransferEmployeeData(null)}>
         <DialogContent className="sm:max-w-[425px] bg-white border-none shadow-2xl rounded-2xl">

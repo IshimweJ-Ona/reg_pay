@@ -54,7 +54,7 @@ export function Sidebar({ type }: SidebarProps) {
     { name: 'Audit Logs', href: `${basePath}/audit-logs`, icon: Activity, permission: 'audit.view' },
     { name: 'Notifications', href: `${basePath}/notifications`, icon: Bell },
     { name: 'Profile', href: `${basePath}/profile`, icon: UserCircle },
-    { name: 'Settings', href: `${basePath}/settings`, icon: Settings, permission: 'roles.manage' },
+    { name: 'Settings', href: `${basePath}/settings`, icon: Settings, permission: 'settings.manage_system' },
   ];
 
   const userMenuItems: SidebarMenuItem[] = [

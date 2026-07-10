@@ -8,7 +8,7 @@ import {
   getMyProfile,
   login as loginRequest,
   logout as logoutRequest,
-  refreshToken,
+  refreshToken as refreshTokenRequest,
   registerUser,
   saveTokens,
 } from '@/api/auth';
@@ -52,18 +52,29 @@ export function isAdminRole(role?: string) {
   ].includes(role ?? '');
 }
 
+function normalizeRole(role: unknown): string {
+  if (typeof role === 'string') return role;
+  if (role && typeof role === 'object') {
+    const r = role as { key?: string; name?: string };
+    return r.key ?? r.name ?? 'USER';
+  }
+  return 'USER';
+}
+
 function mapJwtUser(token: string): User | null {
   const payload = decodeJwt(token);
   if (!payload) return null;
 
-  const primaryRole = (payload.roles?.[0] ?? 'USER') as UserRole;
+  const rawRoles: unknown[] = payload.roles ?? [];
+  const normalizedRoles = rawRoles.map(normalizeRole);
+  const primaryRole = (normalizedRoles[0] ?? 'USER') as UserRole;
   return {
     id: payload.sub,
     uuid: payload.uuid ?? '',
     name: `${payload.first_name} ${payload.last_name}`.trim(),
     email: payload.email,
     role: primaryRole,
-    roles: payload.roles ?? [primaryRole],
+    roles: normalizedRoles,
     status: (payload.status === 'ACTIVE' ? 'APPROVED' : payload.status) as any,
     permissions: payload.permissions ?? [],
     avatar_url: payload.avatar_url,
@@ -80,13 +91,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
 
   const applyProfile = (profileUser: any, fallback: User | null) => {
+    const rawRoles: unknown[] = profileUser.roles ?? [];
+    const normalizedRoles = rawRoles.map(normalizeRole);
+    const primaryRole = (normalizedRoles[0] ?? fallback?.role ?? 'USER') as UserRole;
     setUser({
       id: fallback?.id ?? profileUser.id ?? profileUser.uuid,
       uuid: profileUser.uuid,
       name: `${profileUser.first_name} ${profileUser.last_name}`.trim(),
       email: profileUser.email,
-      role: (profileUser.roles?.[0] ?? fallback?.role ?? 'USER') as UserRole,
-      roles: profileUser.roles ?? fallback?.roles ?? ['USER'],
+      role: primaryRole,
+      roles: normalizedRoles,
       status: (profileUser.status === 'ACTIVE' ? 'APPROVED' : profileUser.status) as any,
       avatar_url: profileUser.avatar_url,
       permissions: profileUser.permissions?.map((permission: any) => permission.key) ?? fallback?.permissions ?? [],
@@ -133,35 +147,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     loadUser();
   }, []);
 
-  // Token refresh 
+  // Token refresh
+  // Uses the shared, mutex-guarded refreshTokenRequest() from api/auth.ts so
+  // this timer can never race against refreshSession() or an axios 401
+  // interceptor WITHIN THIS TAB - they all collapse into a single in-flight
+  // request. This is intentionally per-tab only: sessionStorage keeps each
+  // tab's session fully isolated (so different accounts/roles can be open
+  // side by side, like Instagram's multi-account tabs). If a tab was
+  // created by duplicating an already-open tab, it briefly shares the same
+  // refresh token as its source tab; whichever one refreshes first wins,
+  // and the duplicate correctly gets logged out on its next attempt rather
+  // than silently taking over another tab's session.
   useEffect(() => {
     if (!user) return;
 
     const interval = setInterval(async () => {
+      const currentRefreshToken = sessionStorage.getItem('refreshToken');
+      if (!currentRefreshToken) return;
+
       try {
-        const refreshToken = sessionStorage.getItem('refreshToken');
-        if (!refreshToken) return;
-
-        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/refresh`, {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ refresh_token: refreshToken }),
-        });
-
-        if (res.ok) {
-          const data = await res.json();
-          saveTokens(data);
-          setAccessToken(data.access_token);
-        } else {
-          // Refresh failed - Force logout
-          clearTokens();
-          setUser(null);
-          setAccessToken(null);
-          router.push('/auth/login');
-        }
+        const tokens = await refreshTokenRequest(currentRefreshToken);
+        saveTokens(tokens);
+        setAccessToken(tokens.access_token);
       } catch {
-        // Network error
+        // Refresh genuinely failed for this tab's session - log this tab
+        // out. Does not affect any other open tab/account.
+        clearTokens();
+        setUser(null);
+        setAccessToken(null);
+        router.push('/auth/login');
       }
     }, 13 * 60 * 1000); // every 13 minutes, before 15m access token expires
 
@@ -174,7 +188,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setAccessToken(response.access_token);
     const nextUser = mapJwtUser(response.access_token);
     setUser(nextUser);
-    
+
     router.push(response.redirectUrl);
   };
 
@@ -183,9 +197,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const logout = async () => {
-    const refreshToken = sessionStorage.getItem('refreshToken');
+    const currentRefreshToken = sessionStorage.getItem('refreshToken');
     try {
-      if (refreshToken) await logoutRequest(refreshToken);
+      if (currentRefreshToken) await logoutRequest(currentRefreshToken);
     } catch {
       // Token cleanup still happens locally if the server session is already gone.
     }
@@ -198,7 +212,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const refreshSession = async (options?: { reload?: boolean }) => {
     const currentRefreshToken = sessionStorage.getItem('refreshToken');
     if (currentRefreshToken) {
-      const tokens = await refreshToken(currentRefreshToken);
+      const tokens = await refreshTokenRequest(currentRefreshToken);
       saveTokens(tokens);
       setAccessToken(tokens.access_token);
     }

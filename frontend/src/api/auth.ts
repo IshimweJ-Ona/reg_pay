@@ -106,11 +106,43 @@ export const updateProfile = async (payload: UpdateProfilePayload) => {
     return response.data;
 };
 
+/**
+ * In-flight refresh guard.
+ *
+ * The old refresh token is rotated (revoked) server-side on every successful
+ * call to /auth/refresh. If two callers (the 13-minute interval timer, a
+ * manual refreshSession() call, an axios 401 interceptor, React Strict Mode
+ * double-invoking an effect, etc.) fire at nearly the same moment, they both
+ * read the SAME token from sessionStorage before either write-back happens.
+ * The first request rotates the token and succeeds; the second one is still
+ * holding the now-revoked token and gets a 401 "Invalid or revoked refresh
+ * token" - which is exactly the repeating error we were seeing.
+ *
+ * The fix: collapse concurrent refresh attempts into a single shared
+ * promise. Whoever calls refreshToken() while a refresh is already in
+ * flight just awaits that same call instead of firing a new one.
+ */
+let refreshPromise: Promise<TokenPair> | null = null;
+
 export const refreshToken = async (refresh_token: string): Promise<TokenPair> => {
-    const response = await api.post<TokenPair>("/auth/refresh", {
-        refresh_token,
-    });
-    return response.data;
+    if (refreshPromise) {
+        return refreshPromise;
+    }
+
+    refreshPromise = (async () => {
+        try {
+            const response = await api.post<TokenPair>("/auth/refresh", {
+                refresh_token,
+            });
+            return response.data;
+        } finally {
+            // Clear regardless of success/failure so future refresh attempts
+            // (e.g. after a fresh login) aren't stuck reusing a dead promise.
+            refreshPromise = null;
+        }
+    })();
+
+    return refreshPromise;
 };
 
 export const logout = async (refresh_token: string) => {

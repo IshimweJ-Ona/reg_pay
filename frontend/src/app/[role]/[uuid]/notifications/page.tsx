@@ -1,4 +1,3 @@
-
 "use client";
 
 import React, { useEffect, useState } from 'react';
@@ -12,6 +11,15 @@ import { approveEmployeeTransfer, rejectEmployeeTransfer } from '@/api/employees
 import { useToast } from '@/hooks/use-toast';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
+
+function renderNotificationText(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (value && typeof value === 'object') {
+    const v = value as { key?: string; name?: string };
+    return v.name ?? v.key ?? JSON.stringify(value);
+  }
+  return String(value ?? '');
+}
 
 export default function NotificationsPage() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
@@ -151,7 +159,7 @@ export default function NotificationsPage() {
                     </div>
                     <span className="text-xs text-muted-foreground font-medium">{new Date(n.created_at).toLocaleString()}</span>
                   </div>
-                  <p className="text-muted-foreground leading-relaxed">{n.message}</p>
+                  <p className="text-muted-foreground leading-relaxed">{renderNotificationText(n.message)}</p>
                   
                   {n.type === 'REGISTRATION_REQUEST' && n.user && (
                     <div className="mt-4 p-4 bg-secondary/20 rounded-xl border border-secondary border-dashed grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
