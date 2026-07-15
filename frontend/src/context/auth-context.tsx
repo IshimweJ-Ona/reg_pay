@@ -78,8 +78,8 @@ function mapJwtUser(token: string): User | null {
     status: (payload.status === 'ACTIVE' ? 'APPROVED' : payload.status) as any,
     permissions: payload.permissions ?? [],
     avatar_url: payload.avatar_url,
-    department: payload.department_id ?? undefined,
-    location: payload.working_location_id ?? undefined,
+    department_id: payload.department_id ?? undefined,
+    location_id: payload.working_location_id ?? undefined,
     createdAt: new Date().toISOString(),
   };
 }
@@ -103,9 +103,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       roles: normalizedRoles,
       status: (profileUser.status === 'ACTIVE' ? 'APPROVED' : profileUser.status) as any,
       avatar_url: profileUser.avatar_url,
-      permissions: profileUser.permissions?.map((permission: any) => permission.key) ?? fallback?.permissions ?? [],
+      // If the profile endpoint returns an empty permissions array, fall back to the
+      // JWT-derived permissions instead of wiping them out. `[].map(...)` returns `[]`,
+      // which is truthy, so a plain `??` fallback never fires for an empty array -
+      // we need an explicit length check here.
+      permissions: profileUser.permissions?.length
+        ? profileUser.permissions.map((permission: any) => permission.key)
+        : fallback?.permissions ?? [],
       department: profileUser.department?.name,
       location: profileUser.working_location?.name,
+      department_id: profileUser.department?.uuid ?? fallback?.department_id,
+      location_id: profileUser.working_location?.uuid ?? fallback?.location_id,
       createdAt: fallback?.createdAt ?? new Date().toISOString(),
     });
   };
@@ -180,7 +188,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }, 13 * 60 * 1000); // every 13 minutes, before 15m access token expires
 
     return () => clearInterval(interval);
-  }, [user]);
+    // Keyed on user?.id, not the whole user object: `user` gets a new object
+    // reference on every setUser() call (login, applyProfile, refreshSession,
+    // refreshPermissions, the system_update SSE listener), which would
+    // otherwise clear and restart this interval each time, making the
+    // "13 minutes" cadence unreliable and increasing the chance of a refresh
+    // firing while another one is still in flight.
+  }, [user?.id]);
 
   const login = async (email: string, password: string) => {
     const response = await loginRequest({ identifier: email, password });

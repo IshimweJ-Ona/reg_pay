@@ -31,8 +31,10 @@ export interface CreateDepartmentPayload {
     description?: string;
 }
 
-export const getWorkingLocations = async (): Promise<any> => {
-    const response = await api.get("/organization/working-locations");
+export const getWorkingLocations = async (options?: { scope?: 'transfer' }): Promise<any> => {
+    const response = await api.get("/organization/working-locations", {
+        params: options?.scope ? { scope: options.scope } : undefined,
+    });
     return response.data;
 };
 

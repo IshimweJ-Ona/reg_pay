@@ -7,7 +7,7 @@ export interface Employee {
   department: string;
   location: string;
   salary: number;
-  status: 'ACTIVE' | 'ON_LEAVE' | 'SUSPENDED' | 'TERMINATED' | 'PENDING' | 'REJECTED';
+  status: 'ACTIVE' | 'ON_LEAVE' | 'SUSPENDED' | 'TERMINATED' | 'PENDING' | 'REJECTED' | 'PAUSED';
   attendanceRate: number;
   lastAttendanceDate?: string;
   lastAttendanceStatus?: 'PRESENT' | 'ABSENT';
@@ -23,4 +23,5 @@ export interface Employee {
   employment_category_id?: string;
   contract_start_date?: string;
   contract_end_date?: string;
+  pause_reason?: string;
 }

@@ -26,6 +26,7 @@ import { useParams } from 'next/navigation';
 import { approvePayrollBatch, downloadPayrollBatchExport, getPayrollBatches, rejectPayrollBatch } from '@/api/payroll';
 import { exportToCSV, exportToExcel } from '@/lib/export-utils';
 import { useToast } from '@/hooks/use-toast';
+import { userFriendlyError } from '@/lib/error-message';
 import { PendingBatchesModal } from '@/components/payroll/pending-batches-modal';
 
 const formatRwf = (value: number) => `RWF ${value.toLocaleString()}`;
@@ -121,7 +122,7 @@ export default function PayrollAdminPage() {
       toast({
         variant: 'destructive',
         title: 'Approval failed',
-        description: error?.response?.data?.message ?? 'Please review the payroll details and try again.',
+        description: userFriendlyError(error, 'Please review the payroll details and try again.'),
       });
     }
   };
@@ -135,7 +136,7 @@ export default function PayrollAdminPage() {
       toast({
         variant: 'destructive',
         title: 'Rejection failed',
-        description: error?.response?.data?.message ?? 'Please review the payroll details and try again.',
+        description: userFriendlyError(error, 'Please review the payroll details and try again.'),
       });
     }
   };
@@ -148,7 +149,7 @@ export default function PayrollAdminPage() {
       toast({
         variant: 'destructive',
         title: 'Export failed',
-        description: error?.response?.data?.message ?? 'Could not download this payroll batch.',
+        description: userFriendlyError(error, 'Could not download this payroll batch.'),
       });
     }
   };
@@ -247,13 +248,14 @@ export default function PayrollAdminPage() {
               <TableHead className="font-bold">Total Amount</TableHead>
               <TableHead className="font-bold">Status</TableHead>
               <TableHead className="font-bold">Created Date</TableHead>
+              <TableHead className="font-bold">Submitted By</TableHead>
               <TableHead className="w-[80px]"></TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading ? (
               <TableRow>
-                <TableCell colSpan={8} className="text-center py-20 text-muted-foreground animate-pulse">Loading payroll batches...</TableCell>
+                <TableCell colSpan={9} className="text-center py-20 text-muted-foreground animate-pulse">Loading payroll batches...</TableCell>
               </TableRow>
             ) : filteredBatches.length > 0 ? filteredBatches.map((batch) => (
               <TableRow key={batch.id} className="hover:bg-secondary/20 transition-colors">
@@ -269,6 +271,7 @@ export default function PayrollAdminPage() {
                 <TableCell className="font-bold">{formatRwf(batch.totalAmount)}</TableCell>
                 <TableCell><PayrollStatusBadge status={batch.status} /></TableCell>
                 <TableCell className="text-muted-foreground">{batch.createdAt}</TableCell>
+                <TableCell className="text-muted-foreground text-xs">{batch.createdBy}</TableCell>
                 <TableCell>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
@@ -300,7 +303,7 @@ export default function PayrollAdminPage() {
               </TableRow>
             )) : (
               <TableRow>
-                <TableCell colSpan={8} className="text-center py-20 text-muted-foreground italic">
+                <TableCell colSpan={9} className="text-center py-20 text-muted-foreground italic">
                   {activeTab === 'ACTIVE' 
                     ? "No pending payroll cycles awaiting review." 
                     : "No historical payroll records found in the archive."}

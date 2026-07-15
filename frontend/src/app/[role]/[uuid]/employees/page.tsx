@@ -67,6 +67,7 @@ import {
   updateEmployeeDeduction
 } from '@/api/payment-structures';
 import { useAuth } from '@/context/auth-context';
+import { userFriendlyError } from '@/lib/error-message';
 import { exportToCSV, exportToExcel } from '@/lib/export-utils';
 import { Download, Upload } from 'lucide-react';
 import { bulkImportEmployees } from '@/api/employees';
@@ -113,8 +114,20 @@ function mapApiEmployee(item: any, attendanceByEmployee = new Map<string, any[]>
     employment_category_id: item.employment_category_id ?? '',
     contract_start_date: item.contract_start_date ? new Date(item.contract_start_date).toISOString().split('T')[0] : '',
     contract_end_date: item.contract_end_date ? new Date(item.contract_end_date).toISOString().split('T')[0] : '',
+    pause_reason: item.pause_reason ?? '',
   };
 }
+
+const getDaysBetween = (startStr?: string, endStr?: string) => {
+  if (!startStr || !endStr) return 0;
+  const start = new Date(startStr);
+  const end = new Date(endStr);
+  start.setHours(0, 0, 0, 0);
+  end.setHours(0, 0, 0, 0);
+  const diff = end.getTime() - start.getTime();
+  const days = Math.round(diff / (1000 * 60 * 60 * 24)) + 1;
+  return days > 0 ? days : 0;
+};
 
 export default function EmployeeDirectoryPage() {
   const { user, hasPermission } = useAuth();
@@ -138,6 +151,7 @@ export default function EmployeeDirectoryPage() {
   const [transferDepartmentId, setTransferDepartmentId] = useState<string>('');
   const [transferDepartments, setTransferDepartments] = useState<any[]>([]);
   const [transferReason, setTransferReason] = useState<string>('');
+  const [transferLocations, setTransferLocations] = useState<any[]>([]);
   
   const [locations, setLocations] = useState<any[]>([]);
   const [departments, setDepartments] = useState<any[]>([]);
@@ -163,9 +177,9 @@ export default function EmployeeDirectoryPage() {
     basic_salary: '',
     daily_rate: '',
     tax_percentage: '0',
-    custom_work_days: '',
     contract_start_date: '',
     contract_end_date: '',
+    contracted_days: '',
     allowance_title: '',
     allowance_amount: '',
     allowance_description: '',
@@ -176,6 +190,87 @@ export default function EmployeeDirectoryPage() {
   const [importingBulk, setImportingBulk] = useState(false);
 
   const { toast } = useToast();
+
+  const isBranchManagerActor = Boolean(
+    user && user.role !== 'SUPER_ADMIN' &&
+    ((user.roles && user.roles.includes('BRANCH_MANAGER')) || user.role === 'BRANCH_MANAGER'),
+  );
+
+  const handleDownloadTemplate = () => {
+    // Branch managers only ever create employees inside their own branch —
+    // the backend auto-assigns working_location_id from the actor's own
+    // account for them (see employees.service.ts bulkImport), so we don't
+    // ask them to fill it in at all, and we only list departments that
+    // belong to their branch on the reference sheet. Everyone else
+    // (SUPER_ADMIN, HR, etc.) gets a working_location column plus every
+    // branch on the reference sheet.
+    // /departments already scopes results to the actor's own branch
+    // server-side for non-super-admin actors (see department.service.ts
+    // findDepartments), so `departments` here is already correctly
+    // restricted for a branch manager — no extra frontend filtering needed.
+    const relevantDepartments = departments;
+
+    const headers = [
+      'first_name', 'last_name', 'email', 'phone_number', 'national_id',
+      'gender', 'contract_start_date', 'contract_end_date',
+      ...(isBranchManagerActor ? [] : ['working_location']),
+      'department', 'employment_category', 'basic_salary', 'daily_rate', 'tax_percentage',
+    ];
+
+    const wb = XLSX.utils.book_new();
+
+    // --- Sheet 1: Instructions (opens first) ---------------------------
+    // The free xlsx library this app uses cannot write real Excel
+    // data-validation dropdowns into cells (that requires SheetJS Pro), so
+    // rather than silently shipping a template that looks like it should
+    // have dropdowns but doesn't, we say so plainly and point at the exact
+    // list to copy from.
+    const instructionRows: any[][] = [
+      ['EMPLOYEE BULK IMPORT — READ THIS FIRST'],
+      [],
+      ['1. Fill in the "Employees" sheet. Do not rename or reorder its columns.'],
+      ['2. first_name and last_name are the only required columns — everything else can be left blank.'],
+      ['3. This file does not have clickable dropdowns (a spreadsheet-library limitation), so for the'],
+      ['   department / employment_category' + (isBranchManagerActor ? '' : ' / working_location') + ' columns, copy the exact spelling from the "Reference" sheet.'],
+      ['   A name that does not match exactly (extra space, different capitalization of a whole word, typo) will be rejected — the importer will tell you which row and which value it could not match.'],
+      ['4. gender must be exactly MALE or FEMALE (all caps).'],
+      ['5. Dates (contract_start_date, contract_end_date) must be in YYYY-MM-DD format, e.g. 2026-01-31.'],
+      ['6. basic_salary, daily_rate, and tax_percentage must be plain numbers — no currency symbols or commas.'],
+      ['7. Every row needs a unique national_id and email if you provide them — duplicates will be rejected.'],
+      [isBranchManagerActor
+        ? `8. You don't need a working_location column — every employee you import is automatically placed in your branch (${user?.location ?? 'your branch'}).`
+        : '8. working_location is required if your account can manage more than one branch, so the importer knows where each row belongs.'],
+      [],
+      ['If ANY row fails validation, the whole file is rejected with a row-by-row explanation — nothing is partially imported.'],
+    ];
+    const instructionsWs = XLSX.utils.aoa_to_sheet(instructionRows);
+    instructionsWs['!cols'] = [{ wch: 110 }];
+    XLSX.utils.book_append_sheet(wb, instructionsWs, 'Instructions');
+
+    // --- Sheet 2: Employees (genuinely empty — just headers) -----------
+    const ws = XLSX.utils.aoa_to_sheet([headers]);
+    XLSX.utils.book_append_sheet(wb, ws, 'Employees');
+
+    // --- Sheet 3: Reference (valid values to copy from exactly) --------
+    const referenceRows: any[][] = [['Valid Departments'], ...relevantDepartments.map((d: any) => [d.name])];
+    referenceRows.push([]);
+    referenceRows.push(['Valid Employment Categories']);
+    paymentCategories.forEach((c: any) => referenceRows.push([c.name]));
+    if (!isBranchManagerActor) {
+      referenceRows.push([]);
+      referenceRows.push(['Valid Branches (Working Locations)']);
+      locations.forEach((l: any) => referenceRows.push([l.name]));
+    }
+    referenceRows.push([]);
+    referenceRows.push(['Valid Gender Values']);
+    referenceRows.push(['MALE']);
+    referenceRows.push(['FEMALE']);
+    const refWs = XLSX.utils.aoa_to_sheet(referenceRows);
+    XLSX.utils.book_append_sheet(wb, refWs, 'Reference');
+
+    XLSX.writeFile(wb, 'employee_bulk_import_template.xlsx');
+    toast({ title: 'Template downloaded', description: 'Read the Instructions sheet first, then fill in the empty Employees sheet.' });
+  };
 
   const handleBulkImport = async () => {
     if (!importFile) {
@@ -203,11 +298,12 @@ export default function EmployeeDirectoryPage() {
           // contract_start_date, contract_end_date, department_id, working_location_id, 
           // employment_category_id, basic_salary, daily_rate, tax_percentage
           const employeeItems: any[] = [];
+          const skippedRows: string[] = [];
           
           for (let i = 1; i < raw.length; i++) {
             const row = raw[i];
-            if (!row[0] && !row[1]) continue; // skip empty rows
-            
+            if (!row || row.every((cell) => cell === undefined || cell === null || String(cell).trim() === '')) continue; // fully blank row, ignore silently
+
             const item: any = {};
             headers.forEach((header: string, idx: number) => {
               if (header && row[idx] !== undefined && row[idx] !== null && row[idx] !== '') {
@@ -217,6 +313,11 @@ export default function EmployeeDirectoryPage() {
             
             if (item.first_name && item.last_name) {
               employeeItems.push(item);
+            } else {
+              // The row has SOME data but is missing a required field — say so
+              // instead of quietly dropping it, so it doesn't look like the
+              // person's entry just disappeared.
+              skippedRows.push(`Row ${i + 1}: missing ${!item.first_name && !item.last_name ? 'first_name and last_name' : !item.first_name ? 'first_name' : 'last_name'}.`);
             }
           }
 
@@ -226,8 +327,144 @@ export default function EmployeeDirectoryPage() {
             return;
           }
 
+          if (skippedRows.length > 0) {
+            toast({
+              variant: "destructive",
+              title: `${skippedRows.length} row(s) are missing required fields`,
+              description: `${skippedRows.slice(0, 3).join(' ')}${skippedRows.length > 3 ? ` (+${skippedRows.length - 3} more)` : ''} Fix these rows and re-upload — no rows were imported.`,
+            });
+            setImportingBulk(false);
+            return;
+          }
+
           if (employeeItems.length > 500) {
             toast({ variant: "destructive", title: "Too many records", description: "Maximum 500 employees per import." });
+            setImportingBulk(false);
+            return;
+          }
+
+          // Translate the human-friendly "department" / "employment_category" /
+          // "working_location" name columns (from the downloadable template)
+          // into the department_id / employment_category_id / working_location_id
+          // fields the API expects. Raw *_id columns (uuid or numeric) are left
+          // untouched for power users who fill those in directly instead.
+          const rowErrors: string[] = [];
+          employeeItems.forEach((item, idx) => {
+            const rowNum = idx + 1;
+
+            // Branch managers never need to supply this — the backend
+            // auto-assigns their own working_location_id regardless of what
+            // (if anything) is sent, and the template omits this column for
+            // them entirely.
+            let resolvedWorkingLocationId: string | undefined = item.working_location_id;
+            if (item.working_location && !item.working_location_id) {
+              const match = locations.find(
+                (l: any) => String(l.name).trim().toLowerCase() === String(item.working_location).trim().toLowerCase(),
+              );
+              if (match) {
+                resolvedWorkingLocationId = String(match.uuid ?? match.id);
+                item.working_location_id = resolvedWorkingLocationId;
+              } else {
+                rowErrors.push(`Row ${rowNum}: branch "${item.working_location}" was not found.`);
+              }
+              delete item.working_location;
+            }
+
+            // Departments are created one-per-branch and can share the same
+            // name across different branches, so a name match must be
+            // scoped to the row's resolved branch (or, for a branch
+            // manager, `departments` is already scoped server-side to just
+            // their own branch — see the comment on `relevantDepartments`
+            // above).
+            if (item.department && !item.department_id) {
+              const candidates = resolvedWorkingLocationId
+                ? departments.filter((d: any) => String(d.working_location_id) === String(resolvedWorkingLocationId) || d.working_location?.uuid === resolvedWorkingLocationId)
+                : departments;
+              const match = candidates.find(
+                (d: any) => String(d.name).trim().toLowerCase() === String(item.department).trim().toLowerCase(),
+              );
+              if (match) {
+                item.department_id = String(match.uuid ?? match.id);
+              } else {
+                rowErrors.push(`Row ${rowNum}: department "${item.department}" was not found${resolvedWorkingLocationId ? ' for the given branch' : ''}.`);
+              }
+              delete item.department;
+            }
+
+            if (item.employment_category && !item.employment_category_id) {
+              const match = paymentCategories.find(
+                (c: any) => String(c.name).trim().toLowerCase() === String(item.employment_category).trim().toLowerCase(),
+              );
+              if (match) {
+                item.employment_category_id = String(match.uuid ?? match.id);
+              } else {
+                rowErrors.push(`Row ${rowNum}: employment category "${item.employment_category}" was not found.`);
+              }
+              delete item.employment_category;
+            }
+
+            // Format validation: catch obviously-wrong values here with a
+            // specific, human-readable reason, instead of letting them
+            // reach the backend as a generic 400 that doesn't say which
+            // row or field was the problem.
+            if (item.gender) {
+              const normalized = String(item.gender).trim().toUpperCase();
+              if (normalized !== 'MALE' && normalized !== 'FEMALE') {
+                rowErrors.push(`Row ${rowNum}: gender "${item.gender}" must be exactly MALE or FEMALE.`);
+              } else {
+                item.gender = normalized;
+              }
+            }
+
+            const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+            for (const dateField of ['contract_start_date', 'contract_end_date']) {
+              if (item[dateField] && !datePattern.test(item[dateField])) {
+                rowErrors.push(`Row ${rowNum}: ${dateField} "${item[dateField]}" must be in YYYY-MM-DD format.`);
+              }
+            }
+
+            for (const numField of ['basic_salary', 'daily_rate', 'tax_percentage']) {
+              if (item[numField] && Number.isNaN(Number(item[numField]))) {
+                rowErrors.push(`Row ${rowNum}: ${numField} "${item[numField]}" must be a plain number (no currency symbols or commas).`);
+              }
+            }
+
+            if (item.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(item.email)) {
+              rowErrors.push(`Row ${rowNum}: email "${item.email}" doesn't look like a valid email address.`);
+            }
+          });
+
+          // Duplicate national_id / email WITHIN the file — the backend
+          // would reject these anyway on the second occurrence, but with a
+          // less specific message. Flag both rows involved up front.
+          const seenNationalIds = new Map<string, number>();
+          const seenEmails = new Map<string, number>();
+          employeeItems.forEach((item, idx) => {
+            const rowNum = idx + 1;
+            if (item.national_id) {
+              const key = String(item.national_id).trim();
+              if (seenNationalIds.has(key)) {
+                rowErrors.push(`Row ${rowNum}: national_id "${key}" is a duplicate of row ${seenNationalIds.get(key)}.`);
+              } else {
+                seenNationalIds.set(key, rowNum);
+              }
+            }
+            if (item.email) {
+              const key = String(item.email).trim().toLowerCase();
+              if (seenEmails.has(key)) {
+                rowErrors.push(`Row ${rowNum}: email "${key}" is a duplicate of row ${seenEmails.get(key)}.`);
+              } else {
+                seenEmails.set(key, rowNum);
+              }
+            }
+          });
+
+          if (rowErrors.length > 0) {
+            toast({
+              variant: "destructive",
+              title: `${rowErrors.length} issue(s) found — nothing was imported`,
+              description: `${rowErrors.slice(0, 3).join(' ')}${rowErrors.length > 3 ? ` (+${rowErrors.length - 3} more)` : ''} Check the Reference/Instructions sheets, fix, and re-upload.`,
+            });
             setImportingBulk(false);
             return;
           }
@@ -250,14 +487,14 @@ export default function EmployeeDirectoryPage() {
           setImportFile(null);
           loadEmployees();
         } catch (err: any) {
-          toast({ variant: "destructive", title: "Import Failed", description: err?.message || "Could not process the file." });
+          toast({ variant: "destructive", title: "Import Failed", description: userFriendlyError(err, "Could not process the file.") });
         } finally {
           setImportingBulk(false);
         }
       };
       reader.readAsBinaryString(importFile);
     } catch (error: any) {
-      toast({ variant: "destructive", title: "Import Failed", description: error?.message || "Could not read the file." });
+      toast({ variant: "destructive", title: "Import Failed", description: userFriendlyError(error, "Could not read the file.") });
       setImportingBulk(false);
     }
   };
@@ -305,7 +542,7 @@ export default function EmployeeDirectoryPage() {
       toast({
         variant: "destructive",
         title: "Transfer submission failed",
-        description: error?.response?.data?.message || "An error occurred while submitting the transfer request."
+        description: userFriendlyError(error, "An error occurred while submitting the transfer request.")
       });
     } finally {
       setIsSubmitting(false);
@@ -406,9 +643,9 @@ export default function EmployeeDirectoryPage() {
         basic_salary: structure.basic_salary?.toString() || '',
         daily_rate: structure.daily_rate?.toString() || '',
         tax_percentage: structure.tax_percentage?.toString() || '0',
-        custom_work_days: structure.custom_work_days?.toString() || '',
         contract_start_date: emp.contract_start_date || '',
         contract_end_date: emp.contract_end_date || '',
+        contracted_days: '',
         allowance_title: allowances[0]?.title || '',
         allowance_amount: allowances[0]?.amount?.toString() || '',
         allowance_description: allowances[0]?.description || '',
@@ -478,7 +715,7 @@ export default function EmployeeDirectoryPage() {
       toast({
         variant: 'destructive',
         title: 'Deduction update failed',
-        description: error?.response?.data?.message ?? 'Please check the value and try again.',
+        description: userFriendlyError(error, 'Please check the value and try again.'),
       });
     }
   };
@@ -494,17 +731,41 @@ export default function EmployeeDirectoryPage() {
       toast({
         variant: 'destructive',
         title: 'Deduction update failed',
-        description: error?.response?.data?.message ?? 'Please try again.',
+        description: userFriendlyError(error, 'Please try again.'),
       });
     }
   };
 
-  const getStatusBadge = (status: Employee['status']) => {
+  const getStatusBadge = (status: Employee['status'], pauseReason?: string) => {
     switch (status) {
-      case 'ACTIVE': return <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/20">Active</Badge>;
-      case 'SUSPENDED': return <Badge variant="destructive">Suspended</Badge>;
-      case 'TERMINATED': return <Badge variant="outline" className="text-muted-foreground">Terminated</Badge>;
-      default: return <Badge variant="outline">{status}</Badge>;
+      case 'ACTIVE': 
+        return <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/20">Active</Badge>;
+      case 'SUSPENDED': 
+        return <Badge variant="destructive">Suspended</Badge>;
+      case 'TERMINATED': 
+        return <Badge variant="outline" className="text-muted-foreground">Terminated</Badge>;
+      case 'PAUSED':
+        const isContractExpired = pauseReason && (
+          pauseReason.toLowerCase().includes('contract') || 
+          pauseReason.toLowerCase().includes('expired') ||
+          pauseReason.toLowerCase().includes('ended')
+        );
+        return (
+          <div className="flex flex-col gap-1 items-start">
+            <Badge className="bg-amber-500/10 text-amber-600 border-amber-500/20">Paused</Badge>
+            {isContractExpired ? (
+              <span className="text-[10px] font-bold text-amber-600 italic leading-tight" title={pauseReason}>
+                Contract working days have ended
+              </span>
+            ) : pauseReason ? (
+              <span className="text-[10px] text-muted-foreground italic leading-tight" title={pauseReason}>
+                {pauseReason}
+              </span>
+            ) : null}
+          </div>
+        );
+      default: 
+        return <Badge variant="outline">{status}</Badge>;
     }
   };
 
@@ -544,6 +805,10 @@ export default function EmployeeDirectoryPage() {
       );
       const selectedFrequency = selectedCategory?.payroll_frequency;
       
+      const contractDays = selectedFrequency !== 'MONTHLY'
+        ? getDaysBetween(newEmployee.contract_start_date, newEmployee.contract_end_date)
+        : 0;
+
       const submissionData = {
         first_name: newEmployee.first_name,
         last_name: newEmployee.last_name,
@@ -557,7 +822,8 @@ export default function EmployeeDirectoryPage() {
         basic_salary: newEmployee.basic_salary || undefined,
         daily_rate: newEmployee.daily_rate || undefined,
         tax_percentage: newEmployee.tax_percentage || undefined,
-        custom_work_days: newEmployee.custom_work_days ? Number(newEmployee.custom_work_days) : undefined,
+        contract_start_date: selectedFrequency !== 'MONTHLY' ? (newEmployee.contract_start_date || undefined) : null,
+        contract_end_date: selectedFrequency !== 'MONTHLY' ? (newEmployee.contract_end_date || undefined) : null,
         allowance_title: newEmployee.allowance_title || undefined,
         allowance_amount: newEmployee.allowance_amount || undefined,
       };
@@ -577,7 +843,8 @@ export default function EmployeeDirectoryPage() {
         basic_salary: "Monthly Salary",
         daily_rate: "Daily Rate",
         tax_percentage: "Tax Percentage",
-        custom_work_days: "Contracted Days",
+        contract_start_date: "Contract Start Date",
+        contract_end_date: "Contract End Date",
         allowance_title: "Allowance Title",
         allowance_amount: "Allowance Amount",
       };
@@ -597,8 +864,7 @@ export default function EmployeeDirectoryPage() {
       if (selectedFrequency) {
         const canAssignAllowance =
           selectedFrequency === 'MONTHLY' ||
-          (selectedFrequency === 'CUSTOM' &&
-            Number(newEmployee.custom_work_days) > 21);
+          (selectedFrequency === 'CUSTOM' && contractDays > 21);
 
         if (canAssignAllowance && newEmployee.allowance_title && newEmployee.allowance_amount) {
           const currentAllowances = await getAllowances(editingEmployee.bigIntId!);
@@ -626,7 +892,7 @@ export default function EmployeeDirectoryPage() {
       toast({
         variant: "destructive",
         title: "Update failed",
-        description: error?.response?.data?.message || "Could not update employee.",
+        description: userFriendlyError(error, "Could not update employee."),
       });
     } finally {
       setIsSubmitting(false);
@@ -647,13 +913,17 @@ export default function EmployeeDirectoryPage() {
       );
       const selectedFrequency = selectedCategory?.payroll_frequency;
       const isLocationScopedManager =
-        user?.roles?.some((role) =>
-          ['BRANCH_MANAGER'].includes(role),
-        ) && !user?.roles?.some((role) => ['SUPER_ADMIN'].includes(role));
+        Boolean(user?.location_id) && !user?.roles?.some((role) => ['SUPER_ADMIN'].includes(role));
+        // Location-scoped = has their own branch assigned and is not SUPER_ADMIN.
+        // Covers BRANCH_MANAGER and any other branch-tied role (HR, ACCOUNTANT,
+        // ATTENDANT, etc), not just BRANCH_MANAGER specifically.
+      const contractDays = selectedFrequency !== 'MONTHLY'
+        ? getDaysBetween(newEmployee.contract_start_date, newEmployee.contract_end_date)
+        : 0;
+
       const canAssignAllowance =
         selectedFrequency === 'MONTHLY' ||
-        (selectedFrequency === 'CUSTOM' &&
-          Number(newEmployee.custom_work_days) > 21);
+        (selectedFrequency === 'CUSTOM' && contractDays > 21);
       const submissionData = {
         first_name: newEmployee.first_name,
         last_name: newEmployee.last_name,
@@ -661,8 +931,8 @@ export default function EmployeeDirectoryPage() {
         phone_number: newEmployee.phone_number ? `+250${newEmployee.phone_number}` : undefined,
         national_id: newEmployee.national_id,
         gender: newEmployee.gender,
-        contract_start_date: newEmployee.contract_start_date || undefined,
-        contract_end_date: newEmployee.contract_end_date || undefined,
+        contract_start_date: selectedFrequency !== 'MONTHLY' ? (newEmployee.contract_start_date || undefined) : undefined,
+        contract_end_date: selectedFrequency !== 'MONTHLY' ? (newEmployee.contract_end_date || undefined) : undefined,
         department_id: newEmployee.department_id || undefined,
         employment_category_id: newEmployee.employment_category_id || undefined,
         ...(isLocationScopedManager ? {} : { working_location_id: newEmployee.working_location_id || undefined }),
@@ -678,7 +948,6 @@ export default function EmployeeDirectoryPage() {
           daily_rate: newEmployee.daily_rate || '0',
           overtime_rate: '0',
           tax_percentage: newEmployee.tax_percentage || '0',
-          custom_work_days: newEmployee.custom_work_days ? Number(newEmployee.custom_work_days) : undefined,
           effective_from: new Date().toISOString().slice(0, 10),
         });
 
@@ -707,9 +976,9 @@ export default function EmployeeDirectoryPage() {
         basic_salary: '',
         daily_rate: '',
         tax_percentage: '0',
-        custom_work_days: '',
         contract_start_date: '',
         contract_end_date: '',
+        contracted_days: '',
         allowance_title: '',
         allowance_amount: '',
         allowance_description: '',
@@ -719,7 +988,7 @@ export default function EmployeeDirectoryPage() {
       toast({
         variant: "destructive",
         title: "Creation failed",
-        description: error?.response?.data?.message || "Could not create employee.",
+        description: userFriendlyError(error, "Could not create employee."),
       });
     }
   };
@@ -735,7 +1004,7 @@ export default function EmployeeDirectoryPage() {
       toast({
         variant: "destructive",
         title: "Employee update failed",
-        description: error?.response?.data?.message ?? "Please try again.",
+        description: userFriendlyError(error, "Please try again."),
       });
     }
   };
@@ -773,9 +1042,10 @@ export default function EmployeeDirectoryPage() {
   const canCreateEmployee = hasPermission('employees.create');
   const canUpdateEmployee = hasPermission('employees.update');
   const isLocationScopedManager =
-    user?.roles?.some((role) =>
-      ['BRANCH_MANAGER'].includes(role),
-    ) && !user?.roles?.some((role) => ['SUPER_ADMIN'].includes(role));
+    Boolean(user?.location_id) && !user?.roles?.some((role) => ['SUPER_ADMIN'].includes(role));
+    // Location-scoped = has their own branch assigned and is not SUPER_ADMIN.
+    // Covers BRANCH_MANAGER and any other branch-tied role (HR, ACCOUNTANT,
+    // ATTENDANT, etc), not just BRANCH_MANAGER specifically.
 
   const handleExport = (type: 'csv' | 'excel') => {
     const sortedData = [...filtered].sort((a, b) => {
@@ -861,26 +1131,30 @@ export default function EmployeeDirectoryPage() {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-72 p-3">
-            <DropdownMenuLabel className="px-0">Working Location</DropdownMenuLabel>
-            <select
-              aria-label="Filter by working location"
-              className="mb-3 h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
-              value={filters.location}
-              onChange={(event) =>
-                setFilters((current) => ({
-                  ...current,
-                  location: event.target.value,
-                  department: 'ALL',
-                }))
-              }
-            >
-              <option value="ALL">All scoped locations</option>
-              {locations.map((location) => (
-                <option key={location.uuid} value={String(location.id ?? location.uuid)}>
-                  {formatDisplayName(location.name)}
-                </option>
-              ))}
-            </select>
+            {!isLocationScopedManager && (
+              <>
+                <DropdownMenuLabel className="px-0">Working Location</DropdownMenuLabel>
+                <select
+                  aria-label="Filter by working location"
+                  className="mb-3 h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                  value={filters.location}
+                  onChange={(event) =>
+                    setFilters((current) => ({
+                      ...current,
+                      location: event.target.value,
+                      department: 'ALL',
+                    }))
+                  }
+                >
+                  <option value="ALL">All scoped locations</option>
+                  {locations.map((location) => (
+                    <option key={location.uuid} value={String(location.id ?? location.uuid)}>
+                      {formatDisplayName(location.name)}
+                    </option>
+                  ))}
+                </select>
+              </>
+            )}
 
             <DropdownMenuLabel className="px-0">Department</DropdownMenuLabel>
             <select
@@ -1007,7 +1281,7 @@ export default function EmployeeDirectoryPage() {
                     </div>
                   </div>
                 </TableCell>
-                <TableCell>{getStatusBadge(emp.status)}</TableCell>
+                <TableCell>{getStatusBadge(emp.status, emp.pause_reason)}</TableCell>
                 <TableCell>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
@@ -1025,6 +1299,16 @@ export default function EmployeeDirectoryPage() {
                           setTransferLocationId(emp.working_location_id || '');
                           setTransferDepartmentId(emp.department_id || '');
                           setTransferReason('');
+                          if (transferLocations.length === 0) {
+                            try {
+                              const locData = await getWorkingLocations({ scope: 'transfer' });
+                              setTransferLocations(locData.working_locations || (Array.isArray(locData) ? locData : []));
+                            } catch (e) {
+                              // Fall back to the general (possibly single-branch) list rather
+                              // than leaving the dropdown completely empty.
+                              setTransferLocations(locations);
+                            }
+                          }
                           if (emp.working_location_id) {
                             try {
                               const data = await getDepartments(emp.working_location_id);
@@ -1081,9 +1365,9 @@ export default function EmployeeDirectoryPage() {
             basic_salary: '',
             daily_rate: '',
             tax_percentage: '0',
-            custom_work_days: '',
             contract_start_date: '',
             contract_end_date: '',
+            contracted_days: '',
             allowance_title: '',
             allowance_amount: '',
             allowance_description: '',
@@ -1175,32 +1459,25 @@ export default function EmployeeDirectoryPage() {
               </select>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <Label>Contract Start Date</Label>
-                <Input 
-                  type="date"
-                  value={newEmployee.contract_start_date}
-                  onChange={e => setNewEmployee(p => ({...p, contract_start_date: e.target.value}))}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Contract End Date (Optional)</Label>
-                <Input 
-                  type="date"
-                  value={newEmployee.contract_end_date}
-                  onChange={e => setNewEmployee(p => ({...p, contract_end_date: e.target.value}))}
-                />
-                <p className="text-[10px] text-muted-foreground italic">* For daily/custom employees only. After this date, employee will be paused.</p>
-              </div>
-            </div>
             <div className="space-y-2">
               <Label>Payment Category</Label>
               <select
                 aria-label="Employee payment category"
                 className="w-full h-10 px-3 rounded-md border border-input bg-background font-bold text-xs"
                 value={newEmployee.employment_category_id}
-                onChange={e => setNewEmployee(p => ({ ...p, employment_category_id: e.target.value }))}
+                onChange={e => {
+                  const catId = e.target.value;
+                  const cat = paymentCategories.find(c => c.id === catId || c.uuid === catId);
+                  setNewEmployee(p => {
+                    const next = { ...p, employment_category_id: catId };
+                    if (cat?.payroll_frequency === 'MONTHLY') {
+                      next.contract_start_date = '';
+                      next.contract_end_date = '';
+                      next.contracted_days = '';
+                    }
+                    return next;
+                  });
+                }}
               >
                 <option value="">Select Category</option>
                 {paymentCategories.map(category => (
@@ -1210,6 +1487,58 @@ export default function EmployeeDirectoryPage() {
                 ))}
               </select>
             </div>
+
+            {selectedFrequency && selectedFrequency !== 'MONTHLY' && (
+              <>
+                <div className="space-y-2 animate-in fade-in slide-in-from-top-2">
+                  <Label>Contracted Days (optional)</Label>
+                  <Input
+                    type="number"
+                    min="1"
+                    placeholder="e.g. 20"
+                    value={newEmployee.contracted_days}
+                    onChange={e => {
+                      const days = e.target.value;
+                      setNewEmployee(p => {
+                        if (!days || Number(days) <= 0) {
+                          return { ...p, contracted_days: days };
+                        }
+                        const start = new Date();
+                        const end = new Date(start);
+                        end.setDate(end.getDate() + Number(days));
+                        const toDateInput = (d: Date) => d.toISOString().split('T')[0];
+                        return {
+                          ...p,
+                          contracted_days: days,
+                          contract_start_date: toDateInput(start),
+                          contract_end_date: toDateInput(end),
+                        };
+                      });
+                    }}
+                  />
+                  <p className="text-[10px] text-muted-foreground italic">* Automatically fills the start/end dates below (start = today, end = today + this many days). You can still adjust them manually.</p>
+                </div>
+                <div className="grid grid-cols-2 gap-3 animate-in fade-in slide-in-from-top-2">
+                  <div className="space-y-2">
+                    <Label>Contract Start Date</Label>
+                    <Input 
+                      type="date"
+                      value={newEmployee.contract_start_date}
+                      onChange={e => setNewEmployee(p => ({...p, contract_start_date: e.target.value}))}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Contract End Date (Optional)</Label>
+                    <Input 
+                      type="date"
+                      value={newEmployee.contract_end_date}
+                      onChange={e => setNewEmployee(p => ({...p, contract_end_date: e.target.value}))}
+                    />
+                    <p className="text-[10px] text-muted-foreground italic">* For daily/custom employees only. After this date, employee will be paused.</p>
+                  </div>
+                </div>
+              </>
+            )}
 
             {selectedFrequency === 'MONTHLY' && (
               <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
@@ -1264,28 +1593,17 @@ export default function EmployeeDirectoryPage() {
 
             {selectedFrequency === 'CUSTOM' && (
               <div className="space-y-4 animate-in fade-in slide-in-from-top-2">
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-2">
-                    <Label>Daily Rate (RWF)</Label>
-                    <Input
-                      type="number"
-                      value={newEmployee.daily_rate}
-                      onChange={e => setNewEmployee(p => ({ ...p, daily_rate: e.target.value }))}
-                      placeholder="e.g. 10000"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Contracted Days</Label>
-                    <Input
-                      type="number"
-                      value={newEmployee.custom_work_days}
-                      onChange={e => setNewEmployee(p => ({ ...p, custom_work_days: e.target.value }))}
-                      placeholder="e.g. 30"
-                    />
-                  </div>
+                <div className="space-y-2">
+                  <Label>Daily Rate (RWF)</Label>
+                  <Input
+                    type="number"
+                    value={newEmployee.daily_rate}
+                    onChange={e => setNewEmployee(p => ({ ...p, daily_rate: e.target.value }))}
+                    placeholder="e.g. 10000"
+                  />
                 </div>
 
-                {Number(newEmployee.custom_work_days) > 21 ? (
+                {getDaysBetween(newEmployee.contract_start_date, newEmployee.contract_end_date) > 21 ? (
                   <div className="p-3 bg-emerald-50 border border-emerald-100 rounded-xl space-y-3">
                     <p className="text-[10px] font-bold text-emerald-700 uppercase tracking-widest">Full Benefits Applied (&gt; 21 Days)</p>
                     <div className="space-y-2">
@@ -1347,7 +1665,10 @@ export default function EmployeeDirectoryPage() {
       }}>
         <SheetContent className="sm:max-w-2xl overflow-y-auto">
           <SheetHeader>
-            <SheetTitle>{detailEmployee?.fullName ?? 'Employee'} Details</SheetTitle>
+            <div className="flex items-center justify-between gap-4">
+              <SheetTitle>{detailEmployee?.fullName ?? 'Employee'} Details</SheetTitle>
+              {detailEmployee && getStatusBadge(detailEmployee.status, detailEmployee.pause_reason)}
+            </div>
             <SheetDescription>
               Salary structure, allowances, and active deductions for payroll review.
             </SheetDescription>
@@ -1494,9 +1815,19 @@ export default function EmployeeDirectoryPage() {
           <DialogHeader>
             <DialogTitle className="text-xl font-bold">Bulk Import Employees</DialogTitle>
             <DialogDescription className="text-sm text-slate-500">
-              Upload an Excel or CSV file containing employee records. The file should have headers: first_name, last_name, email, phone_number, national_id, gender, contract_start_date, contract_end_date, department_id, working_location_id, employment_category_id, basic_salary, daily_rate, tax_percentage.
+              Download the template, fill it in, then upload it here. Required columns are first_name and last_name; the rest are optional.
+              {isBranchManagerActor && ' Employees you import are automatically assigned to your branch.'}
             </DialogDescription>
           </DialogHeader>
+
+          <Button
+            type="button"
+            variant="outline"
+            onClick={handleDownloadTemplate}
+            className="w-full h-10 rounded-xl text-xs font-semibold border-dashed"
+          >
+            <Download className="mr-2 h-4 w-4" /> Download Template
+          </Button>
 
           <div className="space-y-4 my-4">
             <div
@@ -1587,7 +1918,7 @@ export default function EmployeeDirectoryPage() {
                 onChange={(e) => handleTransferLocationChange(e.target.value)}
               >
                 <option value="">Select Location</option>
-                {locations.map(l => (
+                {transferLocations.map(l => (
                   <option key={l.uuid} value={l.uuid}>
                     {formatDisplayName(l.name)}
                   </option>

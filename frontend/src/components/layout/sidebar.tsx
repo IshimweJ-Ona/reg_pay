@@ -6,7 +6,7 @@ import { usePathname, useParams } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { 
   LayoutDashboard, Users, MapPin, Building2, UserCircle, 
-  Calendar, CreditCard, FileText, Settings, LogOut, ShieldCheck, Bell, Percent, Activity
+  Calendar, CreditCard, FileText, Settings, LogOut, ShieldCheck, Bell, Percent, Activity, Coins
 } from 'lucide-react';
 import { useAuth } from '@/context/auth-context';
 import { Button } from '@/components/ui/button';
@@ -50,6 +50,7 @@ export function Sidebar({ type }: SidebarProps) {
     { name: 'Departments', href: `${basePath}/departments`, icon: Building2, permission: 'departments.manage' },
     { name: 'Attendance', href: `${basePath}/attendance`, icon: Calendar, permission: 'attendance.read' },
     { name: 'Payroll Engine', href: `${basePath}/payroll`, icon: FileText, permission: 'payroll.read' },
+    { name: 'Ikimina Savings', href: `${basePath}/ikimina`, icon: Coins, permission: 'ikimina.read' },
     { name: 'Tax Setup', href: `${basePath}/payments`, icon: Percent, permission: 'system-config.manage' },
     { name: 'Audit Logs', href: `${basePath}/audit-logs`, icon: Activity, permission: 'audit.view' },
     { name: 'Notifications', href: `${basePath}/notifications`, icon: Bell },

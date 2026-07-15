@@ -51,8 +51,13 @@ export default function SystemSettingsPage() {
       router.replace('/unauthorized');
       return;
     }
-    if (canManageRoles) loadData();
   }, [canManageRoles, user, router]);
+
+  useEffect(() => {
+    if (canManageRoles) {
+      loadData();
+    }
+  }, [canManageRoles]);
 
   useEffect(() => {
     if (!selectedRole) return;
@@ -119,10 +124,13 @@ export default function SystemSettingsPage() {
 
       await loadData();
       setSelectedRoleId(saved.id);
-      await refreshSession({ reload: true });
+      const userHasThisRole = user?.roles?.includes(roleForm.name) || (selectedRole && user?.roles?.includes(selectedRole.name));
+      await refreshSession({ reload: !!userHasThisRole });
       toast({
         title: selectedRoleId ? 'Role updated' : 'Role created',
-        description: 'Permissions changed immediately. The page is reloading with fresh access.',
+        description: userHasThisRole
+          ? 'Permissions changed immediately. The page is reloading with fresh access.'
+          : 'Permissions updated successfully.',
       });
     } catch (error: any) {
       toast({
@@ -146,7 +154,7 @@ export default function SystemSettingsPage() {
   if (!canManageRoles) return null;
 
   return (
-    <div className="max-w-6xl space-y-8">
+    <div className="max-w-[1800px] space-y-8">
       <div>
         <h1 className="text-3xl font-headline font-bold">Settings</h1>
         <p className="text-muted-foreground">Create roles and control the permissions each role grants across the system.</p>

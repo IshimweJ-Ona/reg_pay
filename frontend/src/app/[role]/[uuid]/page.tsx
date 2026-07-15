@@ -31,15 +31,21 @@ export default function DashboardPage() {
       if (!isManagement) {
         return;
       }
-      try {
-        const [empRes, batchRes] = await Promise.all([
-          getEmployees(),
-          getPayrollBatches()
-        ]);
-        setEmployees(empRes.employees || (Array.isArray(empRes) ? empRes : []));
-        setBatches(batchRes.batches || (Array.isArray(batchRes) ? batchRes : []));
-      } catch (error) {
-        console.error('Dashboard data load failed:', error);
+      if (hasPermission('employees.read')) {
+        try {
+          const empRes = await getEmployees();
+          setEmployees(empRes.employees || (Array.isArray(empRes) ? empRes : []));
+        } catch (error) {
+          console.error('Dashboard employees load failed:', error);
+        }
+      }
+      if (hasPermission('payroll.read')) {
+        try {
+          const batchRes = await getPayrollBatches();
+          setBatches(batchRes.batches || (Array.isArray(batchRes) ? batchRes : []));
+        } catch (error) {
+          console.error('Dashboard payroll batches load failed:', error);
+        }
       }
     }
     if (user) loadData();
@@ -80,7 +86,7 @@ export default function DashboardPage() {
   // If not admin/management, show User Dashboard
   if (!isManagement) {
     return (
-      <div className="space-y-10 max-w-7xl mx-auto">
+      <div className="space-y-10 max-w-[1800px] mx-auto">
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 border-b pb-8">
           <div>
             <div className="flex items-center gap-3 mb-2">

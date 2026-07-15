@@ -20,6 +20,7 @@ import { getEmployees } from '@/api/employees';
 import { createPayrollBatch } from '@/api/payroll';
 import { getDepartments, getWorkingLocations } from '@/api/working_locations';
 import { useAuth } from '@/context/auth-context';
+import { userFriendlyError } from '@/lib/error-message';
 
 export default function NewPayrollBatchPage() {
   const router = useRouter();
@@ -45,6 +46,7 @@ export default function NewPayrollBatchPage() {
   const basePath = `/${role}/${uuid}`;
 
   const { user } = useAuth();
+  const isLocationUnrestricted = Boolean(!user?.location_id || user?.roles?.includes('SUPER_ADMIN'));
 
   const handleLocationChange = async (locationUuid: string) => {
     setWorkingLocationId(locationUuid);
@@ -86,7 +88,7 @@ export default function NewPayrollBatchPage() {
       setEmployees(emps);
       setLocations(locs);
       
-      const userLoc = locs.find((l: any) => l.uuid === user?.location || l.name === user?.location);
+      const userLoc = locs.find((l: any) => l.uuid === user?.location_id || l.name === user?.location);
       if (userLoc) {
         setWorkingLocationId(userLoc.uuid);
         handleLocationChange(userLoc.uuid);
@@ -95,7 +97,7 @@ export default function NewPayrollBatchPage() {
         handleLocationChange(locs[0].uuid);
       }
     });
-  }, [user]);
+  }, [user?.location_id]);
 
   const filteredEmployees = useMemo(() => {
     return employees.filter(emp => {
@@ -157,7 +159,7 @@ export default function NewPayrollBatchPage() {
       toast({
         variant: "destructive",
         title: "Payroll batch failed",
-        description: error?.response?.data?.message ?? "Please check employee payment structures.",
+        description: userFriendlyError(error, "Please check employee payment structures."),
       });
     }
   };
@@ -181,7 +183,7 @@ export default function NewPayrollBatchPage() {
   }
 
   return (
-    <div className="max-w-7xl mx-auto space-y-8 pb-12">
+    <div className="max-w-[1800px] mx-auto space-y-8 pb-12">
       <div className="flex items-center gap-4">
         <Button variant="ghost" size="icon" onClick={() => router.back()}>
           <ArrowLeft className="h-5 w-5" />
@@ -192,8 +194,8 @@ export default function NewPayrollBatchPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div className="lg:col-span-2 space-y-6">
+      <div className="space-y-6">
+        <div className="space-y-6">
           <Card className="border-none shadow-sm">
             <CardHeader>
               <CardTitle className="text-lg">Batch Configuration</CardTitle>
@@ -213,17 +215,27 @@ export default function NewPayrollBatchPage() {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="space-y-2">
-                <Label>Working Location</Label>
-                <Select value={workingLocationId} onValueChange={handleLocationChange}>
-                  <SelectTrigger><SelectValue placeholder="All Locations" /></SelectTrigger>
-                  <SelectContent>
-                    {locations.map((location) => (
-                      <SelectItem key={location.uuid} value={location.uuid}>{location.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+              {isLocationUnrestricted ? (
+                <div className="space-y-2">
+                  <Label>Working Location</Label>
+                  <Select value={workingLocationId} onValueChange={handleLocationChange}>
+                    <SelectTrigger><SelectValue placeholder="All Locations" /></SelectTrigger>
+                    <SelectContent>
+                      {locations.map((location) => (
+                        <SelectItem key={location.uuid} value={location.uuid}>{location.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <Label>Working Location</Label>
+                  <div className="h-10 flex items-center px-3 rounded-md border border-input bg-muted text-sm text-muted-foreground">
+                    {locations.find(l => l.uuid === workingLocationId)?.name ?? user?.location ?? 'Your branch'}
+                  </div>
+                  <p className="text-[10px] text-muted-foreground italic">Batches are always created for your own branch.</p>
+                </div>
+              )}
               <div className="space-y-2">
                 <Label>Payment Date</Label>
                 <Input type="date" value={paymentDate} onChange={(event) => setPaymentDate(event.target.value)} />
@@ -341,43 +353,39 @@ export default function NewPayrollBatchPage() {
           </Card>
         </div>
 
-        <div className="space-y-6">
-          <Card className="border-none shadow-lg bg-primary text-white sticky top-8">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Calculator className="h-5 w-5" /> Batch Summary
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="flex justify-between items-center border-b border-white/20 pb-4">
-                <div className="flex items-center gap-2">
-                  <Users className="h-4 w-4 opacity-70" />
-                  <span className="text-sm">Total Employees</span>
-                </div>
-                <span className="font-bold text-xl">{uniqueEmployeeCount}</span>
+        <Card className="border-none shadow-lg bg-primary text-white">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Calculator className="h-5 w-5" /> Batch Summary
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 border-b border-white/20 pb-4">
+              <div className="flex items-center gap-2">
+                <Users className="h-4 w-4 opacity-70" />
+                <span className="text-sm">Total Employees</span>
               </div>
+              <span className="font-bold text-xl">{uniqueEmployeeCount}</span>
+            </div>
 
-              <div className="space-y-3">
-                <p className="text-sm opacity-80">
-                  Payroll totals are calculated by the NestJS backend from attendance, payment structure, deductions, tax rules, and allowances immediately after submission.
-                </p>
-              </div>
+            <p className="text-sm opacity-80">
+              Payroll totals are calculated by the NestJS backend from attendance, payment structure, deductions, tax rules, and allowances immediately after submission. Review every row above before finalizing.
+            </p>
 
-              <div className="pt-4 space-y-3">
-                <Button 
-                  className="w-full bg-white text-primary hover:bg-white/90 font-bold h-12"
-                  onClick={handleSubmit}
-                  disabled={!workingLocationId || uniqueEmployeeCount === 0}
-                >
-                  <Save className="mr-2 h-4 w-4" /> Finalize Draft
-                </Button>
-                <p className="text-[10px] text-center opacity-60">
-                  <ShieldCheck className="h-3 w-3 inline mr-1" /> All data encrypted with corporate standard AES-256
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+            <div className="pt-2 space-y-3 md:max-w-sm md:ml-auto">
+              <Button 
+                className="w-full bg-white text-primary hover:bg-white/90 font-bold h-12"
+                onClick={handleSubmit}
+                disabled={!workingLocationId || uniqueEmployeeCount === 0}
+              >
+                <Save className="mr-2 h-4 w-4" /> Finalize Draft
+              </Button>
+              <p className="text-[10px] text-center opacity-60">
+                <ShieldCheck className="h-3 w-3 inline mr-1" /> All data encrypted with corporate standard AES-256
+              </p>
+            </div>
+          </CardContent>
+        </Card>
       </div>
     </div>
   );

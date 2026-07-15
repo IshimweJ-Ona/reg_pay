@@ -23,8 +23,16 @@ import {
 } from "@/components/ui/dialog";
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
-import { approvePayrollBatch, downloadPayrollBatchExport, getPayrollBatch, rejectPayrollBatch, submitPayrollBatch, rejectPayrollItem } from '@/api/payroll';
 import { useAuth } from '@/context/auth-context';
+import { userFriendlyError } from '@/lib/error-message';
+import {
+  getPayrollBatch,
+  submitPayrollBatch,
+  approvePayrollBatch,
+  rejectPayrollBatch,
+  rejectPayrollItem,
+  downloadPayrollBatchExport,
+} from '@/api/payroll';
 
 const formatRwf = (value: number) => `RWF ${value.toLocaleString()}`;
 
@@ -49,6 +57,54 @@ export default function PayrollBatchDetailsPage() {
 
   const rows = useMemo(() => batch?.items ?? [], [batch]);
 
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 50;
+
+  const paginatedRows = useMemo(() => {
+    const startIndex = (currentPage - 1) * itemsPerPage;
+    return rows.slice(startIndex, startIndex + itemsPerPage);
+  }, [rows, currentPage]);
+
+  const totalPages = Math.ceil(rows.length / itemsPerPage);
+
+  const totals = useMemo(() => {
+    let totalBasePay = 0;
+    let totalAllowanceOt = 0;
+    let totalTax = 0;
+    let totalIkimina = 0;
+    let totalOtherDeductions = 0;
+    let totalNetPay = 0;
+
+    rows.forEach((item: any) => {
+      const basePay = Number(item.transaction?.base_amount ?? item.transaction?.gross_amount ?? 0);
+      const allowanceOt = Number(item.transaction?.allowance_amount ?? 0);
+      const tax = Number(item.transaction?.tax_amount ?? 0);
+      const contribution = batch?.ikimina_contributions?.find(
+        (c: any) => c.employee_id === item.employee_id
+      );
+      const ikimina = contribution ? Number(contribution.amount) : 0;
+      const totalDeductions = Number(item.transaction?.total_deductions ?? 0);
+      const otherDeductions = Math.max(0, totalDeductions - tax - ikimina);
+      const netPay = Number(item.transaction?.net_amount ?? 0);
+
+      totalBasePay += basePay;
+      totalAllowanceOt += allowanceOt;
+      totalTax += tax;
+      totalIkimina += ikimina;
+      totalOtherDeductions += otherDeductions;
+      totalNetPay += netPay;
+    });
+
+    return {
+      totalBasePay,
+      totalAllowanceOt,
+      totalTax,
+      totalIkimina,
+      totalOtherDeductions,
+      totalNetPay,
+    };
+  }, [rows, batch]);
+
   const handleAction = async (type: 'APPROVE' | 'REJECT' | 'SUBMIT') => {
     if (type === 'REJECT' && !comment.trim()) {
       toast({ variant: 'destructive', title: 'Reason required', description: 'Please provide a reason for rejection.' });
@@ -71,7 +127,7 @@ export default function PayrollBatchDetailsPage() {
       toast({
         variant: "destructive",
         title: "Payroll action failed",
-        description: error?.response?.data?.message ?? "Please try again.",
+        description: userFriendlyError(error, "Please try again."),
       });
     }
   };
@@ -88,7 +144,7 @@ export default function PayrollBatchDetailsPage() {
       toast({
         variant: 'destructive',
         title: 'Action failed',
-        description: error?.response?.data?.message ?? 'Could not reject employee.',
+        description: userFriendlyError(error, 'Could not reject employee.'),
       });
     }
   };
@@ -101,7 +157,7 @@ export default function PayrollBatchDetailsPage() {
       toast({
         variant: 'destructive',
         title: 'Export failed',
-        description: error?.response?.data?.message ?? 'Could not download this payroll batch.',
+        description: userFriendlyError(error, 'Could not download this payroll batch.'),
       });
     }
   };
@@ -237,54 +293,123 @@ export default function PayrollBatchDetailsPage() {
         <TabsContent value="employees">
           <Card className="border-none shadow-sm overflow-hidden">
             <CardContent className="p-0">
-              <Table>
-                <TableHeader className="bg-secondary/30">
-                  <TableRow>
-                    <TableHead>Employee</TableHead>
-                    <TableHead>Phone Number</TableHead>
-                    <TableHead>Role / Dept</TableHead>
-                    <TableHead>Base Salary</TableHead>
-                    <TableHead>OT/Bonus</TableHead>
-                    <TableHead>Deductions</TableHead>
-                    <TableHead className="text-right">Net Salary</TableHead>
-                    <TableHead className="w-[100px]">Status</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {rows.map((item: any) => (
-                    <TableRow key={item.uuid} className="hover:bg-secondary/10 transition-colors">
-                      <TableCell className="font-semibold">{`${item.employee?.first_name ?? ''} ${item.employee?.last_name ?? ''}`.trim()}</TableCell>
-                      <TableCell className="text-sm font-mono">{item.employee?.phone_number || 'N/A'}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground">{item.employee?.department?.name ?? 'Employee'}</TableCell>
-                      <TableCell>{formatRwf(Number(item.transaction?.base_amount ?? item.transaction?.gross_amount ?? 0))}</TableCell>
-                      <TableCell className="text-emerald-600">{formatRwf(Number(item.transaction?.allowance_amount ?? 0))}</TableCell>
-                      <TableCell className="text-rose-600">-{formatRwf(Number(item.transaction?.total_deductions ?? 0))}</TableCell>
-                      <TableCell className="text-right font-bold text-primary">{formatRwf(Number(item.transaction?.net_amount ?? 0))}</TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          <Badge 
-                            variant="secondary" 
-                            className={item.status === 'REJECTED' ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-700"}
-                          >
-                            {item.status}
-                          </Badge>
-                          {canApprove && item.status !== 'REJECTED' && (
-                            <Button 
-                              variant="ghost" 
-                              size="icon" 
-                              className="h-8 w-8 text-destructive hover:bg-destructive/10"
-                              onClick={() => handleRejectItem(item.uuid)}
-                              title="Reject this employee"
-                            >
-                              <XCircle className="h-4 w-4" />
-                            </Button>
-                          )}
-                        </div>
-                      </TableCell>
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader className="bg-secondary/30">
+                    <TableRow>
+                      <TableHead>Employee</TableHead>
+                      <TableHead>Phone Number</TableHead>
+                      <TableHead>Role / Dept</TableHead>
+                      <TableHead className="text-right">Basic Pay</TableHead>
+                      <TableHead className="text-right">Allowances/OT</TableHead>
+                      <TableHead className="text-right">Tax</TableHead>
+                      <TableHead className="text-right">Ikimina</TableHead>
+                      <TableHead className="text-right">Other Deductions</TableHead>
+                      <TableHead className="text-right">Net Pay</TableHead>
+                      <TableHead className="w-[100px]">Status</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {paginatedRows.map((item: any) => {
+                      const basePay = Number(item.transaction?.base_amount ?? item.transaction?.gross_amount ?? 0);
+                      const allowanceOt = Number(item.transaction?.allowance_amount ?? 0);
+                      const tax = Number(item.transaction?.tax_amount ?? 0);
+                      const contribution = batch.ikimina_contributions?.find(
+                        (c: any) => c.employee_id === item.employee_id
+                      );
+                      const ikimina = contribution ? Number(contribution.amount) : null;
+                      const totalDeductions = Number(item.transaction?.total_deductions ?? 0);
+                      const otherDeductions = Math.max(0, totalDeductions - tax - (ikimina ?? 0));
+                      const netPay = Number(item.transaction?.net_amount ?? 0);
+
+                      return (
+                        <TableRow key={item.uuid} className="hover:bg-secondary/10 transition-colors">
+                          <TableCell className="font-semibold">{`${item.employee?.first_name ?? ''} ${item.employee?.last_name ?? ''}`.trim()}</TableCell>
+                          <TableCell className="text-sm font-mono">{item.employee?.phone_number || 'N/A'}</TableCell>
+                          <TableCell className="text-sm text-muted-foreground">{item.employee?.department?.name ?? 'Employee'}</TableCell>
+                          <TableCell className="text-right">{formatRwf(basePay)}</TableCell>
+                          <TableCell className="text-right text-emerald-600">{formatRwf(allowanceOt)}</TableCell>
+                          <TableCell className="text-right text-rose-600">-{formatRwf(tax)}</TableCell>
+                          <TableCell className="text-right font-medium text-purple-600">
+                            {ikimina !== null ? `-${formatRwf(ikimina)}` : '—'}
+                          </TableCell>
+                          <TableCell className="text-right text-rose-600">
+                            {otherDeductions > 0 ? `-${formatRwf(otherDeductions)}` : '—'}
+                          </TableCell>
+                          <TableCell className="text-right font-bold text-primary">{formatRwf(netPay)}</TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-2">
+                              <Badge 
+                                variant="secondary" 
+                                className={item.status === 'REJECTED' ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-700"}
+                              >
+                                {item.status}
+                              </Badge>
+                              {canApprove && item.status !== 'REJECTED' && (
+                                <Button 
+                                  variant="ghost" 
+                                  size="icon" 
+                                  className="h-8 w-8 text-destructive hover:bg-destructive/10"
+                                  onClick={() => handleRejectItem(item.uuid)}
+                                  title="Reject this employee"
+                                >
+                                  <XCircle className="h-4 w-4" />
+                                </Button>
+                              )}
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+
+                    {/* Totals Row */}
+                    <TableRow className="bg-secondary/20 font-bold border-t-2">
+                      <TableCell colSpan={3}>Total</TableCell>
+                      <TableCell className="text-right">{formatRwf(totals.totalBasePay)}</TableCell>
+                      <TableCell className="text-right text-emerald-600">{formatRwf(totals.totalAllowanceOt)}</TableCell>
+                      <TableCell className="text-right text-rose-600">-{formatRwf(totals.totalTax)}</TableCell>
+                      <TableCell className="text-right text-purple-600">
+                        {totals.totalIkimina > 0 ? `-${formatRwf(totals.totalIkimina)}` : '—'}
+                      </TableCell>
+                      <TableCell className="text-right text-rose-600">
+                        {totals.totalOtherDeductions > 0 ? `-${formatRwf(totals.totalOtherDeductions)}` : '—'}
+                      </TableCell>
+                      <TableCell className="text-right text-primary">{formatRwf(totals.totalNetPay)}</TableCell>
+                      <TableCell></TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
+              </div>
+
+              {/* Pagination controls */}
+              {totalPages > 1 && (
+                <div className="flex items-center justify-between p-4 border-t bg-white">
+                  <div className="text-sm text-muted-foreground">
+                    Showing {(currentPage - 1) * itemsPerPage + 1} to {Math.min(currentPage * itemsPerPage, rows.length)} of {rows.length} entries
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                      disabled={currentPage === 1}
+                    >
+                      Previous
+                    </Button>
+                    <div className="flex items-center px-4 text-sm font-semibold">
+                      Page {currentPage} of {totalPages}
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                      disabled={currentPage === totalPages}
+                    >
+                      Next
+                    </Button>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>

@@ -7,7 +7,6 @@ export interface CreatePaymentStructurePayload {
     daily_rate: string;
     overtime_rate: string;
     tax_percentage: string;
-    custom_work_days?: number;
     effective_from: string;
 }
 

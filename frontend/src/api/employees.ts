@@ -81,7 +81,6 @@ export interface UpdateEmployeePayload {
   basic_salary?: string;
   daily_rate?: string;
   tax_percentage?: string;
-  custom_work_days?: number;
   // Allowance fields
   allowance_title?: string;
   allowance_amount?: string;

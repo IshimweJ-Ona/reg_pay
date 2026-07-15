@@ -113,7 +113,7 @@ export default function AuditLogsPage() {
   if (!canViewAudit) return null;
 
   return (
-    <div className="max-w-7xl space-y-8">
+    <div className="max-w-[1800px] space-y-8">
       <div>
         <h1 className="text-3xl font-headline font-bold">Audit Logs</h1>
         <p className="text-muted-foreground">Monitor system-wide activity, data changes, and user operations with full traceability.</p>

@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useAuth } from '@/context/auth-context';
@@ -11,7 +10,11 @@ interface PermissionGateProps {
 }
 
 export function PermissionGate({ permission, children, fallback = null }: PermissionGateProps) {
-  const { hasPermission } = useAuth();
+  const { hasPermission, isLoading } = useAuth();
+
+  if (isLoading) {
+    return null;
+  }
 
   // No permission means no rendered element by default, not a disabled placeholder.
   if (!hasPermission(permission)) {
