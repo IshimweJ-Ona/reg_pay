@@ -12,6 +12,7 @@ import { Badge } from '@/components/ui/badge';
 import { getTimeRecords, bulkCreateTimeRecords, getTodayAttendance } from '@/api/attendance';
 import { getEmployees } from '@/api/employees';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { exportToCSV, exportToExcel } from '@/lib/export-utils';
 import {
   DropdownMenu,
@@ -28,6 +29,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useToast } from '@/hooks/use-toast';
+import { userFriendlyError } from '@/lib/error-message';
 import { useAuth } from '@/context/auth-context';
 import { useAttendanceSync } from '@/context/attendance-sync-context';
 import * as XLSX from 'xlsx';
@@ -59,11 +61,16 @@ export default function AttendanceMonitoringPage() {
   const [importDateFrom, setImportDateFrom] = useState('');
   const [importDateTo, setImportDateTo] = useState('');
   const [importFile, setImportFile] = useState<File | null>(null);
+  const [importEmployeeType, setImportEmployeeType] = useState<'ALL' | 'MONTHLY' | 'DAILY' | 'CUSTOM'>('ALL');
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
   const [exportType, setExportType] = useState<'csv' | 'excel' | null>(null);
   const [exportPreset, setExportPreset] = useState<'LAST_MONTH' | 'LAST_YEAR' | 'CUSTOM' | 'SINGLE_DAY'>('CUSTOM');
   const [exportDateFrom, setExportDateFrom] = useState('');
   const [exportDateTo, setExportDateTo] = useState('');
+  const [historyPreset, setHistoryPreset] = useState<'LAST_5_DAYS' | 'LAST_WEEK' | 'LAST_MONTH' | 'LAST_YEAR' | 'CUSTOM'>('LAST_5_DAYS');
+  const [historyDateFrom, setHistoryDateFrom] = useState('');
+  const [historyDateTo, setHistoryDateTo] = useState('');
+  const [historyLoading, setHistoryLoading] = useState(false);
   const { toast } = useToast();
   const { user, hasPermission } = useAuth();
   const { startSync, syncState, pendingSync, setPendingSync } = useAttendanceSync();
@@ -89,9 +96,18 @@ export default function AttendanceMonitoringPage() {
           start_date: fiveDaysAgo.format('YYYY-MM-DD'),
           end_date: yesterday.format('YYYY-MM-DD'),
           working_location_id: user?.location,
+        }).catch((err) => {
+          console.error('Failed to load time records:', err);
+          return [];
         }),
-        getEmployees(),
-        getTodayAttendance(user?.location, activeTab === 'ALL' ? undefined : activeTab)
+        getEmployees().catch((err) => {
+          console.error('Failed to load employees:', err);
+          return { employees: [] };
+        }),
+        getTodayAttendance(user?.location, activeTab === 'ALL' ? undefined : activeTab).catch((err) => {
+          console.error('Failed to load today attendance:', err);
+          return [];
+        })
       ]);
       const employeeList = empsResponse.employees || (Array.isArray(empsResponse) ? empsResponse : []);
 
@@ -175,11 +191,44 @@ export default function AttendanceMonitoringPage() {
     return records.filter(rec => {
       const name = `${rec.employee?.first_name ?? ''} ${rec.employee?.last_name ?? ''}`.toLowerCase();
       const matchesSearch = name.includes(searchTerm.toLowerCase());
-      const category = rec.employee?.payment_structures?.[0]?.payroll_frequency;
+      const category = rec.employee?.employment_category?.name?.toUpperCase();
       const matchesTab = activeTab === 'ALL' || category === activeTab;
       return matchesSearch && matchesTab;
     });
   }, [records, searchTerm, activeTab]);
+
+  // One row per employee, one column per date - same layout as the bulk
+  // import template (employee_id/name/department, then a P/A column per date).
+  const historyMatrix = useMemo(() => {
+    const dateSet = new Set<string>();
+    const employeeMap = new Map<string, {
+      employeeId: string;
+      name: string;
+      department: string;
+      statuses: Record<string, string>;
+    }>();
+
+    filteredHistory.forEach((rec) => {
+      const dateKey = dayjs(rec.attendance_date).tz('Africa/Kigali').format('YYYY-MM-DD');
+      dateSet.add(dateKey);
+
+      const empId = rec.employee_id;
+      if (!employeeMap.has(empId)) {
+        employeeMap.set(empId, {
+          employeeId: empId,
+          name: `${rec.employee?.first_name ?? ''} ${rec.employee?.last_name ?? ''}`.trim() || empId,
+          department: rec.employee?.department?.name ?? 'Unassigned',
+          statuses: {},
+        });
+      }
+      employeeMap.get(empId)!.statuses[dateKey] = rec.attendance_status;
+    });
+
+    const dates = Array.from(dateSet).sort();
+    const rows = Array.from(employeeMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+
+    return { dates, rows };
+  }, [filteredHistory]);
 
   const handleMarkAttendance = (
     employeeId: string,
@@ -205,6 +254,14 @@ export default function AttendanceMonitoringPage() {
     toast({ title: 'Logged Locally', description: 'Attendance cached. Use "Sync Now" to finalize.' });
   };
 
+  // Employees filtered by the selected employment category for the template
+  const templateEmployees = useMemo(() => {
+    if (importEmployeeType === 'ALL') return employees;
+    return employees.filter(
+      (emp) => (emp.employment_category?.name ?? '').toUpperCase() === importEmployeeType,
+    );
+  }, [employees, importEmployeeType]);
+
   // ── Downloads a plain .xlsx template built entirely in-memory with ExcelJS ──
   const downloadTemplate = async () => {
     if (!importDateFrom || !importDateTo) {
@@ -213,6 +270,11 @@ export default function AttendanceMonitoringPage() {
         return;
       }
       toast({ variant: 'destructive', title: 'Date Range Required', description: 'Please select a date range.' });
+      return;
+    }
+
+    if (templateEmployees.length === 0) {
+      toast({ variant: 'destructive', title: 'No Employees', description: `No ${importEmployeeType === 'ALL' ? '' : importEmployeeType.toLowerCase() + ' '}employees found to generate the template.` });
       return;
     }
 
@@ -262,7 +324,7 @@ export default function AttendanceMonitoringPage() {
       headerRow.height = 30;
 
       // ── Data rows ──
-      employees.forEach((emp, i) => {
+      templateEmployees.forEach((emp, i) => {
         const rowNum = i + 2;
         const row = sheet.getRow(rowNum);
 
@@ -305,6 +367,13 @@ export default function AttendanceMonitoringPage() {
         };
 
         // G onward: date columns with formula =IF($F{row}="","",$F{row})
+        // When the user types P/A in row_status (F), Excel evaluates the
+        // formula and fills all date cells automatically. On re-import,
+        // SheetJS reads either the cached result (if Excel saved it) or
+        // the raw formula text. The JS parser below handles both cases:
+        // a raw formula string (starts with "=") is treated as blank and
+        // falls back to the row_status value, replicating the same logic
+        // in JavaScript so the upload never depends on formula evaluation.
         dates.forEach((_, dIdx) => {
           const col = DATE_START_COL + dIdx;
           const cell = row.getCell(col);
@@ -352,13 +421,14 @@ export default function AttendanceMonitoringPage() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `attendance_template_${importDateFrom}_to_${importDateTo}.xlsx`;
+      const typeSuffix = importEmployeeType === 'ALL' ? '' : `_${importEmployeeType.toLowerCase()}`;
+      a.download = `attendance_template_${importDateFrom}_to_${importDateTo}${typeSuffix}.xlsx`;
       a.click();
       URL.revokeObjectURL(url);
 
       toast({
         title: 'Template Downloaded',
-        description: 'Type P/A in row_status (F) to auto-fill all dates, or fill per-date cells individually.',
+        description: `${templateEmployees.length} ${importEmployeeType === 'ALL' ? '' : importEmployeeType.toLowerCase() + ' '}employee(s) included. Type P/A in row_status (F) to auto-fill all dates, or fill per-date cells individually.`,
       });
     } catch (err) {
       console.error('Template generation error:', err);
@@ -498,7 +568,12 @@ export default function AttendanceMonitoringPage() {
             const cellValue = row[6 + d]; // date columns start at index 6
             const parsedDate = parsedDateHeaders[d];
 
-            let cellValueStr = cellValue !== undefined && cellValue !== null ? String(cellValue).trim().toUpperCase() : '';
+            // Convert cell value to string, or empty if missing.
+            // If the cell contains a raw Excel formula (starts with "="),
+            // treat it as blank — SheetJS cannot evaluate formulas, so we
+            // rely on the JS fallback to row_status instead.
+            const rawCellStr = cellValue !== undefined && cellValue !== null ? String(cellValue).trim().toUpperCase() : '';
+            const cellValueStr = rawCellStr.startsWith('=') ? '' : rawCellStr;
 
             let activeSymbol = '';
             if (cellValueStr !== '') {
@@ -674,6 +749,63 @@ export default function AttendanceMonitoringPage() {
     setIsExportDialogOpen(true);
   };
 
+  // Resolves the History view's active preset into a concrete [from, to]
+  // range. Previously the History tab always showed a hardcoded last-5-days
+  // window with no way to see further back; this lets the user pick Last
+  // Week / Last Month / Last Year, or any custom range, same as the export
+  // dialog already allowed for downloads.
+  const resolveHistoryRange = (): { from: dayjs.Dayjs; to: dayjs.Dayjs; label: string } | null => {
+    const yesterday = getRwandaTime().subtract(1, 'day').endOf('day');
+    if (historyPreset === 'LAST_5_DAYS') {
+      return { from: getRwandaTime().subtract(5, 'day').startOf('day'), to: yesterday, label: 'Last 5 days' };
+    }
+    if (historyPreset === 'LAST_WEEK') {
+      return { from: getRwandaTime().subtract(7, 'day').startOf('day'), to: yesterday, label: 'Last 7 days' };
+    }
+    if (historyPreset === 'LAST_MONTH') {
+      const from = dayjs().subtract(1, 'month').startOf('month');
+      const to = dayjs().subtract(1, 'month').endOf('month');
+      return { from, to, label: from.format('MMMM YYYY') };
+    }
+    if (historyPreset === 'LAST_YEAR') {
+      const from = dayjs().subtract(1, 'year').startOf('year');
+      const to = dayjs().subtract(1, 'year').endOf('year');
+      return { from, to, label: from.format('YYYY') };
+    }
+    // CUSTOM
+    if (!historyDateFrom || !historyDateTo) return null;
+    const from = dayjs(historyDateFrom).startOf('day');
+    const to = dayjs(historyDateTo).startOf('day');
+    return { from, to, label: `${from.format('DD MMM YYYY')} – ${to.format('DD MMM YYYY')}` };
+  };
+
+  const fetchHistoryRecords = async () => {
+    const range = resolveHistoryRange();
+    if (!range) {
+      toast({ variant: 'destructive', title: 'Date required', description: 'Please choose a start and end date.' });
+      return;
+    }
+    if (range.to.isBefore(range.from, 'day')) {
+      toast({ variant: 'destructive', title: 'Invalid range', description: 'End date must be on or after the start date.' });
+      return;
+    }
+    setHistoryLoading(true);
+    try {
+      const recs = await getTimeRecords({
+        start_date: range.from.format('YYYY-MM-DD'),
+        end_date: range.to.format('YYYY-MM-DD'),
+        working_location_id: user?.location,
+      });
+      const sorted = (Array.isArray(recs) ? recs : [])
+        .sort((a, b) => dayjs(b.attendance_date).unix() - dayjs(a.attendance_date).unix());
+      setRecords(sorted);
+    } catch (error: any) {
+      toast({ variant: 'destructive', title: 'Failed to load history', description: userFriendlyError(error, 'Please try again.') });
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
   // Resolves the active preset into a concrete [from, to] range.
   const resolveExportRange = (): { from: dayjs.Dayjs; to: dayjs.Dayjs; label: string } | null => {
     if (exportPreset === 'LAST_MONTH') {
@@ -740,7 +872,7 @@ export default function AttendanceMonitoringPage() {
       const exportData = recordsInRange.map((rec: any) => ({
         Personnel: `${rec.employee?.first_name ?? ''} ${rec.employee?.last_name ?? ''}`.trim() || rec.employee_id,
         Department: rec.employee?.department?.name ?? 'Unassigned',
-        Category: rec.employee?.payment_structures?.[0]?.payroll_frequency ?? '',
+        Category: rec.employee?.employment_category?.name ?? '',
         Date: dayjs(rec.attendance_date).tz('Africa/Kigali').format('DD/MM/YYYY'),
         Status: rec.attendance_status,
         'Hours Worked': rec.hours_worked ?? '',
@@ -910,37 +1042,88 @@ export default function AttendanceMonitoringPage() {
                 </TableBody>
               </Table>
             ) : (
+              <>
+              <div className="flex flex-wrap items-center gap-2 p-4 border-b bg-slate-50/50">
+                <span className="text-xs font-bold text-muted-foreground mr-1">Viewing:</span>
+                {([
+                  ['LAST_5_DAYS', 'Last 5 Days'],
+                  ['LAST_WEEK', 'Last 7 Days'],
+                  ['LAST_MONTH', 'Last Month'],
+                  ['LAST_YEAR', 'Last Year'],
+                  ['CUSTOM', 'Custom Range'],
+                ] as const).map(([value, label]) => (
+                  <Button
+                    key={value}
+                    type="button"
+                    size="sm"
+                    variant={historyPreset === value ? 'default' : 'outline'}
+                    className="h-8 text-xs rounded-lg"
+                    onClick={() => setHistoryPreset(value)}
+                  >
+                    {label}
+                  </Button>
+                ))}
+                {historyPreset === 'CUSTOM' && (
+                  <div className="flex items-center gap-2 ml-1">
+                    <Input type="date" className="h-8 w-36 text-xs" value={historyDateFrom} onChange={(e) => setHistoryDateFrom(e.target.value)} />
+                    <span className="text-xs text-muted-foreground">to</span>
+                    <Input type="date" className="h-8 w-36 text-xs" value={historyDateTo} onChange={(e) => setHistoryDateTo(e.target.value)} />
+                  </div>
+                )}
+                <Button
+                  type="button"
+                  size="sm"
+                  className="h-8 text-xs rounded-lg ml-auto"
+                  disabled={historyLoading}
+                  onClick={fetchHistoryRecords}
+                >
+                  {historyLoading ? 'Loading...' : 'Load History'}
+                </Button>
+              </div>
+              <div className="overflow-x-auto">
               <Table>
                 <TableHeader className="bg-slate-50">
                   <TableRow>
-                    <TableHead className="font-bold">Personnel</TableHead>
-                    <TableHead className="font-bold">Department</TableHead>
-                    <TableHead className="font-bold">Date</TableHead>
-                    <TableHead className="font-bold">Status</TableHead>
+                    <TableHead className="font-bold sticky left-0 bg-slate-50 z-10 min-w-[180px]">Personnel</TableHead>
+                    <TableHead className="font-bold min-w-[140px]">Department</TableHead>
+                    {historyMatrix.dates.map((date) => (
+                      <TableHead key={date} className="font-bold text-center whitespace-nowrap min-w-[60px]">
+                        {dayjs(date).format('DD/MM')}
+                      </TableHead>
+                    ))}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredHistory.length > 0 ? filteredHistory.map((rec) => (
-                    <TableRow key={rec.uuid} className="hover:bg-secondary/20 transition-colors">
-                      <TableCell className="font-semibold">{`${rec.employee?.first_name ?? ''} ${rec.employee?.last_name ?? ''}`.trim() || rec.employee_id}</TableCell>
-                      <TableCell>{rec.employee?.department?.name ?? 'Unassigned'}</TableCell>
-                      <TableCell className="text-muted-foreground text-xs">{dayjs(rec.attendance_date).tz('Africa/Kigali').format('DD/MM/YYYY')}</TableCell>
-                      <TableCell>
-                        <Badge className={
-                          rec.attendance_status === 'PRESENT' ? 'bg-emerald-500/10 text-emerald-600' :
-                          'bg-rose-500/10 text-rose-600'
-                        }>
-                          {rec.attendance_status}
-                        </Badge>
-                      </TableCell>
+                  {historyMatrix.rows.length > 0 ? historyMatrix.rows.map((row) => (
+                    <TableRow key={row.employeeId} className="hover:bg-secondary/20 transition-colors">
+                      <TableCell className="font-semibold sticky left-0 bg-white z-10">{row.name}</TableCell>
+                      <TableCell>{row.department}</TableCell>
+                      {historyMatrix.dates.map((date) => {
+                        const status = row.statuses[date];
+                        return (
+                          <TableCell key={date} className="text-center">
+                            {status === 'PRESENT' ? (
+                              <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-emerald-500/10 text-emerald-600 font-bold text-xs">P</span>
+                            ) : status === 'ABSENT' ? (
+                              <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-rose-500/10 text-rose-600 font-bold text-xs">A</span>
+                            ) : (
+                              <span className="text-slate-300 text-xs">—</span>
+                            )}
+                          </TableCell>
+                        );
+                      })}
                     </TableRow>
                   )) : (
                     <TableRow>
-                      <TableCell colSpan={4} className="text-center py-20 text-muted-foreground italic">No historical logs found (last 5 days).</TableCell>
+                      <TableCell colSpan={Math.max(4, 2 + historyMatrix.dates.length)} className="text-center py-20 text-muted-foreground italic">
+                        No historical logs found for the selected range. Try a different preset or Load History again.
+                      </TableCell>
                     </TableRow>
                   )}
                 </TableBody>
               </Table>
+              </div>
+              </>
             )}
           </div>
         </TabsContent>
@@ -948,7 +1131,10 @@ export default function AttendanceMonitoringPage() {
 
       <Dialog open={isImportOpen} onOpenChange={(open) => {
         setIsImportOpen(open);
-        if (!open) setImportFile(null);
+        if (!open) {
+          setImportFile(null);
+          setImportEmployeeType('ALL');
+        }
       }}>
         <DialogContent className="max-w-md bg-white rounded-3xl p-6 border shadow-lg">
           <DialogHeader>
@@ -980,21 +1166,39 @@ export default function AttendanceMonitoringPage() {
               </div>
             </div>
 
-            <div className="flex justify-between items-center bg-slate-50 p-4 rounded-2xl border border-slate-100">
-              <div className="space-y-0.5">
-                <p className="text-xs font-bold text-slate-800">1. Download Template</p>
-                <p className="text-[10px] text-slate-500">Includes all active employees and dates.</p>
+            <div className="space-y-2 bg-slate-50 p-4 rounded-2xl border border-slate-100">
+              <div className="flex justify-between items-center">
+                <div className="space-y-0.5">
+                  <p className="text-xs font-bold text-slate-800">1. Download Template</p>
+                  <p className="text-[10px] text-slate-500">
+                    {templateEmployees.length} {importEmployeeType === 'ALL' ? '' : importEmployeeType.toLowerCase() + ' '}employee(s) and selected dates.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={downloadTemplate}
+                  disabled={!importDateFrom || !importDateTo}
+                  className="h-9 rounded-xl font-semibold text-xs"
+                >
+                  <Download className="mr-1 h-3.5 w-3.5" /> Download
+                </Button>
               </div>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={downloadTemplate}
-                disabled={!importDateFrom || !importDateTo}
-                className="h-9 rounded-xl font-semibold text-xs"
-              >
-                <Download className="mr-1 h-3.5 w-3.5" /> Download
-              </Button>
+              <div className="space-y-1">
+                <label className="text-[10px] font-semibold text-slate-600">Employee Type</label>
+                <Select value={importEmployeeType} onValueChange={(value) => setImportEmployeeType(value as typeof importEmployeeType)}>
+                  <SelectTrigger className="h-9 rounded-xl bg-white text-xs">
+                    <SelectValue placeholder="Employee type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ALL">All Employees</SelectItem>
+                    <SelectItem value="MONTHLY">Monthly</SelectItem>
+                    <SelectItem value="DAILY">Daily</SelectItem>
+                    <SelectItem value="CUSTOM">Custom</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
 
             <div className="space-y-1.5">
