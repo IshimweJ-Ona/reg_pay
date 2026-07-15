@@ -8,7 +8,7 @@ import type { CurrentUserType } from '../auth/types/current-user.type';
 import { generateUUID } from '../common/utils/uuid.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { calculateRwandaPaye } from '../common/utils/tax.util';
-import { calculateCustomContractTotal } from '../common/utils/payroll-calc.util';
+import { calculateCustomContractTotal, getContractDays } from '../common/utils/payroll-calc.util';
 
 // DTOs
 import { CreatePaymentStructureDto } from './dto/create-payment-structure.dto';
@@ -143,7 +143,7 @@ export class PaymentStructuresService {
           daily_rate: dto.daily_rate,
           overtime_rate: dto.overtime_rate ?? '0',
           tax_percentage: dto.tax_percentage,
-          custom_work_days: dto.custom_work_days,
+          custom_work_days: null,
           effective_from: effectiveFrom,
         },
         include: { employee: true },
@@ -199,7 +199,7 @@ export class PaymentStructuresService {
         daily_rate: dto.daily_rate,
         overtime_rate: dto.overtime_rate,
         tax_percentage: dto.tax_percentage,
-        custom_work_days: dto.custom_work_days,
+        custom_work_days: null,
         effective_to: dto.effective_to ? new Date(dto.effective_to) : undefined,
       },
       include: { employee: true },
@@ -680,25 +680,42 @@ export class PaymentStructuresService {
   }
 
   private async ensureEmployeeCanReceiveAllowance(employeeId: bigint) {
-    const structure = await this.prisma.payment_structures.findFirst({
-      where: { employee_id: employeeId, effective_to: null },
-      orderBy: { effective_from: 'desc' },
+    const employee = await this.prisma.employees.findUnique({
+      where: { id: employeeId },
+      include: {
+        payment_structures: {
+          where: { effective_to: null },
+          orderBy: { effective_from: 'desc' },
+          take: 1,
+        },
+      },
     });
 
+    if (!employee || employee.deleted_at) {
+      throw new BadRequestException('Employee not found.');
+    }
+
+    const structure = employee.payment_structures?.[0];
     if (!structure) {
       throw new BadRequestException(
         'Create an active payment structure before assigning allowances.',
       );
     }
 
+    const contractDays =
+      employee.contract_start_date && employee.contract_end_date
+        ? getContractDays(employee.contract_start_date, employee.contract_end_date)
+        : 0;
+
     const canReceive =
       structure.payroll_frequency === EMPLOYMENT_TYPE.MONTHLY ||
-      (structure.payroll_frequency === EMPLOYMENT_TYPE.CUSTOM &&
-        (structure.custom_work_days ?? 0) > 21);
+      ((structure.payroll_frequency === EMPLOYMENT_TYPE.CUSTOM ||
+        structure.payroll_frequency === EMPLOYMENT_TYPE.DAILY) &&
+        contractDays > 21);
 
     if (!canReceive) {
       throw new BadRequestException(
-        'Allowances only apply to monthly employees or custom contracts above 21 days.',
+        'Allowances only apply to monthly employees or custom/daily contracts above 21 days.',
       );
     }
   }

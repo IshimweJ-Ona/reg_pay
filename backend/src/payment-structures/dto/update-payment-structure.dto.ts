@@ -51,14 +51,7 @@ export class UpdatePaymentStructureDto {
   @IsDecimal()
   tax_percentage?: string;
 
-  @ApiPropertyOptional({
-    example: 24,
-    description: 'Updated custom working days.',
-  })
-  @IsOptional()
-  @IsInt()
-  @Min(1)
-  custom_work_days?: number;
+
 
   @ApiPropertyOptional({
     example: '2024-12-31',

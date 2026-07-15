@@ -67,15 +67,7 @@ export class CreatePaymentStructureDto {
   @IsDecimal()
   tax_percentage: string;
 
-  @ApiPropertyOptional({
-    example: 22,
-    description:
-      'Optional custom number of working days in a month for this employee.',
-  })
-  @IsOptional()
-  @IsInt()
-  @Min(1)
-  custom_work_days?: number;
+
 
   @ApiProperty({
     example: '2024-01-01',
