@@ -19,7 +19,6 @@ export class NotificationsService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  // Called by controller to register a new SSE connection
   addClient(userId: string): Subject<MessageEvent> {
     const subject = new Subject<MessageEvent>();
 
@@ -33,7 +32,6 @@ export class NotificationsService {
     return subject;
   }
 
-  // Called by controller when connection closes
   removeClient(userId: string, subject: Subject<MessageEvent>) {
     const userClients = this.clients.get(userId);
     if (userClients) {
@@ -44,7 +42,6 @@ export class NotificationsService {
     }
   }
 
-  // Push to a specific user
   private pushToUser(userId: string, payload: object) {
     const userClients = this.clients.get(userId);
     if (userClients) {
@@ -60,6 +57,12 @@ export class NotificationsService {
         subject.next({ data: JSON.stringify(payload) } as MessageEvent);
       });
     });
+  }
+
+  notifyUsers(userIds: Array<string | bigint>, payload: object) {
+    for (const userId of userIds) {
+      this.pushToUser(userId.toString(), payload);
+    }
   }
 
   async create(dto: CreateNotificationDto) {
@@ -98,7 +101,6 @@ export class NotificationsService {
       },
     });
 
-    // For REGISTRATION_REQUEST, also fetch the reference user record
     let referenceUser: {
       uuid: string;
       first_name: string;
@@ -123,7 +125,6 @@ export class NotificationsService {
       });
     }
 
-    // Push real-time SSE event immediately after saving
     const serialized = {
       ...notification,
       id: notification.id.toString(),
@@ -133,10 +134,8 @@ export class NotificationsService {
     };
 
     if (dto.userId) {
-      // Push to specific user
       this.pushToUser(dto.userId.toString(), serialized);
     } else {
-      // null userId = admin/global notification, broadcast to all
       this.broadcast(serialized);
     }
 
@@ -220,33 +219,44 @@ export class NotificationsService {
       },
     });
 
-    return Promise.all(
-      notifications.map(async (n) => {
-        const referenceUser =
-          n.type === 'REGISTRATION_REQUEST' && n.reference_id
-            ? await this.prisma.users.findUnique({
-                where: { uuid: n.reference_id },
-                select: {
-                  uuid: true,
-                  first_name: true,
-                  last_name: true,
-                  email: true,
-                  phone_number: true,
-                  working_location: { select: { name: true } },
-                  department: { select: { name: true } },
-                },
-              })
-            : null;
+    const registrationUuids = notifications
+      .filter((n) => n.type === 'REGISTRATION_REQUEST' && n.reference_id)
+      .map((n) => n.reference_id as string);
 
-        return {
-          ...n,
-          id: n.id.toString(),
-          user_id: n.user_id?.toString(),
-          sender_id: n.sender_id?.toString(),
-          user: referenceUser ?? n.user,
-        };
-      }),
+    let referenceUsers: any[] = [];
+    if (registrationUuids.length > 0) {
+      referenceUsers = await this.prisma.users.findMany({
+        where: { uuid: { in: registrationUuids } },
+        select: {
+          uuid: true,
+          first_name: true,
+          last_name: true,
+          email: true,
+          phone_number: true,
+          working_location: { select: { name: true } },
+          department: { select: { name: true } },
+        },
+      });
+    }
+
+    const userMap = new Map<string, any>(
+      referenceUsers.map((u) => [u.uuid, u]),
     );
+
+    return notifications.map((n) => {
+      const referenceUser =
+        n.type === 'REGISTRATION_REQUEST' && n.reference_id
+          ? userMap.get(n.reference_id) ?? null
+          : null;
+
+      return {
+        ...n,
+        id: n.id.toString(),
+        user_id: n.user_id?.toString(),
+        sender_id: n.sender_id?.toString(),
+        user: referenceUser ?? n.user,
+      };
+    });
   }
 
   async findUnreadCount(userUuid?: string) {
