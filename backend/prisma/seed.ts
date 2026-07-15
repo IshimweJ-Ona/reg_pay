@@ -176,6 +176,51 @@ const LAST_NAMES = [
 ];
 
 // ═══════════════════════════════════════════════════════════════════
+// SECTION 5B — UNIQUE NAME-PAIR GENERATOR
+// ═══════════════════════════════════════════════════════════════════
+// The old approach (`firstNames[i % firstNames.length]`, similarly for
+// last names) wraps around every ~42-50 iterations, so with 400 employees
+// split across two gender pools of ~200 each, the SAME first+last name
+// combination reused every couple dozen rows — looking like duplicated
+// data even though every employee row is otherwise distinct. This walks
+// both pools with different strides and skips any (first, last) pair
+// already used, guaranteeing distinct full names up to
+// firstNames.length * lastNames.length combinations.
+function buildUniqueNamePairs(
+  firstNames: readonly string[],
+  lastNames: readonly string[],
+  count: number,
+): Array<[string, string]> {
+  const maxCombinations = firstNames.length * lastNames.length;
+  if (count > maxCombinations) {
+    throw new Error(
+      `Requested ${count} unique name pairs but only ${maxCombinations} combinations are possible with the given name pools.`,
+    );
+  }
+
+  const pairs: Array<[string, string]> = [];
+  const used = new Set<string>();
+  let firstCursor = 0;
+  let lastCursor = 0;
+
+  while (pairs.length < count) {
+    const first = firstNames[firstCursor % firstNames.length];
+    const last = lastNames[lastCursor % lastNames.length];
+    const key = `${first}|${last}`;
+
+    if (!used.has(key)) {
+      used.add(key);
+      pairs.push([first, last]);
+    }
+
+    firstCursor += 1;
+    lastCursor += 7; // coprime-ish stride vs. most pool sizes used here, so both fields cycle through their full range instead of just one of them
+  }
+
+  return pairs;
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // SECTION 6 — AVATAR URL GENERATORS
 // ═══════════════════════════════════════════════════════════════════
 // randomuser.me provides real human face photos, served over HTTPS,
@@ -194,8 +239,10 @@ function femaleAvatarUrl(index: number): string {
 // ═══════════════════════════════════════════════════════════════════
 
 function generatePhone(index: number): string {
-  // MTN/Airtel prefixes
-  const prefixes = ['078', '079', '072', '073'];
+  // MTN/Airtel mobile prefixes, WITHOUT the leading 0 — that 0 is only used
+  // in local dialing format (078...); in E.164 international format
+  // (+250...) it's dropped, giving +250 78 XXX XXXX (9 digits after +250).
+  const prefixes = ['78', '79', '72', '73'];
   const prefix = prefixes[index % prefixes.length];
   const number = String(1000000 + index).slice(-7);
   return `+250${prefix}${number}`;
@@ -209,9 +256,12 @@ function generateEmail(firstName: string, lastName: string, index: number): stri
 }
 
 function generateNationalId(index: number): string {
-  // Rwandan National ID: 16 digits format: 1YYYYXXXXXXXXXX
+  // Rwandan National ID: 16 digits, format: 1 YYYY XXXXXXXXXXX
+  //  - "1"  : 1 digit  (nationality/category marker)
+  //  - YYYY : 4 digits (birth year)
+  //  - X*11 : 11 digits (sequence) — 1 + 4 + 11 = 16 total.
   const year = 1970 + (index % 35); //1970-2004
-  const seq = String(index + 1).padStart(10, '0');
+  const seq = String(index + 1).padStart(11, '0');
   return `1${year}${seq}`;
 }
 
@@ -299,17 +349,29 @@ async function main() {
       ? ALL_PERMISSION_KEYS
       : (BASELINE_ROLE_PERMISSIONS[roleName] ?? []);
 
-    const role = await prisma.roles.upsert({
-      where:  { name: roleName },
-      update: { description: desc, level_order: levelOrder, permission_keys: keys },
-      create: {
-        uuid:            generateUUID(),
-        name:            roleName,
-        description:     desc,
-        level_order:     levelOrder,
-        permission_keys: keys,
-      },
+    // Use findFirst + create/update instead of upsert because Prisma runtime
+    // rejects `null` in composite unique key fields (uq_role_name_per_location).
+    let role = await prisma.roles.findFirst({
+      where: { name: roleName, working_location_id: null },
     });
+
+    if (role) {
+      role = await prisma.roles.update({
+        where: { id: role.id },
+        data:  { description: desc, level_order: levelOrder, permission_keys: keys },
+      });
+    } else {
+      role = await prisma.roles.create({
+        data: {
+          uuid:            generateUUID(),
+          name:            roleName,
+          description:     desc,
+          level_order:     levelOrder,
+          permission_keys: keys,
+          working_location_id: null, // global/system role, not scoped to a branch
+        },
+      });
+    }
 
     roleIdMap.set(roleName, role.id);
     levelOrder++;
@@ -378,17 +440,26 @@ async function main() {
   ];
 
   for (const tax of monthlyTaxes) {
-    await prisma.monthly_taxes.upsert({
-      where: { uuid: crypto.randomUUID() }, // Placeholder since name isn't unique in schema yet, but for seed we use unique names
-      update: {},
-      create: {
-        uuid: generateUUID(),
-        name: tax.name,
-        rate: tax.rate,
-        effective_from: new Date(Date.UTC(2024, 0, 1)), // Jan 1st 2024
-        is_active: true,
-      },
+    const existingTax = await prisma.monthly_taxes.findFirst({
+      where: { name: tax.name },
     });
+
+    if (existingTax) {
+      await prisma.monthly_taxes.update({
+        where: { id: existingTax.id },
+        data: { rate: tax.rate, is_active: true },
+      });
+    } else {
+      await prisma.monthly_taxes.create({
+        data: {
+          uuid: generateUUID(),
+          name: tax.name,
+          rate: tax.rate,
+          effective_from: new Date(Date.UTC(2024, 0, 1)), // Jan 1st 2024
+          is_active: true,
+        },
+      });
+    }
     console.log(`    Tax: ${tax.name} (${tax.rate}%)`);
   }
 
@@ -485,7 +556,16 @@ async function main() {
   
   // Get only branch locations (not HQ)
   const branchLocations = [...locationRecords.entries()].filter(([, v]) => !v.isHQ);
-  
+
+  // Reserve unique name pairs for branch managers up front (gender alternates
+  // by branch index below: even -> MALE, odd -> FEMALE), so no two branch
+  // managers ever get the same full name, and the reservation is sized
+  // exactly to how many of each gender we'll actually create.
+  const bmMaleCount = Math.ceil(branchLocations.length / 2);
+  const bmFemaleCount = Math.floor(branchLocations.length / 2);
+  const bmMaleNamePairs = buildUniqueNamePairs(MALE_FIRST_NAMES, LAST_NAMES, bmMaleCount);
+  const bmFemaleNamePairs = buildUniqueNamePairs(FEMALE_FIRST_NAMES, LAST_NAMES, bmFemaleCount);
+
   let bmAvatarIndex = 1;
   
   for (const [locName, locData] of branchLocations) {
@@ -520,9 +600,10 @@ async function main() {
     // Gender alternates per branch for variety
     const bmIndex = branchLocations.indexOf(branchLocations.find(([n]) => n === locName)!);
     const bmGender = bmIndex % 2 === 0 ? GENDER.MALE : GENDER.FEMALE;
-    const bmFirstNames = bmGender === GENDER.MALE ? MALE_FIRST_NAMES : FEMALE_FIRST_NAMES;
-    const bmFirstName = bmFirstNames[bmIndex % bmFirstNames.length];
-    const bmLastName  = LAST_NAMES[bmIndex % LAST_NAMES.length];
+    const bmGenderIndex = Math.floor(bmIndex / 2);
+    const [bmFirstName, bmLastName] = bmGender === GENDER.MALE
+      ? bmMaleNamePairs[bmGenderIndex]
+      : bmFemaleNamePairs[bmGenderIndex];
     const bmEmail     = `bm.${locCode.toLowerCase()}@reg.rw`;
     const bmPhone     = generatePhone(9000 + bmIndex); // offset to avoid employee conflicts
     const bmAvatar    = bmGender === GENDER.MALE
@@ -658,12 +739,18 @@ async function main() {
     locationDeptIds.set(locData.id, depts.map((d) => d.id));
   }
 
+  // 200 female + 200 male employees (i alternates even/odd below) — build
+  // that many guaranteed-unique name pairs per gender up front instead of
+  // repeatedly wrapping around the ~42-44 first names mid-loop.
+  const employeeMaleNamePairs = buildUniqueNamePairs(MALE_FIRST_NAMES, LAST_NAMES, Math.ceil(TOTAL_EMPLOYEES / 2));
+  const employeeFemaleNamePairs = buildUniqueNamePairs(FEMALE_FIRST_NAMES, LAST_NAMES, Math.floor(TOTAL_EMPLOYEES / 2));
+
   for (let i = 0; i < TOTAL_EMPLOYEES; i++) {
     const gender = i % 2 === 0 ? GENDER.FEMALE : GENDER.MALE;
-    const firstNamePool = gender === GENDER.FEMALE ? FEMALE_FIRST_NAMES : MALE_FIRST_NAMES;
-    // Use both name pools with offsets to maximise unique combinations
-    const firstName = firstNamePool[i % firstNamePool.length];
-    const lastName = LAST_NAMES[(Math.floor(i /firstNamePool.length) + i) % LAST_NAMES.length];
+    const genderIndex = Math.floor(i / 2);
+    const [firstName, lastName] = gender === GENDER.FEMALE
+      ? employeeFemaleNamePairs[genderIndex]
+      : employeeMaleNamePairs[genderIndex];
     const avatar = gender === GENDER.FEMALE ? femaleAvatarUrl(i): maleAvatarUrl(i);
 
     // spread employees across locations
@@ -678,6 +765,34 @@ async function main() {
     const nationalId = generateNationalId(i);
     const hireDate = new Date(Date.UTC(2019 + (i % 6), i % 12, (i % 28) + 1));
 
+    const categoryName = categoryNames[i % 3]; // 'Monthly' | 'Daily' | 'Custom'
+    const isContractBased = categoryName === 'Daily' || categoryName === 'Custom';
+
+    // Contract dates only apply to DAILY/CUSTOM employees — MONTHLY
+    // employees are salaried and don't have a fixed contract end date.
+    let contractStartDate: Date | null = null;
+    let contractEndDate: Date | null = null;
+
+    if (isContractBased) {
+      // Contract length varies between 8 and 27 days across employees
+      // (8, 9, 10, ..., 27 — 20 distinct lengths, cycling by index).
+      const contractLengthDays = 8 + (i % 20);
+
+      // Stagger start dates relative to "today" so the seeded data has a
+      // realistic mix: some contracts already ended (exercises the
+      // auto-pause-on-expiry job), some end soon, some just started.
+      const daysOffsetFromToday = (i % 40) - 20; // -20..19
+      const start = new Date();
+      start.setUTCHours(0, 0, 0, 0);
+      start.setUTCDate(start.getUTCDate() + daysOffsetFromToday);
+
+      const end = new Date(start);
+      end.setUTCDate(end.getUTCDate() + contractLengthDays);
+
+      contractStartDate = start;
+      contractEndDate = end;
+    }
+
     const employee = await prisma.employees.upsert({
       where: { national_id: nationalId },
       update: {
@@ -687,6 +802,8 @@ async function main() {
         phone_number:           phone,
         gender:                 gender,
         hire_date:              hireDate,
+        contract_start_date:    contractStartDate,
+        contract_end_date:      contractEndDate,
         department_id:          deptId,
         working_location_id:    locId,
         employment_category_id: categoryId,
@@ -704,6 +821,8 @@ async function main() {
         national_id:            nationalId,
         gender:                 gender,
         hire_date:              hireDate,
+        contract_start_date:    contractStartDate,
+        contract_end_date:      contractEndDate,
         department_id:          deptId,
         working_location_id:    locId,
         employment_category_id: categoryId,
@@ -740,7 +859,7 @@ async function main() {
           basic_salary:      freq === EMPLOYMENT_TYPE.MONTHLY ? 150000 : 0,
           daily_rate:        freq === EMPLOYMENT_TYPE.MONTHLY ? 5000 : 3000,
           overtime_rate:     2000,
-          custom_work_days:  freq === EMPLOYMENT_TYPE.CUSTOM ? 20 : null,
+          custom_work_days:  null,
           tax_percentage:    taxPct,
           effective_from:    effectiveFrom,
           effective_to:      null,                 // currently active

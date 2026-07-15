@@ -59,9 +59,14 @@ export class UsersService {
       throw new BadRequestException('User already exists');
     }
 
+    // If the actor is a branch manager and no working_location_id was
+    // provided, default to the actor's own working location so the
+    // new user is automatically assigned to the same branch.
     const workingLocationId = data.working_location_id
       ? await this.resolveWorkingLocationId(data.working_location_id)
-      : null;
+      : (actor?.working_location_id
+          ? BigInt(actor.working_location_id)
+          : null);
 
     const departmentId = data.department_id
       ? await this.resolveDepartmentId(data.department_id, workingLocationId)
@@ -304,15 +309,28 @@ export class UsersService {
       : (user.working_location_id ??
         (await this.getDefaultWorkingLocationId()));
 
-    const roleIds = dto.role_ids?.length
-      ? await this.resolveRoleIds(dto.role_ids)
-      : [await this.getDefaultRoleId()];
+    // Use explicit role_ids from approve dto if provided.
+    // Otherwise reuse the user's already-assigned roles (from registration)
+    // before falling back to a hard-coded default role.
+    let roleIds: bigint[];
+    if (dto.role_ids?.length) {
+      roleIds = await this.resolveRoleIds(dto.role_ids);
+    } else {
+      const existingRoles = await this.prisma.user_roles.findMany({
+        where: { user_id: user.id },
+        select: { role_id: true },
+      });
+      roleIds = existingRoles.length
+        ? existingRoles.map((r) => r.role_id)
+        : [await this.getDefaultRoleId()];
+    }
 
     const permissionIds = dto.permission_ids?.length
       ? await this.resolvePermissionIds(dto.permission_ids)
       : [];
 
     await this.ensureRolesExist(roleIds);
+    await this.ensureActorCanAssignRoles(actor, roleIds);
 
     if (permissionIds.length) {
       await this.ensurePermissionsExist(permissionIds);
@@ -462,6 +480,15 @@ export class UsersService {
       });
     });
 
+    await this.notificationsService.create({
+      userId: user.id,
+      senderId: BigInt(actor.userId),
+      title: 'Your account has been approved',
+      message: `Welcome aboard! Your account has been approved and is now active. You can log in to get started.`,
+      type: 'ACCOUNT_APPROVED',
+      referenceId: user.uuid,
+    });
+
     return {
       message: 'User approved and activated.',
       user: this.serializeUser(updatedUser),
@@ -511,6 +538,15 @@ export class UsersService {
           action: AUDIT_ACTION.DENIED,
         },
       });
+    });
+
+    await this.notificationsService.create({
+      userId: user.id,
+      senderId: BigInt(actor.userId),
+      title: 'Your account registration was rejected',
+      message: reason || 'Your account registration was not approved.',
+      type: 'ACCOUNT_REJECTED',
+      referenceId: user.uuid,
     });
 
     return {
@@ -583,6 +619,25 @@ export class UsersService {
     };
   }
 
+  private async ensureActorCanAssignRoles(actor: CurrentUserType, roleIds: bigint[]) {
+    if (this.isSystemAdmin(actor) || !roleIds.length) return;
+
+    const roles = await this.prisma.roles.findMany({
+      where: { id: { in: roleIds } },
+      select: { id: true, name: true, working_location_id: true },
+    });
+
+    const actorLocation = actor.working_location_id ? BigInt(actor.working_location_id) : null;
+
+    for (const role of roles) {
+      if (role.working_location_id && (!actorLocation || role.working_location_id !== actorLocation)) {
+        throw new BadRequestException(
+          `The role "${role.name}" belongs to a different branch and cannot be assigned from here.`,
+        );
+      }
+    }
+  }
+
   async assignRoles(
     uuid: string,
     roleIdsInput: string[],
@@ -593,6 +648,7 @@ export class UsersService {
     const roleIds = await this.resolveRoleIds(roleIdsInput);
 
     await this.ensureRolesExist(roleIds);
+    await this.ensureActorCanAssignRoles(actor, roleIds);
 
     const updatedUser = await this.prisma.$transaction(async (tx) => {
       await tx.user_roles.deleteMany({

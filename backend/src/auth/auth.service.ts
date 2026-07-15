@@ -5,7 +5,7 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ACTIVITY_TYPE, AUDIT_ACTION, STATUS_USER } from '@prisma/client';
-import { compareHash, hashValue } from '../common/utils/hash.util';
+import { compareHash, hashValue, hashToken } from '../common/utils/hash.util';
 import {
   isNumericId,
   isUuid,
@@ -154,35 +154,30 @@ export class AuthService {
       },
     });
 
-    // Route notification to branch_manager of the working_location
-    let targetUserId: bigint | null = null;
-    let level = 'SUPER_ADMIN';
-
+    // Route notification to branch_manager of the working_location via
+    // the notifications service so SSE broadcast fires immediately.
     if (workingLocationId) {
-      const branchManager = await this.prisma.branch_managers.findFirst({
-        where: { working_location_id: workingLocationId, is_active: true },
-        select: { user_id: true },
-      });
-      if (branchManager) {
-        targetUserId = branchManager.user_id;
-        level = 'BRANCH_MANAGER';
-      }
-    }
-
-    await this.prisma.notifications.create({
-      data: {
-        uuid: generateUUID(),
-        user_id: targetUserId,
+      await this.notificationsService.notifyBranchManager(
+        workingLocationId,
+        {
+          senderId: undefined,
+          title: 'New User Registration',
+          message: `${user.first_name} ${user.last_name} has registered and is pending approval.`,
+          type: 'REGISTRATION_REQUEST',
+          referenceId: user.uuid,
+          metadata: { redirect: 'users', level: 'BRANCH_MANAGER' },
+        },
+      );
+    } else {
+      await this.notificationsService.notifyAdmins({
+        senderId: undefined,
         title: 'New User Registration',
         message: `${user.first_name} ${user.last_name} has registered and is pending approval.`,
         type: 'REGISTRATION_REQUEST',
-        reference_id: user.uuid,
-        metadata: {
-          redirect: 'users',
-          level,
-        },
-      },
-    });
+        referenceId: user.uuid,
+        metadata: { redirect: 'users', level: 'SUPER_ADMIN' },
+      });
+    }
 
     return {
       message:
@@ -245,7 +240,7 @@ export class AuthService {
           data: {
             uuid: generateUUID(),
             user_id: user.id,
-            refresh_token_hash: await hashValue(tokens.refresh_token),
+            refresh_token_hash: hashToken(tokens.refresh_token),
             device_info: this.normalizeDeviceInfo(context.deviceInfo),
             ip_address: context.ipAddress,
             expires_at: this.getRefreshExpiryDate(),
@@ -432,10 +427,10 @@ export class AuthService {
     refreshToken: string,
     context?: RequestContext,
   ): Promise<TokenPair & { redirectUrl: string }> {
-    const tokenHash = await hashValue(refreshToken);
+    const tokenHash = hashToken(refreshToken);
 
     const session = await this.prisma.user_sessions.findFirst({
-      where: { refresh_token_hash: tokenHash, is_revoked: false },
+      where: { refresh_token_hash: tokenHash },
       include: {
         user: {
           include: { roles: { include: { role: true } } },
@@ -451,25 +446,36 @@ export class AuthService {
       throw new UnauthorizedException('Refresh token has expired.');
     }
 
+    // Atomically "claim" this session before doing anything else. Two
+    // requests can arrive with the same refresh token nearly simultaneously
+    // (duplicate tabs, or the refresh timer racing an axios 401 retry). A
+    // plain findFirst + later update leaves a gap where both requests can
+    // read is_revoked: false before either commits, so both would try to
+    // rotate the same token. This conditional updateMany only succeeds for
+    // whichever request gets there first; the loser gets count === 0 and
+    // fails cleanly instead of corrupting session state.
+    const claim = await this.prisma.user_sessions.updateMany({
+      where: { id: session.id, is_revoked: false },
+      data: { is_revoked: true },
+    });
+
+    if (claim.count === 0) {
+      throw new UnauthorizedException('Invalid or revoked refresh token.');
+    }
+
     const payload = await this.buildPayload(session.user.id);
     const tokens = await this.createTokenPair(payload);
 
-    await this.prisma.$transaction([
-      this.prisma.user_sessions.update({
-        where: { id: session.id },
-        data: { is_revoked: true },
-      }),
-      this.prisma.user_sessions.create({
-        data: {
-          uuid: generateUUID(),
-          user_id: session.user.id,
-          refresh_token_hash: await hashValue(tokens.refresh_token),
-          device_info: this.normalizeDeviceInfo(context?.deviceInfo),
-          ip_address: context?.ipAddress,
-          expires_at: this.getRefreshExpiryDate(),
-        },
-      }),
-    ]);
+    await this.prisma.user_sessions.create({
+      data: {
+        uuid: generateUUID(),
+        user_id: session.user.id,
+        refresh_token_hash: hashToken(tokens.refresh_token),
+        device_info: this.normalizeDeviceInfo(context?.deviceInfo),
+        ip_address: context?.ipAddress,
+        expires_at: this.getRefreshExpiryDate(),
+      },
+    });
 
     const roles = session.user.roles.map((ur) => ur.role.name);
     let rolePath = 'users';
@@ -486,7 +492,7 @@ export class AuthService {
   }
 
   async logout(userId: string, refreshToken: string) {
-    const tokenHash = await hashValue(refreshToken);
+    const tokenHash = hashToken(refreshToken);
     await this.prisma.user_sessions.updateMany({
       where: { user_id: BigInt(userId), refresh_token_hash: tokenHash },
       data: { is_revoked: true },
@@ -623,12 +629,19 @@ export class AuthService {
       status: user.status,
       department_id: user.department_id?.toString() ?? null,
       working_location_id: user.working_location_id?.toString() ?? null,
-      permission_overrides: (user.permission_overrides ?? [])
-        .filter((o) => o.is_allowed)
-        .map((o) => ({
-          permission_key: o.permission_key,
-          is_allowed: o.is_allowed,
-        })),
+      // Include BOTH allow and deny overrides here. PermissionsGuard reads
+      // this array straight off the JWT and does effective.add(...) for
+      // is_allowed true / effective.delete(...) for is_allowed false. The
+      // previous `.filter((o) => o.is_allowed)` silently dropped every deny
+      // override before it ever reached the guard, so revoking a specific
+      // permission from a user (while their role still grants it) never
+      // actually took effect until they logged out and back in, and even
+      // then only via /auth/me's separate buildEffectivePermissions() path
+      // — the JWT-based guard never saw it.
+      permission_overrides: (user.permission_overrides ?? []).map((o) => ({
+        permission_key: o.permission_key,
+        is_allowed: o.is_allowed,
+      })),
     };
   }
 

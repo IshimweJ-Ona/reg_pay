@@ -156,12 +156,7 @@ export class CreateEmployeeDto {
   @IsString()
   tax_percentage?: string;
 
-  @ApiPropertyOptional({
-    example: 30,
-    description: 'Custom work days for contract',
-  })
-  @IsOptional()
-  custom_work_days?: number;
+
 
   @ApiPropertyOptional({
     example: 'Transport Allowance',

@@ -5,6 +5,7 @@ import {
   NotFoundException,
   Inject,
 } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import type { Cache } from 'cache-manager';
 import {
@@ -177,7 +178,7 @@ export class EmployeesService {
               daily_rate: dailyRate,
               overtime_rate: '0',
               tax_percentage: dto.tax_percentage ?? '0',
-              custom_work_days: dto.custom_work_days,
+              custom_work_days: null,
               effective_from: new Date(),
             },
           });
@@ -462,7 +463,6 @@ export class EmployeesService {
         dto.basic_salary !== undefined ||
         dto.daily_rate !== undefined ||
         dto.tax_percentage !== undefined ||
-        dto.custom_work_days !== undefined ||
         dto.contract_start_date !== undefined ||
         dto.contract_end_date !== undefined ||
         categoryId !== undefined;
@@ -500,9 +500,7 @@ export class EmployeesService {
             overtime_rate: currentStructure?.overtime_rate ?? '0',
             tax_percentage:
               dto.tax_percentage ?? currentStructure?.tax_percentage ?? '0',
-            custom_work_days: isCustom
-              ? (dto.custom_work_days ?? currentStructure?.custom_work_days)
-              : null,
+            custom_work_days: null,
           };
 
           if (
@@ -1059,6 +1057,19 @@ export class EmployeesService {
   }
 
   /**
+   * Runs once a day (just after midnight) so an employee is automatically
+   * paused the day after their contract ends, instead of waiting for the
+   * next payroll batch to be created for their branch (which is the only
+   * other place this was previously triggered from). Requires
+   * `@nestjs/schedule`'s ScheduleModule.forRoot() to be registered in
+   * app.module.ts for this decorator to actually fire.
+   */
+  @Cron(CronExpression.EVERY_DAY_AT_1AM)
+  async autoPauseExpiredContractsCron() {
+    await this.autoPauseExpiredContracts();
+  }
+
+  /**
    * Auto-pause employees whose contract end date has passed
    * Only applies to DAILY and CUSTOM employment categories
    */
@@ -1091,9 +1102,12 @@ export class EmployeesService {
     // Update all expired employees to PAUSED status
     await this.prisma.$transaction(async (tx) => {
       for (const employee of expiredEmployees) {
+        const reason = employee.contract_end_date
+          ? `Contract working days have ended (ended ${employee.contract_end_date.toISOString().split('T')[0]}).`
+          : 'Contract working days have ended.';
         await tx.employees.update({
           where: { id: employee.id },
-          data: { status: STATUS_USER.PAUSED },
+          data: { status: STATUS_USER.PAUSED, pause_reason: reason },
         });
 
         // Log the pause action

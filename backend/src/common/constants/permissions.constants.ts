@@ -32,9 +32,10 @@ export const PERMISSION_MODULES: PermissionModule[] = [
   {
     module: 'RBAC',
     permissions: [
-      { key: 'roles.manage',       name: 'Roles Manage'       },
-      { key: 'permissions.read',   name: 'Permissions Read'   },
-      { key: 'permissions.assign', name: 'Permissions Assign' },
+      { key: 'roles.manage',              name: 'Roles Manage'              },
+      { key: 'roles.manage_own_location', name: 'Roles Manage (Own Branch)' },
+      { key: 'permissions.read',          name: 'Permissions Read'          },
+      { key: 'permissions.assign',        name: 'Permissions Assign'        },
     ],
   },
   {
@@ -97,6 +98,13 @@ export const PERMISSION_MODULES: PermissionModule[] = [
     module: 'AUDIT',
     permissions: [
       { key: 'audit.view', name: 'Audit Logs View' },
+    ],
+  },
+  {
+    module: 'IKIMINA',
+    permissions: [
+      { key: 'ikimina.manage', name: 'Ikimina Manage' },
+      { key: 'ikimina.read',   name: 'Ikimina Read'   },
     ],
   },
   {

@@ -136,12 +136,14 @@ CREATE TABLE `Roles` (
     `level_order` INTEGER NULL,
     `is_system_role` BOOLEAN NOT NULL DEFAULT false,
     `permission_keys` JSON NOT NULL,
+    `working_location_id` BIGINT NULL,
     `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
 
     UNIQUE INDEX `Roles_uuid_key`(`uuid`),
-    UNIQUE INDEX `Roles_name_key`(`name`),
     INDEX `idx_role_level`(`level_order`),
     INDEX `idx_role_uuid`(`uuid`),
+    INDEX `idx_role_working_location`(`working_location_id`),
+    UNIQUE INDEX `Roles_name_working_location_id_key`(`name`, `working_location_id`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -250,6 +252,7 @@ CREATE TABLE `Employees` (
     `working_location_id` BIGINT NULL,
     `employment_category_id` BIGINT NULL,
     `status` ENUM('ACTIVE', 'INACTIVE', 'SUSPENDED', 'PENDING', 'REJECTED', 'PAUSED') NOT NULL DEFAULT 'ACTIVE',
+    `pause_reason` VARCHAR(255) NULL,
     `created_by` BIGINT NULL,
     `avatar_url` TEXT NULL,
     `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
@@ -640,6 +643,44 @@ CREATE TABLE `User_sessions` (
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 -- CreateTable
+CREATE TABLE `Ikimina_memberships` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `uuid` CHAR(36) NOT NULL,
+    `employee_id` BIGINT NOT NULL,
+    `monthly_amount` DECIMAL(18, 2) NOT NULL DEFAULT 0.00,
+    `is_active` BOOLEAN NOT NULL DEFAULT true,
+    `joined_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `created_by` BIGINT NOT NULL,
+    `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `updated_at` DATETIME(3) NOT NULL,
+
+    UNIQUE INDEX `Ikimina_memberships_uuid_key`(`uuid`),
+    UNIQUE INDEX `Ikimina_memberships_employee_id_key`(`employee_id`),
+    INDEX `idx_ikimina_membership_employee`(`employee_id`),
+    INDEX `idx_ikimina_membership_active`(`is_active`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `Ikimina_contributions` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `uuid` CHAR(36) NOT NULL,
+    `employee_id` BIGINT NOT NULL,
+    `membership_id` BIGINT NOT NULL,
+    `payroll_batch_id` BIGINT NULL,
+    `amount` DECIMAL(18, 2) NOT NULL DEFAULT 0.00,
+    `contribution_date` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+
+    UNIQUE INDEX `Ikimina_contributions_uuid_key`(`uuid`),
+    INDEX `idx_ikimina_contribution_employee`(`employee_id`),
+    INDEX `idx_ikimina_contribution_batch`(`payroll_batch_id`),
+    INDEX `idx_ikimina_contribution_membership`(`membership_id`),
+    UNIQUE INDEX `Ikimina_contributions_employee_id_payroll_batch_id_key`(`employee_id`, `payroll_batch_id`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
 CREATE TABLE `Transfer_requests` (
     `id` BIGINT NOT NULL AUTO_INCREMENT,
     `uuid` CHAR(36) NOT NULL,
@@ -704,6 +745,9 @@ ALTER TABLE `User_departments` ADD CONSTRAINT `User_departments_user_id_fkey` FO
 
 -- AddForeignKey
 ALTER TABLE `User_departments` ADD CONSTRAINT `User_departments_department_id_fkey` FOREIGN KEY (`department_id`) REFERENCES `Departments`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `Roles` ADD CONSTRAINT `Roles_working_location_id_fkey` FOREIGN KEY (`working_location_id`) REFERENCES `Working_locations`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE `User_roles` ADD CONSTRAINT `User_roles_user_id_fkey` FOREIGN KEY (`user_id`) REFERENCES `Users`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
@@ -857,6 +901,18 @@ ALTER TABLE `Audit_logs` ADD CONSTRAINT `Audit_logs_employee_id_fkey` FOREIGN KE
 
 -- AddForeignKey
 ALTER TABLE `User_sessions` ADD CONSTRAINT `User_sessions_user_id_fkey` FOREIGN KEY (`user_id`) REFERENCES `Users`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `Ikimina_memberships` ADD CONSTRAINT `Ikimina_memberships_employee_id_fkey` FOREIGN KEY (`employee_id`) REFERENCES `Employees`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `Ikimina_contributions` ADD CONSTRAINT `Ikimina_contributions_employee_id_fkey` FOREIGN KEY (`employee_id`) REFERENCES `Employees`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `Ikimina_contributions` ADD CONSTRAINT `Ikimina_contributions_membership_id_fkey` FOREIGN KEY (`membership_id`) REFERENCES `Ikimina_memberships`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `Ikimina_contributions` ADD CONSTRAINT `Ikimina_contributions_payroll_batch_id_fkey` FOREIGN KEY (`payroll_batch_id`) REFERENCES `Payment_batches`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE `Transfer_requests` ADD CONSTRAINT `Transfer_requests_user_id_fkey` FOREIGN KEY (`user_id`) REFERENCES `Users`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;

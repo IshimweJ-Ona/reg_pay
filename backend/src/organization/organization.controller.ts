@@ -27,8 +27,12 @@ export class OrganizationController {
 
   @Public()
   @Get('working-locations')
-  findWorkingLocations(@CurrentUser() actor?: CurrentUserType, @Query('q') q?: string) {
-    return this.organizationService.findWorkingLocations(actor, q);
+  findWorkingLocations(
+    @CurrentUser() actor?: CurrentUserType,
+    @Query('q') q?: string,
+    @Query('scope') scope?: string,
+  ) {
+    return this.organizationService.findWorkingLocations(actor, q, scope);
   }
 
   @Permissions('branches.manage')

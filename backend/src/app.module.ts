@@ -3,6 +3,7 @@ import { APP_INTERCEPTOR } from '@nestjs/core';
 
 import { ConfigModule } from '@nestjs/config';
 import { CacheModule } from '@nestjs/cache-manager';
+import { ScheduleModule } from '@nestjs/schedule';
 
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -21,6 +22,7 @@ import { PayrollModule } from './payroll/payroll.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { SystemConfigModule } from './system-config/system-config.module';
 import { AuditLogsModule } from './audit-logs/audit-logs.module';
+import { IkiminaModule } from './ikimina/ikimina.module';
 
 import { SecurityMiddleware } from './common/security/security.middleware';
 import { WorkingLocationScopeInterceptor } from './common/interceptors/working-location-scope.interceptor';
@@ -30,6 +32,8 @@ import { WorkingLocationScopeInterceptor } from './common/interceptors/working-l
     ConfigModule.forRoot({
       isGlobal: true,
     }),
+
+    ScheduleModule.forRoot(),
 
     CacheModule.register({
       isGlobal: true,
@@ -64,6 +68,7 @@ import { WorkingLocationScopeInterceptor } from './common/interceptors/working-l
     SystemConfigModule,
 
     AuditLogsModule,
+    IkiminaModule,
   ],
 
   controllers: [AppController],

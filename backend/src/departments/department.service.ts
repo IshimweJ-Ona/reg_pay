@@ -143,7 +143,12 @@ export class DepartmentsService {
         }
         
         const q = normalizeSearch(qInput);
-        const cacheKey = `departments_${workingLocationId ?? 'all'}_${q}`;
+        // Cache key includes the actor's working_location_id and user ID so that
+        // one actor's branch-scoped response never leaks to a different actor
+        // scoped to a different branch under a colliding key. SUPER_ADMIN calls
+        // without a specific location get 'all' (no branch scope to collide on).
+        const actorId = actor?.userId ?? 'anonymous';
+        const cacheKey = `departments_${workingLocationId ?? 'all'}_${q}_${actorId}`;
         
         const cached = await this.cacheManager.get(cacheKey);
         if (cached) return cached as any;

@@ -108,13 +108,28 @@ export class OrganizationService {
     return this.serializeWorkingLocation(workingLocation);
   }
 
-  async findWorkingLocations(actor?: CurrentUserType, qInput?: string) {
+  async findWorkingLocations(actor?: CurrentUserType, qInput?: string, scope?: string) {
     const q = normalizeSearch(qInput);
     const isSuperAdmin = actor?.roles.includes('SUPER_ADMIN') ?? false;
+
+    // Transfers are inherently cross-branch: the whole point is picking a
+    // DIFFERENT working location than the employee's (and the actor's) own.
+    // Restricting this list to just the actor's own branch — the normal,
+    // correct behavior everywhere else this endpoint is used — would make
+    // it impossible for a branch manager to ever choose a destination.
+    // Only actors who actually hold a transfer permission get this bypass.
+    const canSeeAllForTransfer =
+      scope === 'transfer' &&
+      !!actor &&
+      (actor.permissions?.includes('employees.transfer') ||
+        actor.permissions?.includes('employees.transfer_approve'));
+
+    const isUnrestricted = isSuperAdmin || canSeeAllForTransfer;
+
     const cacheKey = actor
       ? q
-        ? `working_locations_${actor.userId}_${q}`
-        : `working_locations_${actor.userId}`
+        ? `working_locations_${actor.userId}_${q}_${scope ?? ''}`
+        : `working_locations_${actor.userId}_${scope ?? ''}`
       : q
         ? `working_locations_${q}`
         : `working_locations_public`;
@@ -125,7 +140,7 @@ export class OrganizationService {
     const workingLocations = await this.prisma.working_locations.findMany({
       where: {
         deleted_at: null,
-        ...(actor && !isSuperAdmin && actor.working_location_id
+        ...(actor && !isUnrestricted && actor.working_location_id
           ? { id: BigInt(actor.working_location_id) }
           : {}),
         ...(q ? { OR: [{ name: { contains: q } }, { address: { contains: q } }] } : {}),
