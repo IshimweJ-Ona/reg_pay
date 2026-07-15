@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   Inject,
   NotFoundException,
@@ -24,19 +25,42 @@ export class RolesService {
     @Inject(CACHE_MANAGER) private cacheManager: cacheManager.Cache,
   ) {}
 
-  async findAll() {
-    const cacheKey = 'roles:all';
+  private isSystemAdmin(actor?: CurrentUserType) {
+    return !!actor?.roles?.some((role) => ['SUPER_ADMIN'].includes(role));
+  }
+
+  private isLocationScopedRoleManager(actor?: CurrentUserType) {
+    return (
+      !this.isSystemAdmin(actor) &&
+      !actor?.permissions?.includes('roles.manage') &&
+      !!actor?.permissions?.includes('roles.manage_own_location')
+    );
+  }
+
+  async findAll(actor?: CurrentUserType) {
+    const scoped = this.isLocationScopedRoleManager(actor);
+    const cacheKey = scoped ? `roles:branch:${actor!.working_location_id}` : 'roles:all';
     const cached = await this.cacheManager.get(cacheKey);
     if (cached) return cached as any;
 
     const roles = await this.prisma.roles.findMany({
+      where: scoped
+        ? {
+            OR: [
+              { working_location_id: null },
+              { working_location_id: actor!.working_location_id ? BigInt(actor!.working_location_id) : undefined },
+            ],
+          }
+        : undefined,
       orderBy: { level_order: 'asc' },
+      include: { working_location: { select: { uuid: true, name: true } } },
     });
 
     const result = roles.map((r) => ({
       ...r,
       id: r.id.toString(),
       permission_keys: (r.permission_keys as string[]) ?? [],
+      working_location_id: r.working_location_id?.toString() ?? null,
     }));
 
     await this.cacheManager.set(cacheKey, result, 600000); // 10 minutes cache
@@ -53,9 +77,29 @@ export class RolesService {
       }
     }
 
-    const existing = await this.prisma.roles.findUnique({ where: { name } });
+    const scoped = this.isLocationScopedRoleManager(actor);
+    let workingLocationId: bigint | null = null;
+
+    if (scoped) {
+      if (!actor.working_location_id) {
+        throw new ForbiddenException(
+          'Your account has no branch assigned, so you cannot create a branch-scoped role. Ask an administrator to assign you to a branch first.',
+        );
+      }
+      workingLocationId = BigInt(actor.working_location_id);
+    } else if (dto.working_location_id) {
+      workingLocationId = await this.resolveWorkingLocationId(dto.working_location_id);
+    }
+
+    const existing = await this.prisma.roles.findFirst({
+      where: { name, working_location_id: workingLocationId },
+    });
     if (existing) {
-      throw new ConflictException('A role with this name already exists.');
+      throw new ConflictException(
+        workingLocationId
+          ? 'A role with this name already exists for this branch.'
+          : 'A global role with this name already exists.',
+      );
     }
 
     const role = await this.prisma.$transaction(async (tx) => {
@@ -66,6 +110,7 @@ export class RolesService {
           description: dto.description?.trim() || null,
           is_system_role: false,
           permission_keys: permissionKeys,
+          working_location_id: workingLocationId,
         },
       });
 
@@ -76,11 +121,14 @@ export class RolesService {
           entity_id: created.id,
           module_name: 'RBAC',
           activity_type: ACTIVITY_TYPE.CREATE,
-          activity_description: 'Created role.',
+          activity_description: workingLocationId
+            ? 'Created branch-scoped role.'
+            : 'Created role.',
           action: AUDIT_ACTION.CREATED,
           new_values: {
             name: created.name,
             permission_keys: permissionKeys,
+            working_location_id: workingLocationId?.toString() ?? null,
           },
         },
       });
@@ -88,7 +136,7 @@ export class RolesService {
       return created;
     });
 
-    this.notificationsService.broadcast({ type: 'permissions_updated' });
+    // No users hold a brand-new role yet, so nothing to notify.
     await this.clearRbacCaches();
     return this.findOne(role.id);
   }
@@ -97,6 +145,14 @@ export class RolesService {
     const roleId = this.toBigInt(roleInput, 'role');
     const role = await this.prisma.roles.findUnique({ where: { id: roleId } });
     if (!role) throw new NotFoundException('Role not found.');
+
+    const scoped = this.isLocationScopedRoleManager(actor);
+    if (scoped) {
+      const ownLocation = actor.working_location_id ? BigInt(actor.working_location_id) : null;
+      if (!role.working_location_id || !ownLocation || role.working_location_id !== ownLocation) {
+        throw new ForbiddenException('You can only edit roles that belong to your own branch.');
+      }
+    }
 
     const data: Record<string, any> = {};
     if (dto.name !== undefined) {
@@ -138,9 +194,32 @@ export class RolesService {
       });
     });
 
-    this.notificationsService.broadcast({ type: 'permissions_updated' });
+    // Only notify users who actually hold this role.
+    if (dto.permission_keys !== undefined) {
+      const affectedUsers = await this.prisma.user_roles.findMany({
+        where: { role_id: roleId },
+        select: { user_id: true },
+      });
+      const userIds = affectedUsers.map((ur) => ur.user_id);
+      if (userIds.length > 0) {
+        this.notificationsService.notifyUsers(userIds, {
+          type: 'permissions_updated',
+        });
+      }
+    }
     await this.clearRbacCaches();
     return this.findOne(roleId);
+  }
+
+  private async resolveWorkingLocationId(value: string) {
+    const location = await this.prisma.working_locations.findFirst({
+      where: /^\d+$/.test(value)
+        ? { id: BigInt(value), deleted_at: null }
+        : { uuid: value, deleted_at: null },
+      select: { id: true },
+    });
+    if (!location) throw new BadRequestException('Selected branch does not exist.');
+    return location.id;
   }
 
   private async findOne(roleId: bigint) {
@@ -152,6 +231,7 @@ export class RolesService {
       ...role,
       id: role.id.toString(),
       permission_keys: (role.permission_keys as string[]) ?? [],
+      working_location_id: role.working_location_id?.toString() ?? null,
     };
   }
 
