@@ -612,7 +612,10 @@ export class TimeRecordsService {
   }
 
   private includes() {
-    return { employee: true, approvedBy: true };
+    return {
+      employee: { include: { employment_category: true, department: true } },
+      approvedBy: true,
+    };
   }
 
   private serialize(record: Record<string, any>) {
@@ -681,7 +684,24 @@ export class TimeRecordsService {
     if (actor.working_location_id) {
       where.working_location_id = BigInt(actor.working_location_id);
     }
-    if (actor.department_id) {
+
+    // A BRANCH_MANAGER manages an entire working location, across every
+    // department in it — they are not scoped to just the one department
+    // their own user record happens to belong to. Department-level scoping
+    // is only for narrower "attendance actor" roles (e.g. a department
+    // attendant). Without this exemption, a branch manager whose own user
+    // row has a department_id set would only ever see/manage employees in
+    // that single department, and any bulk attendance import covering the
+    // rest of the branch would appear to have "no employees" or get
+    // rejected — while SUPER_ADMIN (fully exempted above) never hit this,
+    // which is why the same import worked for one role and not the other.
+    // Mirrors the identical isBranchManager exemption already used in
+    // employees.service.ts for the same reason.
+    const isBranchManager = actor.roles.some((role) =>
+      ['BRANCH_MANAGER'].includes(role),
+    );
+
+    if (!isBranchManager && actor.department_id) {
       where.department_id = BigInt(actor.department_id);
     }
     return where;
@@ -705,7 +725,14 @@ export class TimeRecordsService {
       );
     }
 
+    // See employeeScopeWhere() above: branch managers are scoped to their
+    // working location only, never additionally to a single department.
+    const isBranchManager = actor.roles.some((role) =>
+      ['BRANCH_MANAGER'].includes(role),
+    );
+
     if (
+      !isBranchManager &&
       actor.department_id &&
       employee.department_id?.toString() !== actor.department_id
     ) {
