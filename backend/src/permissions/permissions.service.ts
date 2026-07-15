@@ -49,7 +49,7 @@ export class PermissionsService {
       });
     }
 
-    this.notificationsService.broadcast({ type: 'permissions_updated' });
+    await this.notifyUsersWithRole(roleId);
     await this.cacheManager.del('roles:all');
 
     return {
@@ -73,7 +73,7 @@ export class PermissionsService {
       });
     }
 
-    this.notificationsService.broadcast({ type: 'permissions_updated' });
+    await this.notifyUsersWithRole(roleId);
     await this.cacheManager.del('roles:all');
 
     return { message: 'Permission removed from role.' };
@@ -121,7 +121,9 @@ export class PermissionsService {
       return created;
     });
 
-    this.notificationsService.broadcast({ type: 'permissions_updated' });
+    this.notificationsService.notifyUsers([userId], {
+      type: 'permissions_updated',
+    });
 
     return {
       message: 'Permission assigned to user.',
@@ -166,9 +168,25 @@ export class PermissionsService {
       }),
     ]);
 
-    this.notificationsService.broadcast({ type: 'permissions_updated' });
+    this.notificationsService.notifyUsers([userId], {
+      type: 'permissions_updated',
+    });
 
     return { message: 'Permission removed from user.' };
+  }
+
+  // Notifies only the users who currently hold the given role.
+  private async notifyUsersWithRole(roleId: bigint) {
+    const affectedUsers = await this.prisma.user_roles.findMany({
+      where: { role_id: roleId },
+      select: { user_id: true },
+    });
+    const userIds = affectedUsers.map((ur) => ur.user_id);
+    if (userIds.length > 0) {
+      this.notificationsService.notifyUsers(userIds, {
+        type: 'permissions_updated',
+      });
+    }
   }
 
   private async ensureRoleAndPermission(roleId: bigint, permissionKey: string) {
