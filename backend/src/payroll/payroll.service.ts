@@ -26,6 +26,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SystemConfigService } from '../system-config/system-config.service';
 import { EmployeesService } from '../employees/employees.service';
+import { IkiminaService } from '../ikimina/ikimina.service';
 import { ApprovePayrollItemDto } from './dto/approve-payroll-item.dto';
 import { CreatePayrollBatchDto } from './dto/create-payroll-batch.dto';
 import { RejectPayrollItemDto } from './dto/reject-payroll-item.dto';
@@ -66,6 +67,7 @@ export class PayrollService {
     private readonly notificationsService: NotificationsService,
     private readonly systemConfigService: SystemConfigService,
     private readonly employeesService: EmployeesService,
+    private readonly ikiminaService: IkiminaService,
     @Inject(CACHE_MANAGER) private cacheManager: cacheManager.Cache,
   ) {}
 
@@ -282,6 +284,73 @@ export class PayrollService {
         });
       }
 
+      // Ikimina deduction: for every MONTHLY employee in this batch with an
+      // active Ikimina membership, create a contribution ledger entry and
+      // include the deduction amount in their total deductions.
+      const employeeIds = calculations.map((c) => c.employeeId);
+      const ikiminaDeductions = await this.ikiminaService.deductForBatch(
+        tx,
+        targetBatch.id,
+        employeeIds,
+      );
+
+      let recalculatedTotalAmount: number | undefined = undefined;
+      let recalculatedTotalDeductions: number | undefined = undefined;
+
+      if (ikiminaDeductions.length > 0) {
+        // Update each transaction's total_deductions and net_amount to include
+        // the Ikimina deduction. The original calculation didn't account for it,
+        // so we add it as a post-hoc adjustment.
+        for (const deduction of ikiminaDeductions) {
+          const calculation = calculations.find(
+            (c) => c.employeeId === deduction.employeeId,
+          );
+          if (calculation) {
+            const ikiminaAmount = deduction.amount;
+            const updatedTotalDeductions = calculation.totalDeductions + ikiminaAmount;
+            const updatedNetAmount = calculation.netAmount - ikiminaAmount;
+
+            await tx.transactions.updateMany({
+              where: {
+                batch_items: {
+                  some: {
+                    payment_batch_id: targetBatch.id,
+                    employee_id: deduction.employeeId,
+                  },
+                },
+              },
+              data: {
+                total_deductions: updatedTotalDeductions,
+                net_amount: Math.max(0, updatedNetAmount),
+              },
+            });
+
+            // Recalculate the batch-level total_deductions and total_amount
+            // to include the post-hoc Ikimina deduction.
+            calculation.totalDeductions = updatedTotalDeductions;
+            calculation.netAmount = Math.max(0, updatedNetAmount);
+          }
+        }
+
+        // Update batch totals to reflect Ikimina adjustments
+        recalculatedTotalAmount = calculations.reduce(
+          (sum, item) => sum + item.netAmount,
+          0,
+        );
+        recalculatedTotalDeductions = calculations.reduce(
+          (sum, item) => sum + item.totalDeductions,
+          0,
+        );
+
+        await tx.payment_batches.update({
+          where: { id: targetBatch.id },
+          data: {
+            total_deductions: recalculatedTotalDeductions,
+            total_amount: recalculatedTotalAmount,
+          },
+        });
+      }
+
       await tx.audit_logs.create({
         data: {
           user_id: BigInt(actor.userId),
@@ -299,10 +368,10 @@ export class PayrollService {
             payroll_month: dto.payroll_month,
             payroll_year: dto.payroll_year,
             total_employees: calculations.length,
-            total_amount: totalAmount,
+            total_amount: recalculatedTotalAmount ?? totalAmount,
             total_gross: totalGross,
             total_allowances: totalAllowances,
-            total_deductions: totalDeductions,
+            total_deductions: recalculatedTotalDeductions ?? totalDeductions,
             total_tax: totalTax,
           },
         },
@@ -1161,15 +1230,13 @@ export class PayrollService {
         ? getContractDays(employee.contract_start_date, employee.contract_end_date)
         : null;
 
-    // Determine expectedWorkDays - manual overrides always win, then CUSTOM
-    // contract days, then any custom_work_days override, then the calendar.
+    // Determine expectedWorkDays - manual overrides always win, then CUSTOM/DAILY
+    // contract days (if present), then the calendar.
     let expectedWorkDays = periodCalendarDays;
     if (dto.work_days !== undefined && dto.work_days !== null) {
       expectedWorkDays = dto.work_days;
-    } else if (frequency === EMPLOYMENT_TYPE.CUSTOM && contractDays) {
+    } else if ((frequency === EMPLOYMENT_TYPE.CUSTOM || frequency === EMPLOYMENT_TYPE.DAILY) && contractDays) {
       expectedWorkDays = contractDays;
-    } else if (paymentStructure.custom_work_days !== undefined && paymentStructure.custom_work_days !== null) {
-      expectedWorkDays = paymentStructure.custom_work_days;
     }
     if (expectedWorkDays < 1) {
       expectedWorkDays = 1;
@@ -1510,12 +1577,18 @@ export class PayrollService {
         include: { actionBy: true },
         orderBy: { action_at: 'asc' as const },
       },
+      ikimina_contributions: true,
     };
   }
 
   private itemIncludes() {
     return {
-      employee: { include: { department: true } },
+      employee: {
+        include: {
+          department: true,
+          ikimina_membership: true,
+        },
+      },
       transaction: true,
       approvedBy: true,
     };
@@ -1558,6 +1631,14 @@ export class PayrollService {
             }
           : undefined,
       })),
+      ikimina_contributions: batch.ikimina_contributions?.map((c) => ({
+        ...c,
+        id: c.id.toString(),
+        employee_id: c.employee_id.toString(),
+        membership_id: c.membership_id.toString(),
+        payroll_batch_id: c.payroll_batch_id?.toString() ?? null,
+        amount: Number(c.amount),
+      })),
     };
   }
 
@@ -1585,6 +1666,16 @@ export class PayrollService {
                   id: item.employee.department.id.toString(),
                   working_location_id:
                     item.employee.department.working_location_id.toString(),
+                }
+              : null,
+            ikimina_membership: item.employee.ikimina_membership
+              ? {
+                  ...item.employee.ikimina_membership,
+                  id: item.employee.ikimina_membership.id.toString(),
+                  employee_id: item.employee.ikimina_membership.employee_id.toString(),
+                  created_by: item.employee.ikimina_membership.created_by?.toString() ?? null,
+                  monthly_amount: Number(item.employee.ikimina_membership.monthly_amount),
+                  is_active: item.employee.ikimina_membership.is_active,
                 }
               : null,
           }

@@ -4,11 +4,12 @@ import { NotificationsModule } from '../notifications/notifications.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { SystemConfigModule } from '../system-config/system-config.module';
 import { EmployeesModule} from '../employees/employees.module';
+import { IkiminaModule } from '../ikimina/ikimina.module';
 import { PayrollController } from './payroll.controller';
 import { PayrollService } from './payroll.service';
 
 @Module({
-  imports: [AuthModule, PrismaModule, NotificationsModule, SystemConfigModule, EmployeesModule],
+  imports: [AuthModule, PrismaModule, NotificationsModule, SystemConfigModule, EmployeesModule, IkiminaModule],
   controllers: [PayrollController],
   providers: [PayrollService],
 })
