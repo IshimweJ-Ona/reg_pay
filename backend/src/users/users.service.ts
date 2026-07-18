@@ -1333,8 +1333,9 @@ export class UsersService {
 
   private userIncludes() {
     return {
-      working_locations: {
+      working_locations_users_working_location_idToworking_locations: {
         select: {
+          id: true,
           uuid: true,
           name: true,
           type: true,
@@ -1348,6 +1349,7 @@ export class UsersService {
       },
       departments: {
         select: {
+          id: true,
           uuid: true,
           name: true,
           code: true,
@@ -1365,6 +1367,10 @@ export class UsersService {
   }
 
   private serializeUser(user: Record<string, any>) {
+    const workingLocation =
+      user.working_locations_users_working_location_idToworking_locations ??
+      user.working_locations;
+
     return {
       ...user,
 
@@ -1390,13 +1396,13 @@ export class UsersService {
           reason: override.reason,
         })) ?? [],
 
-      working_location: user.working_locations
+      working_location: workingLocation
         ? {
-            ...user.working_locations,
-            id: user.working_locations.id.toString(),
-            created_by: user.working_locations.created_by?.toString() ?? null,
-            updated_by: user.working_locations.updated_by?.toString() ?? null,
-            deleted_by: user.working_locations.deleted_by?.toString() ?? null,
+            ...workingLocation,
+            id: workingLocation.id.toString(),
+            created_by: workingLocation.created_by?.toString() ?? null,
+            updated_by: workingLocation.updated_by?.toString() ?? null,
+            deleted_by: workingLocation.deleted_by?.toString() ?? null,
           }
         : null,
 

@@ -13,6 +13,7 @@ import {
 } from '@prisma/client';
 
 import type { CurrentUserType } from '../auth/types/current-user.type';
+import { hasEffectivePermission } from '../common/utils/effective-permissions.util';
 import { isNumericId, normalizeSearch, requireUuidOrNumeric } from '../common/utils/lookup.util';
 import { generateUUID } from '../common/utils/uuid.util';
 import { PrismaService } from '../prisma/prisma.service';
@@ -49,7 +50,13 @@ export class DepartmentsService {
         const departmentCode = dto.code;
         const departmentName = dto.name;
 
+        const targetLocations = await this.resolveDepartmentWriteLocations(actor);
+
         const activeDepartments = await this.prisma.departments.findMany({
+            where: {
+                status: 'ACTIVE',
+                working_location_id: { in: targetLocations },
+            },
             select: { name: true },
         });
         const normalizedNew = normalizeName(departmentName);
@@ -59,19 +66,6 @@ export class DepartmentsService {
         if (duplicate) {
             throw new BadRequestException(
                 `A department named '${duplicate.name}' already exists.`,
-            );
-        }
-        
-        const targetLocations = (
-            await this.prisma.working_locations.findMany({
-                where: { deleted_at: null },
-                select: { id: true },
-            })
-        ).map((location) => location.id);
-        
-        if (!targetLocations.length) {
-            throw new BadRequestException(
-                'Create a working location before creating departments.',
             );
         }
         
@@ -107,7 +101,9 @@ export class DepartmentsService {
                     entity_id: created[0].id,
                     module_name: 'DEPARTMENTS',
                     activity_type: ACTIVITY_TYPE.CREATE,
-                    activity_description: 'Created global department across all working locations.',
+                    activity_description: this.canReadAllBranches(actor)
+                        ? 'Created global department across all working locations.'
+                        : 'Created branch department.',
                     action: AUDIT_ACTION.CREATED,
                     old_values: Prisma.JsonNull,
                     new_values: { code: dto.code, name: dto.name, description: dto.description ?? null },
@@ -128,14 +124,14 @@ export class DepartmentsService {
         qInput?: string,
     ) {
         let workingLocationId: bigint | undefined;
-        const isSuperAdmin = actor?.roles.includes('SUPER_ADMIN');
+        const canReadAllBranches = this.canReadAllBranches(actor);
         
         if (workingLocationIdInput) {
             workingLocationId = await this.resolveWorkingLocationId(workingLocationIdInput);
             
             if (
                 actor &&
-                !isSuperAdmin &&
+                !canReadAllBranches &&
                 actor.working_location_id &&
                 workingLocationId.toString() !== actor.working_location_id
             ) {
@@ -143,7 +139,7 @@ export class DepartmentsService {
                     'You can only access departments in your working location.',
                 );
             }
-        } else if (actor && !isSuperAdmin && actor.working_location_id) {
+        } else if (actor && !canReadAllBranches && actor.working_location_id) {
             workingLocationId = BigInt(actor.working_location_id);
         }
         
@@ -180,13 +176,21 @@ export class DepartmentsService {
         async updateDepartment(uuid: string, dto: UpdateDepartmentDto, actor: CurrentUserType) {
             const current = await this.prisma.departments.findUnique({ where: { uuid } });
             if (!current) throw new NotFoundException('Department not found.');
+            this.ensureActorCanManageDepartment(actor, current.working_location_id);
+            const canReadAllBranches = this.canReadAllBranches(actor);
             
             const newName = dto.name ?? current.name;
             const newCode = dto.code ?? current.code;
             const newDescription = dto.description ?? current.description;
             
             const activeDepartments = await this.prisma.departments.findMany({
-                where: { code: { not: current.code } },
+                where: {
+                    status: 'ACTIVE',
+                    code: { not: current.code },
+                    ...(canReadAllBranches
+                        ? {}
+                        : { working_location_id: current.working_location_id }),
+                },
                 select: { name: true },
             });
             
@@ -204,7 +208,13 @@ export class DepartmentsService {
             
             const updated = await this.prisma.$transaction(async (tx) => {
                 await tx.departments.updateMany({
-                    where: { code: current.code, status: 'ACTIVE' },
+                    where: {
+                        code: current.code,
+                        status: 'ACTIVE',
+                        ...(canReadAllBranches
+                            ? {}
+                            : { working_location_id: current.working_location_id }),
+                    },
                     data: { name: newName, code: newCode, description: newDescription },
                 });
                 
@@ -238,6 +248,7 @@ export class DepartmentsService {
         async deleteDepartment(uuid: string, actor: CurrentUserType) {
             const current = await this.prisma.departments.findUnique({ where: { uuid } });
             if (!current) throw new NotFoundException('Department not found.');
+            this.ensureActorCanManageDepartment(actor, current.working_location_id);
             
             await this.prisma.$transaction(async (tx) => {
                 await tx.departments.updateMany({
@@ -282,4 +293,51 @@ export class DepartmentsService {
                 if (!workingLocation) throw new NotFoundException('Working location not found.');
                 return workingLocation.id;
             }
+
+        private canReadAllBranches(actor?: CurrentUserType) {
+            return !!(
+                actor?.roles?.includes('SUPER_ADMIN') ||
+                hasEffectivePermission(actor, 'branches.read_all')
+            );
+        }
+
+        private async resolveDepartmentWriteLocations(actor: CurrentUserType) {
+            if (!this.canReadAllBranches(actor)) {
+                if (!actor.working_location_id) {
+                    throw new BadRequestException(
+                        'Your account has no working location assigned.',
+                    );
+                }
+                return [BigInt(actor.working_location_id)];
+            }
+
+            const locations = await this.prisma.working_locations.findMany({
+                where: { deleted_at: null },
+                select: { id: true },
+            });
+
+            if (!locations.length) {
+                throw new BadRequestException(
+                    'Create a working location before creating departments.',
+                );
+            }
+
+            return locations.map((location) => location.id);
+        }
+
+        private ensureActorCanManageDepartment(
+            actor: CurrentUserType,
+            workingLocationId: bigint,
+        ) {
+            if (this.canReadAllBranches(actor)) return;
+            if (
+                actor.working_location_id &&
+                actor.working_location_id === workingLocationId.toString()
+            ) {
+                return;
+            }
+            throw new BadRequestException(
+                'You can only manage departments in your working location.',
+            );
+        }
 }

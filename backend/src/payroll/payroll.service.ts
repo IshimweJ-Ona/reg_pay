@@ -576,6 +576,7 @@ export class PayrollService {
     actor: CurrentUserType,
   ) {
     const item = await this.findItemByUuidOrThrow(uuid);
+    this.ensureBatchCanStillBeReviewed(item.payment_batches);
     await this.ensureActorCanApproveBatch(actor, item.payment_batches);
 
     const approved = await this.prisma.$transaction(async (tx) => {
@@ -626,6 +627,7 @@ export class PayrollService {
     actor: CurrentUserType,
   ) {
     const item = await this.findItemByUuidOrThrow(uuid);
+    this.ensureBatchCanStillBeReviewed(item.payment_batches);
     await this.ensureActorCanApproveBatch(actor, item.payment_batches);
 
     const rejected = await this.prisma.$transaction(async (tx) => {
@@ -726,12 +728,7 @@ export class PayrollService {
 
     if (!batch) throw new NotFoundException('Payroll batch not found.');
 
-    if (
-      batch.status === PAYMENT_BATCH_STATUS.APPROVED ||
-      batch.status === PAYMENT_BATCH_STATUS.REJECTED
-    ) {
-      throw new BadRequestException('Terminal batches cannot be modified.');
-    }
+    this.ensureBatchCanStillBeReviewed(batch);
 
     await this.ensureActorCanApproveBatch(actor, batch);
 
@@ -998,12 +995,7 @@ export class PayrollService {
 
     if (!batch) throw new NotFoundException('Payroll batch not found.');
 
-    if (
-      batch.status === PAYMENT_BATCH_STATUS.APPROVED ||
-      batch.status === PAYMENT_BATCH_STATUS.REJECTED
-    ) {
-      throw new BadRequestException('Terminal batches cannot be modified.');
-    }
+    this.ensureBatchCanStillBeReviewed(batch);
 
     await this.ensureActorCanApproveBatch(actor, batch);
 
@@ -1614,6 +1606,30 @@ export class PayrollService {
     }
   }
 
+  private ensureBatchCanStillBeReviewed(batch: {
+    status?: PAYMENT_BATCH_STATUS | string;
+    current_approval_step?: number;
+  }) {
+    if (
+      batch.status === PAYMENT_BATCH_STATUS.APPROVED ||
+      batch.status === PAYMENT_BATCH_STATUS.REJECTED
+    ) {
+      throw new BadRequestException('Terminal batches cannot be modified.');
+    }
+
+    const reviewableStatuses = new Set<string>([
+      PAYMENT_BATCH_STATUS.PENDING,
+      PAYMENT_BATCH_STATUS.IN_REVIEW,
+      PAYMENT_BATCH_STATUS.MANAGER_APPROVED,
+    ]);
+
+    if (batch.status && !reviewableStatuses.has(batch.status)) {
+      throw new BadRequestException(
+        'Only submitted payroll batches can be approved or rejected.',
+      );
+    }
+  }
+
   private async findItemByUuidOrThrow(uuid: string) {
     const item = await this.prisma.payment_batch_items.findUnique({
       where: { uuid },
@@ -1622,6 +1638,7 @@ export class PayrollService {
           select: {
             working_location_id: true,
             current_approval_step: true,
+            status: true,
           },
         },
       },

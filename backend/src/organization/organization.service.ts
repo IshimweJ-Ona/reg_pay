@@ -5,6 +5,7 @@ import { audit_logs_activity_type, audit_logs_action, working_locations_type, Pr
 
 import type { CurrentUserType } from '../auth/types/current-user.type';
 import { isNumericId, normalizeSearch, requireUuidOrNumeric } from '../common/utils/lookup.util';
+import { hasEffectivePermission } from '../common/utils/effective-permissions.util';
 import { generateUUID } from '../common/utils/uuid.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -26,10 +27,11 @@ export class OrganizationService {
     @Inject(CACHE_MANAGER) private cacheManager: cacheManager.Cache,
   ) {}
 
-  // No role check — @Permissions('branches.manage') + PermissionsGuard
-  // at the controller already gates this. Any role holding that permission
-  // key can call it, and SUPER_ADMIN bypasses inside the guard.
+  // Mutations require branches.manage at the controller and explicit
+  // all-branches access here so scoped branch roles cannot edit the org tree.
   async createWorkingLocation(dto: CreateWorkingLocationDto, actor: CurrentUserType) {
+    this.ensureActorCanManageAllBranches(actor);
+
     if (!dto.name || !dto.type || !dto.address) {
       throw new BadRequestException(
         'Name, type, and address are required to create a working location.',
@@ -112,7 +114,7 @@ export class OrganizationService {
 
   async findWorkingLocations(actor?: CurrentUserType, qInput?: string, scope?: string) {
     const q = normalizeSearch(qInput);
-    const isSuperAdmin = actor?.roles.includes('SUPER_ADMIN') ?? false;
+    const canReadAllBranches = this.canReadAllBranches(actor);
 
     // Transfers are inherently cross-branch: the whole point is picking a
     // DIFFERENT working location than the employee's (and the actor's) own.
@@ -126,7 +128,7 @@ export class OrganizationService {
       (actor.permissions?.includes('employees.transfer') ||
         actor.permissions?.includes('employees.transfer_approve'));
 
-    const isUnrestricted = isSuperAdmin || canSeeAllForTransfer;
+    const isUnrestricted = canReadAllBranches || canSeeAllForTransfer;
 
     const cacheKey = actor
       ? q
@@ -172,6 +174,8 @@ export class OrganizationService {
   }
 
   async updateWorkingLocation(uuid: string, dto: UpdateWorkingLocationDto, actor: CurrentUserType) {
+    this.ensureActorCanManageAllBranches(actor);
+
     const current = await this.prisma.working_locations.findFirst({
       where: { uuid, deleted_at: null },
     });
@@ -235,6 +239,8 @@ export class OrganizationService {
   }
 
   async deleteWorkingLocation(uuid: string, actor: CurrentUserType) {
+    this.ensureActorCanManageAllBranches(actor);
+
     const current = await this.prisma.working_locations.findFirst({
       where: { uuid, deleted_at: null },
     });
@@ -272,6 +278,8 @@ export class OrganizationService {
     dto: AssignManagerDto,
     actor: CurrentUserType,
   ) {
+    this.ensureActorCanManageAllBranches(actor);
+
     if (!dto.user_id) throw new BadRequestException('User is required.');
     const userId = await this.resolveUserId(dto.user_id);
 
@@ -357,6 +365,20 @@ export class OrganizationService {
       updated_by: workingLocation.updated_by?.toString() ?? null,
       deleted_by: workingLocation.deleted_by?.toString() ?? null,
     };
+  }
+
+  private canReadAllBranches(actor?: CurrentUserType) {
+    return !!(
+      actor?.roles?.includes('SUPER_ADMIN') ||
+      hasEffectivePermission(actor, 'branches.read_all')
+    );
+  }
+
+  private ensureActorCanManageAllBranches(actor: CurrentUserType) {
+    if (this.canReadAllBranches(actor)) return;
+    throw new BadRequestException(
+      'You need all-branches access to manage working locations.',
+    );
   }
 
   private async resolveUserId(value: string) {

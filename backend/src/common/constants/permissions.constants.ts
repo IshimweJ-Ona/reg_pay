@@ -258,7 +258,6 @@ export const BASELINE_ROLE_PERMISSIONS: Record<string, string[]> = {
   BRANCH_MANAGER: [
     'users.read', 'users.create', 'users.update', 'users.approve',
     'users.suspend', 'users.transfer',
-    'branch-manager.manage', 'branches.manage', 'departments.manage',
     'employees.create', 'employees.read', 'employees.update',
     'employees.approve', 'employees.transfer', 'employees.transfer_approve', 'employees.suspend',
     'attendance.create', 'attendance.read', 'attendance.update', 'attendance.approve',
