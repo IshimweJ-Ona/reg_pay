@@ -21,6 +21,9 @@ export interface PayrollBatch {
   location: string;
   department: string;
   employeeCount: number;
+  totalGross: number;
+  totalDeductions: number;
+  totalTax: number;
   totalAmount: number;
   status: PayrollStatus;
   createdBy: string;

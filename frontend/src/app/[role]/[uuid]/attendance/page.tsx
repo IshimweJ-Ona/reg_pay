@@ -234,7 +234,6 @@ export default function AttendanceMonitoringPage() {
     employeeId: string,
     status: 'PRESENT' | 'ABSENT',
     hoursWorked?: number,
-    overtimeHours?: number,
   ) => {
     const existing = todayRecordsMap[employeeId];
     if (existing && !canUpdateAttendance) {
@@ -247,7 +246,6 @@ export default function AttendanceMonitoringPage() {
       attendance_date: new Date().toISOString(),
       attendance_status: status,
       hours_worked: status === 'PRESENT' ? hoursWorked : undefined,
-      overtime_hours: status === 'PRESENT' ? overtimeHours : undefined,
     };
 
     setPendingSync((prev) => ({ ...prev, [employeeId]: log }));
@@ -300,13 +298,13 @@ export default function AttendanceMonitoringPage() {
 
       // ── Column definitions ──
       // A=employee_id (locked), B=employee_name (locked), C=department (locked),
-      // D=overtime_hours (editable, blank), E=worked_hours (editable, blank),
-      // F=row_status (editable, P/A dropdown), G onward=one column per date
-      const DATE_START_COL = 7; // Column G (1-based)
-      const ROW_STATUS_COL = 6; // Column F (1-based)
+      // D=worked_hours (editable, blank), E=row_status (editable, P/A dropdown),
+      // F onward=one column per date
+      const DATE_START_COL = 6; // Column F (1-based)
+      const ROW_STATUS_COL = 5; // Column E (1-based)
 
       // ── Header row ──
-      const headers = ['employee_id', 'employee_name', 'department', 'overtime_hours', 'worked_hours', 'row_status', ...dates];
+      const headers = ['employee_id', 'employee_name', 'department', 'worked_hours', 'row_status', ...dates];
       const headerRow = sheet.getRow(1);
       headers.forEach((h, i) => {
         const cell = headerRow.getCell(i + 1);
@@ -343,21 +341,16 @@ export default function AttendanceMonitoringPage() {
         cellC.value = emp.department?.name ?? '';
         cellC.protection = { locked: true };
 
-        // D: overtime_hours (editable, blank)
+        // D: worked_hours (editable, blank)
         const cellD = row.getCell(4);
         cellD.value = '';
         cellD.protection = { locked: false };
 
-        // E: worked_hours (editable, blank)
+        // E: row_status (editable, P/A dropdown)
         const cellE = row.getCell(5);
         cellE.value = '';
         cellE.protection = { locked: false };
-
-        // F: row_status (editable, P/A dropdown)
-        const cellF = row.getCell(6);
-        cellF.value = '';
-        cellF.protection = { locked: false };
-        cellF.dataValidation = {
+        cellE.dataValidation = {
           type: 'list',
           formulae: ['"P,A"'],
           allowBlank: true,
@@ -366,8 +359,8 @@ export default function AttendanceMonitoringPage() {
           error: 'Only P (Present) or A (Absent) are allowed.',
         };
 
-        // G onward: date columns with formula =IF($F{row}="","",$F{row})
-        // When the user types P/A in row_status (F), Excel evaluates the
+        // F onward: date columns with formula =IF($E{row}="","",$E{row})
+        // When the user types P/A in row_status (E), Excel evaluates the
         // formula and fills all date cells automatically. On re-import,
         // SheetJS reads either the cached result (if Excel saved it) or
         // the raw formula text. The JS parser below handles both cases:
@@ -377,7 +370,7 @@ export default function AttendanceMonitoringPage() {
         dates.forEach((_, dIdx) => {
           const col = DATE_START_COL + dIdx;
           const cell = row.getCell(col);
-          cell.value = { formula: `IF($F$${rowNum}="","",$F$${rowNum})` };
+          cell.value = { formula: `IF($E$${rowNum}="","",$E$${rowNum})` };
           cell.protection = { locked: false };
           cell.dataValidation = {
             type: 'list',
@@ -394,9 +387,8 @@ export default function AttendanceMonitoringPage() {
       sheet.getColumn(1).width = 14;  // employee_id
       sheet.getColumn(2).width = 30;  // employee_name
       sheet.getColumn(3).width = 25;  // department
-      sheet.getColumn(4).width = 16;  // overtime_hours
-      sheet.getColumn(5).width = 16;  // worked_hours
-      sheet.getColumn(6).width = 14;  // row_status
+      sheet.getColumn(4).width = 16;  // worked_hours
+      sheet.getColumn(5).width = 14;  // row_status
       dates.forEach((_, dIdx) => {
         sheet.getColumn(DATE_START_COL + dIdx).width = 14;
       });
@@ -428,7 +420,7 @@ export default function AttendanceMonitoringPage() {
 
       toast({
         title: 'Template Downloaded',
-        description: `${templateEmployees.length} ${importEmployeeType === 'ALL' ? '' : importEmployeeType.toLowerCase() + ' '}employee(s) included. Type P/A in row_status (F) to auto-fill all dates, or fill per-date cells individually.`,
+        description: `${templateEmployees.length} ${importEmployeeType === 'ALL' ? '' : importEmployeeType.toLowerCase() + ' '}employee(s) included. Type P/A in row_status (E) to auto-fill all dates, or fill per-date cells individually.`,
       });
     } catch (err) {
       console.error('Template generation error:', err);
@@ -464,21 +456,21 @@ export default function AttendanceMonitoringPage() {
         const headers: string[] = raw[0].map((h: any) => String(h ?? '').trim());
 
         // Column layout: A employee_id, B employee_name, C department,
-        // D overtime_hours, E worked_hours, F row_status, G+ dates
+        // D worked_hours, E row_status, F+ dates
         if (headers[0] !== 'employee_id' || headers[1] !== 'employee_name' || headers[2] !== 'department') {
           toast({ variant: 'destructive', title: 'Import Rejected', description: 'Columns A, B, C must be employee_id, employee_name, department.' });
           return;
         }
-        if (headers[3] !== 'overtime_hours' || headers[4] !== 'worked_hours') {
-          toast({ variant: 'destructive', title: 'Import Rejected', description: 'Columns D and E must be overtime_hours and worked_hours.' });
+        if (headers[3] !== 'worked_hours') {
+          toast({ variant: 'destructive', title: 'Import Rejected', description: 'Column D must be worked_hours.' });
           return;
         }
-        if (headers[5] !== 'row_status') {
-          toast({ variant: 'destructive', title: 'Import Rejected', description: 'Column F must be row_status.' });
+        if (headers[4] !== 'row_status') {
+          toast({ variant: 'destructive', title: 'Import Rejected', description: 'Column E must be row_status.' });
           return;
         }
 
-        const dateHeaders = headers.slice(6);
+        const dateHeaders = headers.slice(5);
         if (dateHeaders.length === 0) {
           toast({ variant: 'destructive', title: 'Import Rejected', description: 'No date columns found in template.' });
           return;
@@ -513,8 +505,7 @@ export default function AttendanceMonitoringPage() {
           const empIdRaw = row[0];
           const employeeNameRaw = row[1];
           const departmentRaw = row[2];
-          const overrideOT = row[3];
-          const workedHrs = row[4];
+          const workedHrs = row[3];
 
           if (empIdRaw === undefined || empIdRaw === null || empIdRaw === '') continue;
 
@@ -558,14 +549,13 @@ export default function AttendanceMonitoringPage() {
           }
 
           const hours_worked = workedHrs !== '' && workedHrs != null ? Number(workedHrs) : undefined;
-          const overtime_hours = overrideOT !== '' && overrideOT != null ? Number(overrideOT) : undefined;
 
-          const rowStatusRaw = row[5];
+          const rowStatusRaw = row[4];
           const rowStatusStr = rowStatusRaw !== undefined && rowStatusRaw !== null ? String(rowStatusRaw).trim().toUpperCase() : '';
 
           for (let d = 0; d < dateHeaders.length; d++) {
             const dateHeaderRaw = dateHeaders[d];
-            const cellValue = row[6 + d]; // date columns start at index 6
+            const cellValue = row[5 + d]; // date columns start at index 5
             const parsedDate = parsedDateHeaders[d];
 
             // Convert cell value to string, or empty if missing.
@@ -589,21 +579,19 @@ export default function AttendanceMonitoringPage() {
             // Determine attendance status
             let attendance_status: 'PRESENT' | 'ABSENT';
             let cellHoursWorked = hours_worked;
-            let cellOvertimeHours = overtime_hours;
 
             if (activeSymbol === PRESENT_SYMBOL) {
               attendance_status = 'PRESENT';
             } else if (activeSymbol === ABSENT_SYMBOL) {
               attendance_status = 'ABSENT';
               cellHoursWorked = undefined;
-              cellOvertimeHours = undefined;
             } else {
               toast({ variant: 'destructive', title: 'Validation Error', description: `Row ${rowNum}, date "${dateHeaderRaw}": only P or A are allowed (got "${activeSymbol}").` });
               return;
             }
 
-            if (attendance_status === 'ABSENT' && ((cellHoursWorked ?? 0) > 0 || (cellOvertimeHours ?? 0) > 0)) {
-              toast({ variant: 'destructive', title: 'Validation Error', description: `Row ${rowNum}: hours_worked and overtime_hours must be blank/0 when marked ABSENT.` });
+            if (attendance_status === 'ABSENT' && (cellHoursWorked ?? 0) > 0) {
+              toast({ variant: 'destructive', title: 'Validation Error', description: `Row ${rowNum}: hours_worked must be blank/0 when marked ABSENT.` });
               return;
             }
 
@@ -612,7 +600,6 @@ export default function AttendanceMonitoringPage() {
               attendance_date: parsedDate.format('YYYY-MM-DD'),
               attendance_status,
               hours_worked: cellHoursWorked,
-              overtime_hours: cellOvertimeHours,
             });
           }
         }
@@ -655,8 +642,7 @@ export default function AttendanceMonitoringPage() {
           const isUnchanged =
             existing &&
             existing.attendance_status === log.attendance_status &&
-            normalizedHours(existing.hours_worked) === normalizedHours(log.hours_worked) &&
-            normalizedHours(existing.overtime_hours) === normalizedHours(log.overtime_hours);
+            normalizedHours(existing.hours_worked) === normalizedHours(log.hours_worked);
 
           if (isUnchanged) {
             skippedCount += 1;
@@ -712,7 +698,6 @@ export default function AttendanceMonitoringPage() {
         attendance_status: rec?.attendance_status ?? 'NOT LOGGED',
         attendance_date: todayStr,
         hours_worked: rec?.hours_worked,
-        overtime_hours: rec?.overtime_hours,
       };
     });
 
@@ -723,7 +708,6 @@ export default function AttendanceMonitoringPage() {
       Date: dayjs(rec.attendance_date).tz('Africa/Kigali').format('DD/MM/YYYY'),
       Status: rec.attendance_status,
       'Hours Worked': rec.hours_worked ?? '',
-      'Overtime Hours': rec.overtime_hours ?? '',
     }));
 
     const dateStr = new Date().toISOString().split('T')[0];
@@ -876,7 +860,6 @@ export default function AttendanceMonitoringPage() {
         Date: dayjs(rec.attendance_date).tz('Africa/Kigali').format('DD/MM/YYYY'),
         Status: rec.attendance_status,
         'Hours Worked': rec.hours_worked ?? '',
-        'Overtime Hours': rec.overtime_hours ?? '',
       }));
 
       const fromStr = range.from.format('YYYY-MM-DD');
@@ -1018,7 +1001,6 @@ export default function AttendanceMonitoringPage() {
                     <TableHead className="font-bold">Personnel</TableHead>
                     <TableHead className="font-bold">Status Today</TableHead>
                     <TableHead className="font-bold">Hours Worked</TableHead>
-                    <TableHead className="font-bold">Overtime Hrs</TableHead>
                     {canLogAttendance && <TableHead className="font-bold text-right">Actions</TableHead>}
                   </TableRow>
                 </TableHeader>
@@ -1036,7 +1018,7 @@ export default function AttendanceMonitoringPage() {
                     );
                   }) : (
                     <TableRow>
-                      <TableCell colSpan={canLogAttendance ? 5 : 4} className="text-center py-20 text-muted-foreground italic">No employees found.</TableCell>
+                      <TableCell colSpan={canLogAttendance ? 4 : 3} className="text-center py-20 text-muted-foreground italic">No employees found.</TableCell>
                     </TableRow>
                   )}
                 </TableBody>
@@ -1377,12 +1359,12 @@ function AttendanceRow({
   canLogAttendance: boolean;
 }) {
   const [hoursWorked, setHoursWorked] = useState<number | ''>('');
-  const [overtimeHours, setOvertimeHours] = useState<number | ''>('');
 
   useEffect(() => {
     if (record?.hours_worked) setHoursWorked(Number(record.hours_worked));
-    if (record?.overtime_hours) setOvertimeHours(Number(record.overtime_hours));
   }, [record]);
+
+  const isOvertimeDay = typeof hoursWorked === 'number' && hoursWorked > 8;
 
   return (
     <TableRow className="hover:bg-secondary/10 transition-colors">
@@ -1402,26 +1384,20 @@ function AttendanceRow({
         )}
       </TableCell>
       <TableCell>
-        <Input
-          type="number"
-          min={0}
-          placeholder="hrs"
-          value={hoursWorked}
-          onChange={(e) => setHoursWorked(e.target.value === '' ? '' : Number(e.target.value))}
-          disabled={!canLogAttendance}
-          className="w-24 h-9 text-xs font-mono rounded-lg border-slate-200"
-        />
-      </TableCell>
-      <TableCell>
-        <Input
-          type="number"
-          min={0}
-          placeholder="OT hrs"
-          value={overtimeHours}
-          onChange={(e) => setOvertimeHours(e.target.value === '' ? '' : Number(e.target.value))}
-          disabled={!canLogAttendance}
-          className="w-24 h-9 text-xs font-mono rounded-lg border-slate-200"
-        />
+        <div className="flex items-center gap-2">
+          <Input
+            type="number"
+            min={0}
+            placeholder="hrs"
+            value={hoursWorked}
+            onChange={(e) => setHoursWorked(e.target.value === '' ? '' : Number(e.target.value))}
+            disabled={!canLogAttendance}
+            className="w-24 h-9 text-xs font-mono rounded-lg border-slate-200"
+          />
+          {isOvertimeDay && (
+            <Badge className="bg-amber-500/10 text-amber-600 text-[10px] whitespace-nowrap">+2,500 RWF OT</Badge>
+          )}
+        </div>
       </TableCell>
       {canLogAttendance && (
         <TableCell className="text-right">
@@ -1431,7 +1407,7 @@ function AttendanceRow({
               size="sm"
               variant="outline"
               className={`h-9 rounded-xl font-bold text-xs ${record?.attendance_status === 'PRESENT' ? 'bg-emerald-600 text-white' : 'hover:bg-emerald-50 text-emerald-600 border-emerald-100'}`}
-              onClick={(e) => { e.preventDefault(); onMark(employee.id, 'PRESENT', hoursWorked || undefined, overtimeHours || undefined); }}
+              onClick={(e) => { e.preventDefault(); onMark(employee.id, 'PRESENT', hoursWorked || undefined); }}
             >
               Present
             </Button>

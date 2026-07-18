@@ -15,6 +15,12 @@ import { useAuth } from '@/context/auth-context';
 import { useRouter, useParams } from 'next/navigation';
 import { getMonthlyTaxes, updateMonthlyTax, deactivateMonthlyTax, MonthlyTax } from '@/api/system-config';
 import { useToast } from '@/hooks/use-toast';
+import { userFriendlyError } from '@/lib/error-message';
+
+const isPitTax = (name: string) => {
+  const normalized = name.toLowerCase().replace(/[^a-z]/g, '');
+  return normalized === 'pit' || normalized.includes('personalincometax') || normalized.includes('paye');
+};
 
 export default function TaxSetupPage() {
   const { user, hasPermission } = useAuth();
@@ -46,7 +52,7 @@ export default function TaxSetupPage() {
       toast({
         variant: "destructive",
         title: "Load Failed",
-        description: "Could not retrieve tax configurations. Check console for details.",
+        description: userFriendlyError(error, 'Could not retrieve tax configurations.'),
       });
     } finally {
       setLoading(false);
@@ -66,14 +72,16 @@ export default function TaxSetupPage() {
       setNewTax({ name: '', rate: '' });
       toast({
         title: 'Success',
-        description: `Tax updated will apply automatically.`,
+        description: isPitTax(newTax.name)
+          ? 'PIT rate saved. The effective-date rule will be applied by payroll.'
+          : 'Tax policy saved. Assign it to monthly employees before it affects payroll.',
       });
     } catch (error: any) {
       console.error('Failed to create tax:', error);
       toast({
         variant: 'destructive',
         title: 'Creation Failed',
-        description: error?.response?.data?.message || "Operation failed.",
+        description: userFriendlyError(error, 'Could not save this tax policy.'),
       });
     } finally {
       setSaving(false);
@@ -90,7 +98,7 @@ export default function TaxSetupPage() {
       toast({
         variant: 'destructive',
         title: 'Action Failed',
-        description: error?.response?.data?.message || "Operation failed.",
+        description: userFriendlyError(error, 'Could not deactivate this tax policy.'),
       });
     }
   };
@@ -102,7 +110,7 @@ export default function TaxSetupPage() {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-headline font-bold">Tax Setup</h1>
-          <p className="text-muted-foreground">Configure statutory taxes applied to group payroll.</p>
+          <p className="text-muted-foreground">Manage PIT and assignable statutory tax policies.</p>
         </div>
       </div>
 
@@ -125,7 +133,7 @@ export default function TaxSetupPage() {
         </Card>
         <Card className="border-none shadow-sm">
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-bold uppercase tracking-wider text-muted-foreground">Next Apply Date</CardTitle>
+            <CardTitle className="text-sm font-bold uppercase tracking-wider text-muted-foreground">PIT Apply Rule</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="flex items-center gap-4">
@@ -133,8 +141,8 @@ export default function TaxSetupPage() {
                 <Zap className="h-6 w-6 text-emerald-600" />
               </div>
               <div>
-                <p className="text-2xl font-bold">1st of Month</p>
-                <p className="text-xs text-muted-foreground">Standard payroll cycle</p>
+                <p className="text-2xl font-bold">1st / Next</p>
+                <p className="text-xs text-muted-foreground">Immediate on day 1, otherwise next month</p>
               </div>
             </div>
           </CardContent>
@@ -149,8 +157,8 @@ export default function TaxSetupPage() {
                 <ShieldCheck className="h-6 w-6 text-blue-600" />
               </div>
               <div>
-                <p className="text-2xl font-bold">Enforced</p>
-                <p className="text-xs text-muted-foreground">Statutory compliance active</p>
+                <p className="text-2xl font-bold">PIT Only</p>
+                <p className="text-xs text-muted-foreground">Other taxes need employee assignment</p>
               </div>
             </div>
           </CardContent>
@@ -162,7 +170,7 @@ export default function TaxSetupPage() {
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div>
               <CardTitle>Manage Group Taxes</CardTitle>
-              <CardDescription>Create or update taxes that will be applied to all monthly employees.</CardDescription>
+              <CardDescription>Only Personal Income Tax (PIT/PAYE) applies automatically. Other taxes are policies for employee-level assignment.</CardDescription>
             </div>
             <Button variant="outline" className="gap-2" onClick={loadTaxes} disabled={loading}>
               <RotateCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
@@ -175,7 +183,7 @@ export default function TaxSetupPage() {
             <div className="space-y-2">
               <Label>Tax Name</Label>
               <Input 
-                placeholder="e.g. PAYE Rwanda" 
+                placeholder="e.g. Personal Income Tax (PIT)"
                 value={newTax.name}
                 onChange={(e) => setNewTax(prev => ({ ...prev, name: e.target.value }))}
               />
@@ -192,7 +200,7 @@ export default function TaxSetupPage() {
             </div>
             <Button className="h-10 shadow-md" onClick={handleCreateTax} disabled={saving}>
               {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Plus className="h-4 w-4 mr-2" />}
-              Create New Tax
+              Save Tax Policy
             </Button>
           </div>
 
@@ -203,6 +211,7 @@ export default function TaxSetupPage() {
                   <TableHead>Tax Name</TableHead>
                   <TableHead>Current Rate</TableHead>
                   <TableHead>Effective Since</TableHead>
+                  <TableHead>Payroll Use</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="w-[80px] text-right">Actions</TableHead>
                 </TableRow>
@@ -210,7 +219,7 @@ export default function TaxSetupPage() {
               <TableBody>
                 {loading ? (
                    <TableRow>
-                     <TableCell colSpan={5} className="text-center py-10"><Loader2 className="h-6 w-6 animate-spin mx-auto text-primary" /></TableCell>
+                     <TableCell colSpan={6} className="text-center py-10"><Loader2 className="h-6 w-6 animate-spin mx-auto text-primary" /></TableCell>
                    </TableRow>
                 ) : taxes.length > 0 ? taxes.map((tax) => (
                   <TableRow key={tax.uuid} className="hover:bg-secondary/10 transition-colors">
@@ -218,17 +227,30 @@ export default function TaxSetupPage() {
                     <TableCell className="font-mono text-emerald-700 font-bold">{tax.rate}%</TableCell>
                     <TableCell className="text-xs text-muted-foreground">{new Date(tax.effective_from).toLocaleDateString()}</TableCell>
                     <TableCell>
+                      {tax.is_automatic ? (
+                        <Badge className="bg-blue-500/10 text-blue-600 border-blue-500/20">Automatic PIT</Badge>
+                      ) : (
+                        <Badge variant="outline">Assignable</Badge>
+                      )}
+                    </TableCell>
+                    <TableCell>
                       <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/20">Active</Badge>
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button variant="ghost" size="icon" className="text-destructive hover:bg-destructive/10" onClick={() => handleDeleteTax(tax.uuid)}>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="text-destructive hover:bg-destructive/10"
+                        onClick={() => handleDeleteTax(tax.uuid)}
+                        disabled={tax.uuid === 'default-pit'}
+                      >
                         <Trash2 className="h-4 w-4" />
                       </Button>
                     </TableCell>
                   </TableRow>
                 )) : (
                   <TableRow>
-                    <TableCell colSpan={5} className="text-center py-10 text-muted-foreground">No statutory taxes configured yet.</TableCell>
+                    <TableCell colSpan={6} className="text-center py-10 text-muted-foreground">No statutory taxes configured yet.</TableCell>
                   </TableRow>
                 )}
               </TableBody>

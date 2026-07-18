@@ -44,7 +44,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Employee } from '@/types/employee';
 import { getEmployees, suspendEmployee, createEmployee, updateEmployee, transferEmployee } from '@/api/employees';
-import { getTimeRecords } from '@/api/attendance';
+import { getTimeRecords, getTimeRecordsByEmployee } from '@/api/attendance';
 import { getWorkingLocations, getDepartments } from '@/api/working_locations';
 import { getAvatarUrl, formatDisplayName } from '@/lib/utils';
 import {
@@ -139,6 +139,7 @@ export default function EmployeeDirectoryPage() {
   const [detailStructure, setDetailStructure] = useState<any | null>(null);
   const [detailAllowances, setDetailAllowances] = useState<any[]>([]);
   const [detailDeductions, setDetailDeductions] = useState<any[]>([]);
+  const [detailAttendance, setDetailAttendance] = useState<any[]>([]);
   const [isAddingEmployee, setIsAddingEmployee] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -669,17 +670,20 @@ export default function EmployeeDirectoryPage() {
     setDetailStructure(null);
     setDetailAllowances([]);
     setDetailDeductions([]);
+    setDetailAttendance([]);
 
     try {
-      const [structure, allowances, deductions] = await Promise.all([
+      const [structure, allowances, deductions, attendance] = await Promise.all([
         getActivePaymentStructureByEmployee(emp.bigIntId!).catch(() => null),
         getAllowances(emp.bigIntId!).catch(() => []),
         getEmployeeDeductions(emp.bigIntId!).catch(() => []),
+        getTimeRecordsByEmployee(emp.bigIntId!).catch(() => []),
       ]);
 
       setDetailStructure(structure);
       setDetailAllowances(Array.isArray(allowances) ? allowances : []);
       setDetailDeductions(Array.isArray(deductions) ? deductions : []);
+      setDetailAttendance(Array.isArray(attendance) ? attendance : []);
     } finally {
       setDetailLoading(false);
     }
@@ -687,15 +691,17 @@ export default function EmployeeDirectoryPage() {
 
   const refreshEmployeeDetails = async () => {
     if (!detailEmployee?.bigIntId) return;
-    const [structure, allowances, deductions] = await Promise.all([
+    const [structure, allowances, deductions, attendance] = await Promise.all([
       getActivePaymentStructureByEmployee(detailEmployee.bigIntId).catch(() => null),
       getAllowances(detailEmployee.bigIntId).catch(() => []),
       getEmployeeDeductions(detailEmployee.bigIntId).catch(() => []),
+      getTimeRecordsByEmployee(detailEmployee.bigIntId).catch(() => []),
     ]);
 
     setDetailStructure(structure);
     setDetailAllowances(Array.isArray(allowances) ? allowances : []);
     setDetailDeductions(Array.isArray(deductions) ? deductions : []);
+    setDetailAttendance(Array.isArray(attendance) ? attendance : []);
   };
 
   const handleDeductionRateUpdate = async (
@@ -1661,6 +1667,7 @@ export default function EmployeeDirectoryPage() {
           setDetailStructure(null);
           setDetailAllowances([]);
           setDetailDeductions([]);
+          setDetailAttendance([]);
         }
       }}>
         <SheetContent className="sm:max-w-2xl overflow-y-auto">
@@ -1715,8 +1722,8 @@ export default function EmployeeDirectoryPage() {
                     <p className="font-medium">{formatRwf(Number(detailStructure?.daily_rate ?? 0))}</p>
                   </div>
                   <div>
-                    <p className="text-xs text-muted-foreground">Overtime Rate</p>
-                    <p className="font-medium">{formatRwf(Number(detailStructure?.overtime_rate ?? 0))}</p>
+                    <p className="text-xs text-muted-foreground">Overtime Policy</p>
+                    <p className="font-medium">Flat 2,500 RWF/day past 8 hrs</p>
                   </div>
                 </div>
               </div>
@@ -1782,6 +1789,34 @@ export default function EmployeeDirectoryPage() {
                     </div>
                   )) : (
                     <p className="p-4 text-sm text-muted-foreground">No allowances assigned.</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="rounded-lg border">
+                <div className="border-b p-3 flex items-center justify-between">
+                  <h3 className="font-semibold">Attendance History</h3>
+                  <span className="text-xs text-muted-foreground">{detailAttendance.length} record{detailAttendance.length === 1 ? '' : 's'}</span>
+                </div>
+                <div className="max-h-80 overflow-y-auto divide-y">
+                  {detailAttendance.length > 0 ? detailAttendance.map((rec: any) => {
+                    const isOvertime = rec.attendance_status === 'PRESENT' && Number(rec.hours_worked ?? 0) > 8;
+                    return (
+                      <div key={rec.uuid} className="flex items-center justify-between p-3 text-sm">
+                        <div>
+                          <p className="font-medium">{new Date(rec.attendance_date).toLocaleDateString()}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {rec.hours_worked ? `${rec.hours_worked} hrs worked` : 'No hours logged'}
+                            {isOvertime && ' · +2,500 RWF overtime'}
+                          </p>
+                        </div>
+                        <Badge className={rec.attendance_status === 'PRESENT' ? 'bg-emerald-500/10 text-emerald-600' : 'bg-rose-500/10 text-rose-600'}>
+                          {rec.attendance_status}
+                        </Badge>
+                      </div>
+                    );
+                  }) : (
+                    <p className="p-4 text-sm text-muted-foreground">No attendance records found for this employee.</p>
                   )}
                 </div>
               </div>

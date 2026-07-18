@@ -33,8 +33,22 @@ import {
   rejectPayrollItem,
   downloadPayrollBatchExport,
 } from '@/api/payroll';
+import {
+  formatPayrollDate,
+  formatPayrollPeriod,
+  formatRwf,
+  getPayrollItemAmounts,
+  getPayrollTaxLabel,
+} from '@/lib/payroll-display';
 
-const formatRwf = (value: number) => `RWF ${value.toLocaleString()}`;
+const formatPeriodRange = (start?: unknown, end?: unknown) => {
+  const startLabel = formatPayrollDate(start, '');
+  const endLabel = formatPayrollDate(end, '');
+  if (!startLabel && !endLabel) return 'Configured period';
+  if (!startLabel) return endLabel;
+  if (!endLabel || startLabel === endLabel) return startLabel;
+  return `${startLabel} - ${endLabel}`;
+};
 
 export default function PayrollBatchDetailsPage() {
   const router = useRouter();
@@ -73,34 +87,40 @@ export default function PayrollBatchDetailsPage() {
     let totalTax = 0;
     let totalIkimina = 0;
     let totalOtherDeductions = 0;
+    let totalDeductions = 0;
     let totalNetPay = 0;
+    let totalGrossPay = 0;
 
     rows.forEach((item: any) => {
-      const basePay = Number(item.transaction?.base_amount ?? item.transaction?.gross_amount ?? 0);
-      const allowanceOt = Number(item.transaction?.allowance_amount ?? 0);
-      const tax = Number(item.transaction?.tax_amount ?? 0);
-      const contribution = batch?.ikimina_contributions?.find(
-        (c: any) => c.employee_id === item.employee_id
-      );
-      const ikimina = contribution ? Number(contribution.amount) : 0;
-      const totalDeductions = Number(item.transaction?.total_deductions ?? 0);
-      const otherDeductions = Math.max(0, totalDeductions - tax - ikimina);
-      const netPay = Number(item.transaction?.net_amount ?? 0);
+      const {
+        basePay,
+        allowanceOt,
+        grossPay,
+        tax,
+        ikimina,
+        otherDeductions,
+        totalDeductions: deductions,
+        netPay,
+      } = getPayrollItemAmounts(item, batch);
 
       totalBasePay += basePay;
       totalAllowanceOt += allowanceOt;
+      totalGrossPay += grossPay;
       totalTax += tax;
       totalIkimina += ikimina;
       totalOtherDeductions += otherDeductions;
+      totalDeductions += deductions;
       totalNetPay += netPay;
     });
 
     return {
       totalBasePay,
       totalAllowanceOt,
+      totalGrossPay,
       totalTax,
       totalIkimina,
       totalOtherDeductions,
+      totalDeductions,
       totalNetPay,
     };
   }, [rows, batch]);
@@ -176,6 +196,8 @@ export default function PayrollBatchDetailsPage() {
   const canApproveBM = !isTerminal && batch.status === 'PENDING' && (isBranchManager || isSuperAdmin);
   const canApproveAdmin = !isTerminal && batch.status === 'MANAGER_APPROVED' && isSuperAdmin;
   const canApprove = canApproveBM || canApproveAdmin;
+  const batchPaymentDate = rows[0]?.transaction?.payment_date ?? batch.approved_at;
+  const hasRows = rows.length > 0;
 
   return (
     <div className="space-y-8 pb-12">
@@ -189,7 +211,9 @@ export default function PayrollBatchDetailsPage() {
               <h1 className="text-2xl font-headline font-bold">{batch.batch_code}</h1>
               <PayrollStatusBadge status={batch.status} />
             </div>
-            <p className="text-sm text-muted-foreground">{batch.working_location?.name ?? batch.working_location_id} • {batch.payroll_month}/{batch.payroll_year}</p>
+            <p className="text-sm text-muted-foreground">
+              {batch.working_location?.name ?? batch.working_location_id} • {formatPayrollPeriod(batch.payroll_month, batch.payroll_year)}
+            </p>
           </div>
         </div>
         <div className="flex gap-2">
@@ -232,7 +256,7 @@ export default function PayrollBatchDetailsPage() {
                     <DialogTitle>{canApproveAdmin ? 'Final Authorization' : 'Manager Approval'}</DialogTitle>
                     <DialogDescription>
                       {canApproveAdmin 
-                        ? `You are authorizing the final disbursement of ${formatRwf(Number(batch.total_amount))} to ${rows.length} employees.`
+                        ? `You are authorizing the final disbursement of ${formatRwf(batch.total_amount)} to ${rows.length} employees.`
                         : `You are approving this batch for final review by HQ.`}
                     </DialogDescription>
                   </DialogHeader>
@@ -250,29 +274,41 @@ export default function PayrollBatchDetailsPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-6 gap-6">
         <Card className="border-none shadow-sm">
           <CardContent className="pt-6">
             <p className="text-xs font-bold text-muted-foreground uppercase">Net Disbursement</p>
-            <h3 className="text-2xl font-bold mt-1 text-primary">{formatRwf(Number(batch.total_amount))}</h3>
+            <h3 className="text-xl font-bold mt-1 text-primary">{formatRwf(hasRows ? totals.totalNetPay : batch.total_amount)}</h3>
+          </CardContent>
+        </Card>
+        <Card className="border-none shadow-sm">
+          <CardContent className="pt-6">
+            <p className="text-xs font-bold text-muted-foreground uppercase">Gross Pay</p>
+            <h3 className="text-xl font-bold mt-1">{formatRwf(hasRows ? totals.totalGrossPay : batch.total_gross)}</h3>
+          </CardContent>
+        </Card>
+        <Card className="border-none shadow-sm">
+          <CardContent className="pt-6">
+            <p className="text-xs font-bold text-muted-foreground uppercase">Deductions</p>
+            <h3 className="text-xl font-bold mt-1 text-rose-600">{formatRwf(hasRows ? totals.totalDeductions : batch.total_deductions)}</h3>
+          </CardContent>
+        </Card>
+        <Card className="border-none shadow-sm">
+          <CardContent className="pt-6">
+            <p className="text-xs font-bold text-muted-foreground uppercase">PIT Tax</p>
+            <h3 className="text-xl font-bold mt-1 text-rose-600">{formatRwf(hasRows ? totals.totalTax : batch.total_tax)}</h3>
           </CardContent>
         </Card>
         <Card className="border-none shadow-sm">
           <CardContent className="pt-6">
             <p className="text-xs font-bold text-muted-foreground uppercase">Staff Count</p>
-            <h3 className="text-2xl font-bold mt-1">{rows.length} Employees</h3>
+            <h3 className="text-xl font-bold mt-1">{rows.length} Employees</h3>
           </CardContent>
         </Card>
         <Card className="border-none shadow-sm">
           <CardContent className="pt-6">
             <p className="text-xs font-bold text-muted-foreground uppercase">Payment Date</p>
-            <h3 className="text-2xl font-bold mt-1">{batch.approved_at ? new Date(batch.approved_at).toLocaleDateString() : 'Pending'}</h3>
-          </CardContent>
-        </Card>
-        <Card className="border-none shadow-sm">
-          <CardContent className="pt-6">
-            <p className="text-xs font-bold text-muted-foreground uppercase">Currency</p>
-            <h3 className="text-2xl font-bold mt-1">Configured</h3>
+            <h3 className="text-xl font-bold mt-1">{formatPayrollDate(batchPaymentDate)}</h3>
           </CardContent>
         </Card>
       </div>
@@ -300,8 +336,10 @@ export default function PayrollBatchDetailsPage() {
                       <TableHead>Employee</TableHead>
                       <TableHead>Phone Number</TableHead>
                       <TableHead>Role / Dept</TableHead>
+                      <TableHead>Attendance</TableHead>
                       <TableHead className="text-right">Basic Pay</TableHead>
                       <TableHead className="text-right">Allowances/OT</TableHead>
+                      <TableHead className="text-right">Gross Pay</TableHead>
                       <TableHead className="text-right">Tax</TableHead>
                       <TableHead className="text-right">Ikimina</TableHead>
                       <TableHead className="text-right">Other Deductions</TableHead>
@@ -310,33 +348,54 @@ export default function PayrollBatchDetailsPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {paginatedRows.map((item: any) => {
-                      const basePay = Number(item.transaction?.base_amount ?? item.transaction?.gross_amount ?? 0);
-                      const allowanceOt = Number(item.transaction?.allowance_amount ?? 0);
-                      const tax = Number(item.transaction?.tax_amount ?? 0);
-                      const contribution = batch.ikimina_contributions?.find(
-                        (c: any) => c.employee_id === item.employee_id
-                      );
-                      const ikimina = contribution ? Number(contribution.amount) : null;
-                      const totalDeductions = Number(item.transaction?.total_deductions ?? 0);
-                      const otherDeductions = Math.max(0, totalDeductions - tax - (ikimina ?? 0));
-                      const netPay = Number(item.transaction?.net_amount ?? 0);
+                    {paginatedRows.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={12} className="text-center py-16 text-muted-foreground italic">
+                          No employees are attached to this payroll batch.
+                        </TableCell>
+                      </TableRow>
+                    ) : paginatedRows.map((item: any) => {
+                      const amounts = getPayrollItemAmounts(item, batch);
+                      const taxLabel = getPayrollTaxLabel(item);
+                      const frequency = item.transaction?.calculation_metadata?.configured_frequency ?? 'Configured';
 
                       return (
                         <TableRow key={item.uuid} className="hover:bg-secondary/10 transition-colors">
-                          <TableCell className="font-semibold">{`${item.employee?.first_name ?? ''} ${item.employee?.last_name ?? ''}`.trim()}</TableCell>
+                          <TableCell>
+                            <div className="flex flex-col">
+                              <span className="font-semibold">{`${item.employee?.first_name ?? ''} ${item.employee?.last_name ?? ''}`.trim()}</span>
+                              <span className="text-[10px] text-muted-foreground uppercase">{item.employee?.national_id || item.employee_id}</span>
+                            </div>
+                          </TableCell>
                           <TableCell className="text-sm font-mono">{item.employee?.phone_number || 'N/A'}</TableCell>
-                          <TableCell className="text-sm text-muted-foreground">{item.employee?.department?.name ?? 'Employee'}</TableCell>
-                          <TableCell className="text-right">{formatRwf(basePay)}</TableCell>
-                          <TableCell className="text-right text-emerald-600">{formatRwf(allowanceOt)}</TableCell>
-                          <TableCell className="text-right text-rose-600">-{formatRwf(tax)}</TableCell>
+                          <TableCell>
+                            <div className="flex flex-col">
+                              <span className="text-sm text-muted-foreground">{item.employee?.department?.name ?? 'Employee'}</span>
+                              <span className="text-[10px] font-medium uppercase text-muted-foreground">{frequency}</span>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex flex-col">
+                              <span className="text-sm font-medium">{amounts.attendanceDays}/{amounts.workDays ?? '-'} days</span>
+                              <span className="text-[10px] text-muted-foreground">{formatPeriodRange(amounts.periodStart, amounts.periodEnd)}</span>
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-right">{formatRwf(amounts.basePay)}</TableCell>
+                          <TableCell className="text-right text-emerald-600">{formatRwf(amounts.allowanceOt)}</TableCell>
+                          <TableCell className="text-right font-medium">{formatRwf(amounts.grossPay)}</TableCell>
+                          <TableCell className="text-right text-rose-600">
+                            <div className="flex flex-col">
+                              <span>{amounts.tax > 0 ? `-${formatRwf(amounts.tax)}` : '-'}</span>
+                              {amounts.tax > 0 && <span className="text-[10px] text-muted-foreground">{taxLabel}</span>}
+                            </div>
+                          </TableCell>
                           <TableCell className="text-right font-medium text-purple-600">
-                            {ikimina !== null ? `-${formatRwf(ikimina)}` : '—'}
+                            {amounts.ikimina > 0 ? `-${formatRwf(amounts.ikimina)}` : '—'}
                           </TableCell>
                           <TableCell className="text-right text-rose-600">
-                            {otherDeductions > 0 ? `-${formatRwf(otherDeductions)}` : '—'}
+                            {amounts.otherDeductions > 0 ? `-${formatRwf(amounts.otherDeductions)}` : '—'}
                           </TableCell>
-                          <TableCell className="text-right font-bold text-primary">{formatRwf(netPay)}</TableCell>
+                          <TableCell className="text-right font-bold text-primary">{formatRwf(amounts.netPay)}</TableCell>
                           <TableCell>
                             <div className="flex items-center gap-2">
                               <Badge 
@@ -363,20 +422,23 @@ export default function PayrollBatchDetailsPage() {
                     })}
 
                     {/* Totals Row */}
-                    <TableRow className="bg-secondary/20 font-bold border-t-2">
-                      <TableCell colSpan={3}>Total</TableCell>
-                      <TableCell className="text-right">{formatRwf(totals.totalBasePay)}</TableCell>
-                      <TableCell className="text-right text-emerald-600">{formatRwf(totals.totalAllowanceOt)}</TableCell>
-                      <TableCell className="text-right text-rose-600">-{formatRwf(totals.totalTax)}</TableCell>
-                      <TableCell className="text-right text-purple-600">
-                        {totals.totalIkimina > 0 ? `-${formatRwf(totals.totalIkimina)}` : '—'}
-                      </TableCell>
-                      <TableCell className="text-right text-rose-600">
-                        {totals.totalOtherDeductions > 0 ? `-${formatRwf(totals.totalOtherDeductions)}` : '—'}
-                      </TableCell>
-                      <TableCell className="text-right text-primary">{formatRwf(totals.totalNetPay)}</TableCell>
-                      <TableCell></TableCell>
-                    </TableRow>
+                    {rows.length > 0 && (
+                      <TableRow className="bg-secondary/20 font-bold border-t-2">
+                        <TableCell colSpan={4}>Total</TableCell>
+                        <TableCell className="text-right">{formatRwf(totals.totalBasePay)}</TableCell>
+                        <TableCell className="text-right text-emerald-600">{formatRwf(totals.totalAllowanceOt)}</TableCell>
+                        <TableCell className="text-right">{formatRwf(totals.totalGrossPay)}</TableCell>
+                        <TableCell className="text-right text-rose-600">-{formatRwf(totals.totalTax)}</TableCell>
+                        <TableCell className="text-right text-purple-600">
+                          {totals.totalIkimina > 0 ? `-${formatRwf(totals.totalIkimina)}` : '—'}
+                        </TableCell>
+                        <TableCell className="text-right text-rose-600">
+                          {totals.totalOtherDeductions > 0 ? `-${formatRwf(totals.totalOtherDeductions)}` : '—'}
+                        </TableCell>
+                        <TableCell className="text-right text-primary">{formatRwf(totals.totalNetPay)}</TableCell>
+                        <TableCell></TableCell>
+                      </TableRow>
+                    )}
                   </TableBody>
                 </Table>
               </div>

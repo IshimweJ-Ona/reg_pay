@@ -9,6 +9,12 @@ export interface CreatePayrollBatchPayload {
     start_date?: string;
     end_date?: string;
     work_days?: number;
+    categories?: string[];
+    overrides?: {
+        employee_id: string;
+        base_amount?: number;
+        phone_number?: string;
+    }[];
 }
 
 export const createPayrollBatch = async (payload: Partial<CreatePayrollBatchPayload> | any) => {

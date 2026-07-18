@@ -5,13 +5,11 @@ export interface CreateTimeRecordPayload {
     employee_id: string;
     attendance_date: string;
     hours_worked?: number;
-    overtime_hours?: number;
     attendance_status?: "PRESENT" | "ABSENT";
 }
 
 export interface UpdateTimeRecordPayload {
     hours_worked?: number;
-    overtime_hours?: number;
     attendance_status?: "PRESENT" | "ABSENT";
 }
 

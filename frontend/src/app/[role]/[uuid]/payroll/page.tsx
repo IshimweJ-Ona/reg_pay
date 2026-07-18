@@ -28,22 +28,33 @@ import { exportToCSV, exportToExcel } from '@/lib/export-utils';
 import { useToast } from '@/hooks/use-toast';
 import { userFriendlyError } from '@/lib/error-message';
 import { PendingBatchesModal } from '@/components/payroll/pending-batches-modal';
+import { formatPayrollDate, formatPayrollPeriod, formatRwf } from '@/lib/payroll-display';
 
-const formatRwf = (value: number) => `RWF ${value.toLocaleString()}`;
+const getBatchList = (payload: any) =>
+  Array.isArray(payload) ? payload : payload?.batches ?? [];
 
 function mapApiBatch(batch: any): PayrollBatch {
+  const submitter =
+    batch.submittedBy ??
+    batch.users_payment_batches_submitted_byTousers ??
+    batch.submitted_by_user;
+  const firstTransaction = batch.items?.[0]?.transaction;
+
   return {
     id: batch.uuid,
     batchId: batch.batch_code,
-    period: `${batch.payroll_month}/${batch.payroll_year}`,
+    period: formatPayrollPeriod(batch.payroll_month, batch.payroll_year),
     location: batch.working_location?.name ?? batch.working_location_id,
     department: 'All',
     employeeCount: batch.total_employees,
+    totalGross: Number(batch.total_gross ?? 0),
+    totalDeductions: Number(batch.total_deductions ?? 0),
+    totalTax: Number(batch.total_tax ?? 0),
     totalAmount: Number(batch.total_amount),
     status: batch.status,
-    createdBy: batch.submittedBy?.email ?? 'System',
+    createdBy: submitter?.email ?? submitter?.first_name ?? 'System',
     createdAt: batch.created_at,
-    paymentDate: batch.approved_at ?? batch.created_at,
+    paymentDate: firstTransaction?.payment_date ?? batch.approved_at ?? batch.created_at,
   };
 }
 
@@ -63,7 +74,7 @@ export default function PayrollAdminPage() {
   useEffect(() => {
     setIsLoading(true);
     getPayrollBatches()
-      .then((items) => setBatches((Array.isArray(items) ? items : []).map(mapApiBatch)))
+      .then((items) => setBatches(getBatchList(items).map(mapApiBatch)))
       .catch(() => setBatches([]))
       .finally(() => setIsLoading(false));
   }, []);
@@ -77,7 +88,9 @@ export default function PayrollAdminPage() {
 
   const filteredBatches = batches.filter(b => {
     const matchesSearch = b.batchId.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      b.location.toLowerCase().includes(searchTerm.toLowerCase());
+      b.location.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      b.status.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      b.createdBy.toLowerCase().includes(searchTerm.toLowerCase());
     
     if (activeTab === 'ACTIVE') {
       return matchesSearch && !['APPROVED', 'REJECTED'].includes(b.status);
@@ -92,9 +105,13 @@ export default function PayrollAdminPage() {
       Period: b.period,
       Location: b.location,
       Employees: b.employeeCount,
-      TotalAmount: b.totalAmount,
+      GrossPay: b.totalGross,
+      TotalTax: b.totalTax,
+      TotalDeductions: b.totalDeductions,
+      NetPay: b.totalAmount,
       Status: b.status,
-      CreatedAt: b.createdAt
+      CreatedAt: b.createdAt,
+      PaymentDate: b.paymentDate,
     }));
 
     if (type === 'csv') exportToCSV(exportData, 'payroll');
@@ -105,7 +122,7 @@ export default function PayrollAdminPage() {
     setIsLoading(true);
     try {
       const items = await getPayrollBatches();
-      setBatches((Array.isArray(items) ? items : []).map(mapApiBatch));
+      setBatches(getBatchList(items).map(mapApiBatch));
     } catch (error) {
       setBatches([]);
     } finally {
@@ -245,7 +262,9 @@ export default function PayrollAdminPage() {
               <TableHead className="font-bold">Period</TableHead>
               <TableHead className="font-bold">Location</TableHead>
               <TableHead className="font-bold">Employees</TableHead>
-              <TableHead className="font-bold">Total Amount</TableHead>
+              <TableHead className="font-bold text-right">Gross Pay</TableHead>
+              <TableHead className="font-bold text-right">Deductions</TableHead>
+              <TableHead className="font-bold text-right">Net Pay</TableHead>
               <TableHead className="font-bold">Status</TableHead>
               <TableHead className="font-bold">Created Date</TableHead>
               <TableHead className="font-bold">Submitted By</TableHead>
@@ -255,7 +274,7 @@ export default function PayrollAdminPage() {
           <TableBody>
             {isLoading ? (
               <TableRow>
-                <TableCell colSpan={9} className="text-center py-20 text-muted-foreground animate-pulse">Loading payroll batches...</TableCell>
+                <TableCell colSpan={11} className="text-center py-20 text-muted-foreground animate-pulse">Loading payroll batches...</TableCell>
               </TableRow>
             ) : filteredBatches.length > 0 ? filteredBatches.map((batch) => (
               <TableRow key={batch.id} className="hover:bg-secondary/20 transition-colors">
@@ -268,9 +287,16 @@ export default function PayrollAdminPage() {
                   </div>
                 </TableCell>
                 <TableCell>{batch.employeeCount}</TableCell>
-                <TableCell className="font-bold">{formatRwf(batch.totalAmount)}</TableCell>
+                <TableCell className="text-right font-medium">{formatRwf(batch.totalGross)}</TableCell>
+                <TableCell className="text-right">
+                  <div className="flex flex-col">
+                    <span className="font-medium text-rose-600">-{formatRwf(batch.totalDeductions)}</span>
+                    <span className="text-[10px] text-muted-foreground">PIT {formatRwf(batch.totalTax)}</span>
+                  </div>
+                </TableCell>
+                <TableCell className="text-right font-bold text-primary">{formatRwf(batch.totalAmount)}</TableCell>
                 <TableCell><PayrollStatusBadge status={batch.status} /></TableCell>
-                <TableCell className="text-muted-foreground">{batch.createdAt}</TableCell>
+                <TableCell className="text-muted-foreground">{formatPayrollDate(batch.createdAt)}</TableCell>
                 <TableCell className="text-muted-foreground text-xs">{batch.createdBy}</TableCell>
                 <TableCell>
                   <DropdownMenu>
@@ -303,7 +329,7 @@ export default function PayrollAdminPage() {
               </TableRow>
             )) : (
               <TableRow>
-                <TableCell colSpan={9} className="text-center py-20 text-muted-foreground italic">
+                <TableCell colSpan={11} className="text-center py-20 text-muted-foreground italic">
                   {activeTab === 'ACTIVE' 
                     ? "No pending payroll cycles awaiting review." 
                     : "No historical payroll records found in the archive."}

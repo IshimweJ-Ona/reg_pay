@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Badge } from '@/components/ui/badge';
 import { 
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue 
 } from "@/components/ui/select";
@@ -21,6 +22,50 @@ import { createPayrollBatch } from '@/api/payroll';
 import { getDepartments, getWorkingLocations } from '@/api/working_locations';
 import { useAuth } from '@/context/auth-context';
 import { userFriendlyError } from '@/lib/error-message';
+import { asPayrollNumber, formatRwf } from '@/lib/payroll-display';
+
+const getEmployeeLocation = (employee: any) =>
+  employee.working_location ?? employee.working_locations ?? null;
+
+const getEmployeeDepartment = (employee: any) =>
+  employee.department ?? employee.departments ?? null;
+
+const getEmployeeCategory = (employee: any) =>
+  employee.employment_category ?? employee.employment_categories ?? null;
+
+const getPaymentStructure = (employee: any) =>
+  employee.payment_structures?.[0] ?? null;
+
+const getPayrollFrequency = (employee: any) =>
+  getPaymentStructure(employee)?.payroll_frequency ??
+  getEmployeeCategory(employee)?.payroll_frequency ??
+  'UNSET';
+
+const getSalaryBasis = (employee: any) => {
+  const structure = getPaymentStructure(employee);
+  const frequency = getPayrollFrequency(employee);
+  return frequency === 'MONTHLY'
+    ? asPayrollNumber(structure?.basic_salary)
+    : asPayrollNumber(structure?.daily_rate ?? structure?.basic_salary);
+};
+
+const hasPaymentSetup = (employee: any) =>
+  Boolean(getPaymentStructure(employee)) && getSalaryBasis(employee) > 0;
+
+const employeeSearchText = (employee: any) =>
+  [
+    employee.first_name,
+    employee.last_name,
+    employee.phone_number,
+    employee.national_id,
+    getEmployeeDepartment(employee)?.name,
+    getEmployeeLocation(employee)?.name,
+    getEmployeeCategory(employee)?.name,
+    getPayrollFrequency(employee),
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
 
 export default function NewPayrollBatchPage() {
   const router = useRouter();
@@ -40,6 +85,7 @@ export default function NewPayrollBatchPage() {
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [workDays, setWorkDays] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
 
   const role = params.role as string;
   const uuid = params.uuid as string;
@@ -99,22 +145,37 @@ export default function NewPayrollBatchPage() {
     });
   }, [user?.location_id]);
 
-  const filteredEmployees = useMemo(() => {
+  const batchEmployees = useMemo(() => {
     return employees.filter(emp => {
-      const locationMatch = !workingLocationId || emp.working_location?.uuid === workingLocationId;
-      const departmentMatch = selectedDepartmentId === 'all' || emp.department?.uuid === selectedDepartmentId;
+      const location = getEmployeeLocation(emp);
+      const locationMatch = !workingLocationId || location?.uuid === workingLocationId;
+      const frequency = getPayrollFrequency(emp).toUpperCase();
+      const categoryMatch = selectedCategories.includes('ALL') || selectedCategories.includes(frequency);
+      const isActive = emp.status === 'ACTIVE';
       
-      const category = emp.employment_category?.name?.toUpperCase();
-      const categoryMatch = selectedCategories.includes('ALL') || (category && selectedCategories.includes(category));
-      
-      return locationMatch && departmentMatch && categoryMatch;
+      return isActive && locationMatch && categoryMatch;
     });
-  }, [employees, workingLocationId, selectedDepartmentId, selectedCategories]);
+  }, [employees, workingLocationId, selectedCategories]);
+
+  const filteredEmployees = useMemo(() => {
+    return batchEmployees.filter(emp => {
+      const department = getEmployeeDepartment(emp);
+      const departmentMatch = selectedDepartmentId === 'all' || department?.uuid === selectedDepartmentId;
+      const searchMatch = !searchTerm.trim() || employeeSearchText(emp).includes(searchTerm.toLowerCase());
+
+      return departmentMatch && searchMatch;
+    });
+  }, [batchEmployees, selectedDepartmentId, searchTerm]);
 
   const uniqueEmployeeCount = useMemo(() => {
-    const ids = new Set(filteredEmployees.map(e => e.id));
+    const ids = new Set(batchEmployees.map(e => e.id));
     return ids.size;
-  }, [filteredEmployees]);
+  }, [batchEmployees]);
+
+  const missingPaymentSetupCount = useMemo(
+    () => batchEmployees.filter((employee) => !hasPaymentSetup(employee)).length,
+    [batchEmployees],
+  );
 
   const [overrides, setOverrides] = useState<Record<string, { salary?: number; phone?: string }>>({});
 
@@ -136,6 +197,15 @@ export default function NewPayrollBatchPage() {
   };
 
   const handleSubmit = async () => {
+    if (missingPaymentSetupCount > 0) {
+      toast({
+        variant: 'destructive',
+        title: 'Payment setup incomplete',
+        description: `${missingPaymentSetupCount} active employee${missingPaymentSetupCount === 1 ? '' : 's'} need a valid payment structure before this batch can be created.`,
+      });
+      return;
+    }
+
     try {
       await createPayrollBatch({
         working_location_id: workingLocationId,
@@ -253,7 +323,7 @@ export default function NewPayrollBatchPage() {
                 </Select>
               </div>
               <div className="space-y-2 md:col-span-2">
-                <Label>Employee Categories</Label>
+                <Label>Payroll Frequencies</Label>
                 <div className="flex flex-wrap gap-2 mt-2">
                   {['ALL', 'MONTHLY', 'DAILY', 'CUSTOM'].map((cat) => (
                     <Button
@@ -293,7 +363,12 @@ export default function NewPayrollBatchPage() {
               <div className="flex items-center gap-2">
                 <div className="relative w-48">
                   <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground" />
-                  <Input placeholder="Search..." className="pl-7 h-8 text-xs" />
+                  <Input
+                    placeholder="Search..."
+                    className="pl-7 h-8 text-xs"
+                    value={searchTerm}
+                    onChange={(event) => setSearchTerm(event.target.value)}
+                  />
                 </div>
                 <Button variant="outline" size="sm" className="h-8"><Filter className="h-3 w-3" /></Button>
               </div>
@@ -304,25 +379,34 @@ export default function NewPayrollBatchPage() {
                   <TableRow>
                     <TableHead>Employee</TableHead>
                     <TableHead>Phone Number</TableHead>
-                    <TableHead>Payment Category</TableHead>
+                    <TableHead>Frequency</TableHead>
                     <TableHead>Salary Basis (Editable)</TableHead>
                     <TableHead>Department</TableHead>
+                    <TableHead>Payment Setup</TableHead>
                     <TableHead>Status</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredEmployees.map((emp) => {
-                    const base = Number(emp.payment_structures?.[0]?.basic_salary ?? 0);
-                    const daily = Number(emp.payment_structures?.[0]?.daily_rate ?? 0);
-                    const currentSalary = overrides[emp.id]?.salary ?? (base > 0 ? base : daily);
+                  {filteredEmployees.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={7} className="text-center py-16 text-muted-foreground italic">
+                        No active employees match this payroll preview.
+                      </TableCell>
+                    </TableRow>
+                  ) : filteredEmployees.map((emp) => {
+                    const category = getEmployeeCategory(emp);
+                    const department = getEmployeeDepartment(emp);
+                    const frequency = getPayrollFrequency(emp);
+                    const currentSalary = overrides[emp.id]?.salary ?? getSalaryBasis(emp);
                     const currentPhone = overrides[emp.id]?.phone ?? (emp.phone_number || '');
+                    const paymentReady = hasPaymentSetup(emp);
                     
                     return (
                       <TableRow key={emp.uuid}>
                         <TableCell>
                           <div className="flex flex-col">
                             <span className="font-medium text-sm">{`${emp.first_name} ${emp.last_name}`.trim()}</span>
-                            <span className="text-[10px] text-muted-foreground uppercase">{emp.department?.name ?? 'Unassigned'}</span>
+                            <span className="text-[10px] text-muted-foreground uppercase">{emp.national_id || emp.uuid}</span>
                           </div>
                         </TableCell>
                         <TableCell>
@@ -333,16 +417,33 @@ export default function NewPayrollBatchPage() {
                             onChange={(e) => handlePhoneChange(emp.id, e.target.value)}
                           />
                         </TableCell>
-                        <TableCell>{emp.employment_category?.name ?? 'Unassigned'}</TableCell>
                         <TableCell>
-                          <Input 
-                            type="text" 
-                            className="h-8 w-32 text-xs font-bold" 
-                            value={currentSalary}
-                            onChange={(e) => handleSalaryChange(emp.id, e.target.value)}
-                          />
+                          <div className="flex flex-col">
+                            <span className="font-medium text-sm">{frequency}</span>
+                            <span className="text-[10px] text-muted-foreground">{category?.name ?? 'Unassigned'}</span>
+                          </div>
                         </TableCell>
-                        <TableCell>{emp.department?.name ?? 'Unassigned'}</TableCell>
+                        <TableCell>
+                          <div className="flex flex-col gap-1">
+                            <Input
+                              type="text"
+                              className="h-8 w-32 text-xs font-bold"
+                              value={currentSalary}
+                              onChange={(e) => handleSalaryChange(emp.id, e.target.value)}
+                            />
+                            <span className="text-[10px] text-muted-foreground">
+                              {frequency === 'MONTHLY' ? 'Monthly basic' : 'Daily rate'} • {formatRwf(currentSalary)}
+                            </span>
+                          </div>
+                        </TableCell>
+                        <TableCell>{department?.name ?? 'Unassigned'}</TableCell>
+                        <TableCell>
+                          {paymentReady ? (
+                            <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/20">Ready</Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-rose-600 border-rose-200">Missing structure</Badge>
+                          )}
+                        </TableCell>
                         <TableCell>{emp.status}</TableCell>
                       </TableRow>
                     );
@@ -360,12 +461,24 @@ export default function NewPayrollBatchPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-6">
-            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 border-b border-white/20 pb-4">
-              <div className="flex items-center gap-2">
-                <Users className="h-4 w-4 opacity-70" />
-                <span className="text-sm">Total Employees</span>
+            <div className="grid grid-cols-1 gap-3 border-b border-white/20 pb-4">
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex items-center gap-2">
+                  <Users className="h-4 w-4 opacity-70" />
+                  <span className="text-sm">Batch Employees</span>
+                </div>
+                <span className="font-bold text-xl">{uniqueEmployeeCount}</span>
               </div>
-              <span className="font-bold text-xl">{uniqueEmployeeCount}</span>
+              <div className="flex items-center justify-between gap-4 text-sm">
+                <span className="opacity-80">Visible Preview</span>
+                <span className="font-bold">{filteredEmployees.length}</span>
+              </div>
+              <div className="flex items-center justify-between gap-4 text-sm">
+                <span className="opacity-80">Missing Payment Setup</span>
+                <span className={`font-bold ${missingPaymentSetupCount > 0 ? 'text-amber-200' : ''}`}>
+                  {missingPaymentSetupCount}
+                </span>
+              </div>
             </div>
 
             <p className="text-sm opacity-80">
@@ -376,12 +489,12 @@ export default function NewPayrollBatchPage() {
               <Button 
                 className="w-full bg-white text-primary hover:bg-white/90 font-bold h-12"
                 onClick={handleSubmit}
-                disabled={!workingLocationId || uniqueEmployeeCount === 0}
+                disabled={!workingLocationId || uniqueEmployeeCount === 0 || missingPaymentSetupCount > 0}
               >
                 <Save className="mr-2 h-4 w-4" /> Finalize Draft
               </Button>
               <p className="text-[10px] text-center opacity-60">
-                <ShieldCheck className="h-3 w-3 inline mr-1" /> All data encrypted with corporate standard AES-256
+                <ShieldCheck className="h-3 w-3 inline mr-1" /> Draft batches remain reviewable before approval
               </p>
             </div>
           </CardContent>

@@ -2,14 +2,6 @@
 
 import React, { useState, useEffect } from 'react';
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogFooter,
-} from "@/components/ui/dialog"; 
-import {
   Table,
   TableBody,
   TableCell,
@@ -19,16 +11,20 @@ import {
 } from "@/components/ui/table";
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Clock, CheckCircle, XCircle, Eye, AlertCircle, ChevronRight, User } from 'lucide-react';
+import { Clock, CheckCircle, XCircle, Eye, User } from 'lucide-react';
 import { getPayrollBatches, getPayrollBatch, approvePayrollBatch, rejectPayrollBatch, rejectPayrollItem } from '@/api/payroll';
 import { useToast } from '@/hooks/use-toast';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { userFriendlyError } from '@/lib/error-message';
+import { formatRwf, getPayrollItemAmounts } from '@/lib/payroll-display';
 
 interface PendingBatchesModalProps {
   isOpen: boolean;
   onClose: () => void;
   onRefresh: () => void;
 }
+
+const pendingStatuses = new Set(['PENDING', 'IN_REVIEW', 'MANAGER_APPROVED']);
 
 export function PendingBatchesModal({ isOpen, onClose, onRefresh }: PendingBatchesModalProps) {
   const [batches, setBatches] = useState<any[]>([]);
@@ -48,9 +44,14 @@ export function PendingBatchesModal({ isOpen, onClose, onRefresh }: PendingBatch
     try {
       const res = await getPayrollBatches();
       const allBatches = Array.isArray(res) ? res : res.batches || [];
-      setBatches(allBatches.filter((b: any) => b.status === 'PENDING' || b.status === 'IN_REVIEW'));
+      setBatches(allBatches.filter((b: any) => pendingStatuses.has(b.status)));
     } catch (error) {
       console.error('Failed to load pending batches:', error);
+      toast({
+        variant: 'destructive',
+        title: 'Load failed',
+        description: userFriendlyError(error, 'Could not load payroll batches awaiting review.'),
+      });
     } finally {
       setIsLoading(false);
     }
@@ -61,8 +62,12 @@ export function PendingBatchesModal({ isOpen, onClose, onRefresh }: PendingBatch
     try {
       const res = await getPayrollBatch(uuid);
       setSelectedBatch(res);
-    } catch (error) {
-      toast({ variant: 'destructive', title: 'Error', description: 'Failed to load batch details.' });
+    } catch (error: any) {
+      toast({
+        variant: 'destructive',
+        title: 'Batch unavailable',
+        description: userFriendlyError(error, 'Failed to load batch details.'),
+      });
     } finally {
       setIsLoading(false);
     }
@@ -77,7 +82,11 @@ export function PendingBatchesModal({ isOpen, onClose, onRefresh }: PendingBatch
       loadPendingBatches();
       onRefresh();
     } catch (error: any) {
-      toast({ variant: 'destructive', title: 'Error', description: error?.response?.data?.message || 'Approval failed.' });
+      toast({
+        variant: 'destructive',
+        title: 'Approval failed',
+        description: userFriendlyError(error, 'Please review the payroll details and try again.'),
+      });
     } finally {
       setIsActionLoading(false);
     }
@@ -95,7 +104,11 @@ export function PendingBatchesModal({ isOpen, onClose, onRefresh }: PendingBatch
       loadPendingBatches();
       onRefresh();
     } catch (error: any) {
-      toast({ variant: 'destructive', title: 'Error', description: error?.response?.data?.message || 'Rejection failed.' });
+      toast({
+        variant: 'destructive',
+        title: 'Rejection failed',
+        description: userFriendlyError(error, 'Please review the payroll details and try again.'),
+      });
     } finally {
       setIsActionLoading(false);
     }
@@ -108,11 +121,15 @@ export function PendingBatchesModal({ isOpen, onClose, onRefresh }: PendingBatch
     setIsActionLoading(true);
     try {
       await rejectPayrollItem(itemUuid, reason);
-      toast({ title: 'Employee Denied', description: 'The employee has been removed from this batch.' });
+      toast({ title: 'Employee rejected', description: 'The employee has been marked as rejected in this batch.' });
       // Refresh batch details
       if (selectedBatch) handleViewBatch(selectedBatch.uuid);
     } catch (error: any) {
-      toast({ variant: 'destructive', title: 'Error', description: error?.response?.data?.message || 'Failed to deny employee.' });
+      toast({
+        variant: 'destructive',
+        title: 'Employee rejection failed',
+        description: userFriendlyError(error, 'Failed to reject employee.'),
+      });
     } finally {
       setIsActionLoading(false);
     }
@@ -183,7 +200,7 @@ export function PendingBatchesModal({ isOpen, onClose, onRefresh }: PendingBatch
                       <XCircle className="mr-2 h-4 w-4" /> Decline Batch
                     </Button>
                     <Button className="bg-emerald-600 hover:bg-emerald-700 shadow-lg shadow-emerald-600/20" onClick={() => handleApproveBatch(selectedBatch.uuid)} disabled={isActionLoading}>
-                      <CheckCircle className="mr-2 h-4 w-4" /> Approve & Disburse
+                      <CheckCircle className="mr-2 h-4 w-4" /> Approve Batch
                     </Button>
                   </div>
                 </div>
@@ -198,38 +215,46 @@ export function PendingBatchesModal({ isOpen, onClose, onRefresh }: PendingBatch
                       <TableHeader className="sticky top-0 bg-white z-10">
                         <TableRow>
                           <TableHead>Employee</TableHead>
+                          <TableHead>Days</TableHead>
                           <TableHead>Gross</TableHead>
+                          <TableHead>Deductions</TableHead>
                           <TableHead>Net Payable</TableHead>
                           <TableHead className="text-right">Action</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {selectedBatch.items?.map((item: any) => (
-                          <TableRow key={item.uuid} className={item.status === 'REJECTED' ? 'opacity-50 grayscale' : ''}>
-                            <TableCell>
-                              <div className="flex items-center gap-3">
-                                <div className="h-8 w-8 rounded-full bg-slate-100 flex items-center justify-center">
-                                  <User className="h-4 w-4 text-slate-500" />
+                        {selectedBatch.items?.map((item: any) => {
+                          const amounts = getPayrollItemAmounts(item, selectedBatch);
+
+                          return (
+                            <TableRow key={item.uuid} className={item.status === 'REJECTED' ? 'opacity-50 grayscale' : ''}>
+                              <TableCell>
+                                <div className="flex items-center gap-3">
+                                  <div className="h-8 w-8 rounded-full bg-slate-100 flex items-center justify-center">
+                                    <User className="h-4 w-4 text-slate-500" />
+                                  </div>
+                                  <div className="flex flex-col">
+                                    <span className="font-semibold text-sm">{item.employee?.first_name} {item.employee?.last_name}</span>
+                                    <span className="text-[10px] text-muted-foreground uppercase">{item.employee?.national_id}</span>
+                                  </div>
                                 </div>
-                                <div className="flex flex-col">
-                                  <span className="font-semibold text-sm">{item.employee?.first_name} {item.employee?.last_name}</span>
-                                  <span className="text-[10px] text-muted-foreground uppercase">{item.employee?.national_id}</span>
-                                </div>
-                              </div>
-                            </TableCell>
-                            <TableCell className="text-xs font-medium">RWF {Number(item.transaction?.gross_amount).toLocaleString()}</TableCell>
-                            <TableCell className="text-sm font-bold text-slate-900">RWF {Number(item.transaction?.net_amount).toLocaleString()}</TableCell>
-                            <TableCell className="text-right">
-                              {item.status !== 'REJECTED' ? (
-                                <Button variant="ghost" size="sm" className="h-8 text-rose-600 hover:text-rose-700 hover:bg-rose-50 font-bold text-xs" onClick={() => handleRejectItem(item.uuid)} disabled={isActionLoading}>
-                                  Deny
-                                </Button>
-                              ) : (
-                                <Badge variant="secondary" className="text-[10px]">Denied</Badge>
-                              )}
-                            </TableCell>
-                          </TableRow>
-                        ))}
+                              </TableCell>
+                              <TableCell className="text-xs font-medium">{amounts.attendanceDays}/{amounts.workDays ?? '-'}</TableCell>
+                              <TableCell className="text-xs font-medium">{formatRwf(amounts.grossPay)}</TableCell>
+                              <TableCell className="text-xs font-medium text-rose-600">-{formatRwf(amounts.totalDeductions)}</TableCell>
+                              <TableCell className="text-sm font-bold text-slate-900">{formatRwf(amounts.netPay)}</TableCell>
+                              <TableCell className="text-right">
+                                {item.status !== 'REJECTED' ? (
+                                  <Button variant="ghost" size="sm" className="h-8 text-rose-600 hover:text-rose-700 hover:bg-rose-50 font-bold text-xs" onClick={() => handleRejectItem(item.uuid)} disabled={isActionLoading}>
+                                    Reject
+                                  </Button>
+                                ) : (
+                                  <Badge variant="secondary" className="text-[10px]">Rejected</Badge>
+                                )}
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
                       </TableBody>
                     </Table>
                   </ScrollArea>

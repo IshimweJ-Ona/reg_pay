@@ -89,7 +89,8 @@ function IkiminaManagementContent() {
     return memberships.filter((m) => {
       const name = `${m.employee?.first_name ?? ''} ${m.employee?.last_name ?? ''}`.toLowerCase();
       const matchesSearch = name.includes(searchTerm.toLowerCase()) || 
-        (m.employee?.department?.name ?? '').toLowerCase().includes(searchTerm.toLowerCase());
+        (m.employee?.department?.name ?? '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (m.employee?.working_location?.name ?? '').toLowerCase().includes(searchTerm.toLowerCase());
       
       const matchesStatus = statusFilter === 'ALL' || 
         (statusFilter === 'ACTIVE' && m.is_active) || 
@@ -201,6 +202,7 @@ function IkiminaManagementContent() {
             ...c,
             employeeName: `${m.employee?.first_name ?? ''} ${m.employee?.last_name ?? ''}`.trim(),
             department: m.employee?.department?.name ?? '—',
+            workingLocation: m.employee?.working_location?.name ?? '—',
           });
         });
       }
@@ -307,7 +309,7 @@ function IkiminaManagementContent() {
             <div className="flex-1 relative">
               <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input 
-                placeholder="Search member by name or department..." 
+                placeholder="Search member by name, department, or working location..." 
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="pl-9"
@@ -347,6 +349,7 @@ function IkiminaManagementContent() {
                 <TableHeader className="bg-secondary/30">
                   <TableRow>
                     <TableHead>Employee</TableHead>
+                    <TableHead>Working Location</TableHead>
                     <TableHead>Department</TableHead>
                     <TableHead className="text-right">Monthly Deduction</TableHead>
                     <TableHead className="text-right">Total Savings</TableHead>
@@ -358,13 +361,13 @@ function IkiminaManagementContent() {
                 <TableBody>
                   {loading ? (
                     <TableRow>
-                      <TableCell colSpan={canManage ? 7 : 6} className="text-center py-8 text-muted-foreground">
+                      <TableCell colSpan={canManage ? 8 : 7} className="text-center py-8 text-muted-foreground">
                         Loading memberships...
                       </TableCell>
                     </TableRow>
                   ) : filteredMemberships.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={canManage ? 7 : 6} className="text-center py-8 text-muted-foreground">
+                      <TableCell colSpan={canManage ? 8 : 7} className="text-center py-8 text-muted-foreground">
                         No Ikimina savings plans found.
                       </TableCell>
                     </TableRow>
@@ -372,6 +375,7 @@ function IkiminaManagementContent() {
                     filteredMemberships.map((m) => (
                       <TableRow key={m.uuid} className="hover:bg-secondary/10 transition-colors">
                         <TableCell className="font-semibold">{`${m.employee?.first_name ?? ''} ${m.employee?.last_name ?? ''}`.trim()}</TableCell>
+                        <TableCell className="text-sm text-muted-foreground">{m.employee?.working_location?.name ?? '—'}</TableCell>
                         <TableCell className="text-sm text-muted-foreground">{m.employee?.department?.name ?? '—'}</TableCell>
                         <TableCell className="text-right font-medium">{formatRwf(m.monthly_amount)}</TableCell>
                         <TableCell className="text-right font-bold text-emerald-600">{formatRwf(m.total_savings ?? 0)}</TableCell>
@@ -414,6 +418,7 @@ function IkiminaManagementContent() {
                   <TableRow>
                     <TableHead>Date</TableHead>
                     <TableHead>Employee</TableHead>
+                    <TableHead>Working Location</TableHead>
                     <TableHead>Department</TableHead>
                     <TableHead>Batch Code / Reference</TableHead>
                     <TableHead className="text-right">Deducted Amount</TableHead>
@@ -422,13 +427,13 @@ function IkiminaManagementContent() {
                 <TableBody>
                   {loading ? (
                     <TableRow>
-                      <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+                      <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
                         Loading contributions ledger...
                       </TableCell>
                     </TableRow>
                   ) : allContributions.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+                      <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
                         No transactions recorded in the savings ledger.
                       </TableCell>
                     </TableRow>
@@ -437,6 +442,7 @@ function IkiminaManagementContent() {
                       <TableRow key={c.uuid} className="hover:bg-secondary/10 transition-colors">
                         <TableCell className="text-sm font-medium">{new Date(c.contribution_date).toLocaleDateString()}</TableCell>
                         <TableCell className="font-semibold">{c.employeeName}</TableCell>
+                        <TableCell className="text-sm text-muted-foreground">{c.workingLocation}</TableCell>
                         <TableCell className="text-sm text-muted-foreground">{c.department}</TableCell>
                         <TableCell className="text-sm font-mono text-muted-foreground">
                           {c.payroll_batch_id ? `Payroll Batch` : 'Manual Adjustment'}
