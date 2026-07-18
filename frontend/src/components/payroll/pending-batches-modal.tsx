@@ -17,6 +17,7 @@ import { useToast } from '@/hooks/use-toast';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { userFriendlyError } from '@/lib/error-message';
 import { formatRwf, getPayrollItemAmounts } from '@/lib/payroll-display';
+import { useAuth } from '@/context/auth-context';
 
 interface PendingBatchesModalProps {
   isOpen: boolean;
@@ -27,11 +28,15 @@ interface PendingBatchesModalProps {
 const pendingStatuses = new Set(['PENDING', 'IN_REVIEW', 'MANAGER_APPROVED']);
 
 export function PendingBatchesModal({ isOpen, onClose, onRefresh }: PendingBatchesModalProps) {
+  const { user } = useAuth();
   const [batches, setBatches] = useState<any[]>([]);
   const [selectedBatch, setSelectedBatch] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isActionLoading, setIsActionLoading] = useState(false);
   const { toast } = useToast();
+  const roles = user?.roles ?? [];
+  const isSuperAdmin = roles.includes('SUPER_ADMIN');
+  const isBranchManager = roles.includes('BRANCH_MANAGER');
 
   useEffect(() => {
     if (isOpen) {
@@ -135,6 +140,15 @@ export function PendingBatchesModal({ isOpen, onClose, onRefresh }: PendingBatch
     }
   };
 
+  const canReviewBatch = (batch: any) => {
+    if (!batch || ['APPROVED', 'REJECTED'].includes(batch.status)) return false;
+    if (batch.status === 'MANAGER_APPROVED') return isSuperAdmin;
+    if (batch.status === 'PENDING' || batch.status === 'IN_REVIEW') {
+      return isBranchManager || isSuperAdmin;
+    }
+    return false;
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -195,14 +209,16 @@ export function PendingBatchesModal({ isOpen, onClose, onRefresh }: PendingBatch
                       <p className="text-sm text-muted-foreground">{selectedBatch.working_location?.name} • {selectedBatch.payroll_month}/{selectedBatch.payroll_year}</p>
                     </div>
                   </div>
-                  <div className="flex gap-2">
-                    <Button variant="outline" className="text-destructive hover:bg-destructive/10 border-destructive/20" onClick={() => handleRejectBatch(selectedBatch.uuid)} disabled={isActionLoading}>
-                      <XCircle className="mr-2 h-4 w-4" /> Decline Batch
-                    </Button>
-                    <Button className="bg-emerald-600 hover:bg-emerald-700 shadow-lg shadow-emerald-600/20" onClick={() => handleApproveBatch(selectedBatch.uuid)} disabled={isActionLoading}>
-                      <CheckCircle className="mr-2 h-4 w-4" /> Approve Batch
-                    </Button>
-                  </div>
+                  {canReviewBatch(selectedBatch) && (
+                    <div className="flex gap-2">
+                      <Button variant="outline" className="text-destructive hover:bg-destructive/10 border-destructive/20" onClick={() => handleRejectBatch(selectedBatch.uuid)} disabled={isActionLoading}>
+                        <XCircle className="mr-2 h-4 w-4" /> Decline Batch
+                      </Button>
+                      <Button className="bg-emerald-600 hover:bg-emerald-700 shadow-lg shadow-emerald-600/20" onClick={() => handleApproveBatch(selectedBatch.uuid)} disabled={isActionLoading}>
+                        <CheckCircle className="mr-2 h-4 w-4" /> Approve Batch
+                      </Button>
+                    </div>
+                  )}
                 </div>
                 
                 <div className="flex-1 overflow-hidden flex flex-col">
@@ -244,12 +260,14 @@ export function PendingBatchesModal({ isOpen, onClose, onRefresh }: PendingBatch
                               <TableCell className="text-xs font-medium text-rose-600">-{formatRwf(amounts.totalDeductions)}</TableCell>
                               <TableCell className="text-sm font-bold text-slate-900">{formatRwf(amounts.netPay)}</TableCell>
                               <TableCell className="text-right">
-                                {item.status !== 'REJECTED' ? (
+                                {item.status === 'REJECTED' ? (
+                                  <Badge variant="secondary" className="text-[10px]">Rejected</Badge>
+                                ) : canReviewBatch(selectedBatch) ? (
                                   <Button variant="ghost" size="sm" className="h-8 text-rose-600 hover:text-rose-700 hover:bg-rose-50 font-bold text-xs" onClick={() => handleRejectItem(item.uuid)} disabled={isActionLoading}>
                                     Reject
                                   </Button>
                                 ) : (
-                                  <Badge variant="secondary" className="text-[10px]">Rejected</Badge>
+                                  null
                                 )}
                               </TableCell>
                             </TableRow>

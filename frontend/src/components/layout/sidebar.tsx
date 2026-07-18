@@ -45,7 +45,7 @@ export function Sidebar({ type }: SidebarProps) {
       name: 'Branches', 
       href: `${basePath}/locations`, 
       icon: MapPin, 
-      permission: 'branches.manage'
+      permission: 'branches.read_all'
     },
     { name: 'Departments', href: `${basePath}/departments`, icon: Building2, permission: 'departments.manage' },
     { name: 'Attendance', href: `${basePath}/attendance`, icon: Calendar, permission: 'attendance.read' },

@@ -38,9 +38,11 @@ import { useToast } from '@/hooks/use-toast';
 import { getDepartments, createDepartment, updateDepartment, deleteDepartment } from '@/api/working_locations';
 import { userFriendlyError } from '@/lib/error-message';
 import { useAuth } from '@/context/auth-context';
+import { useRouter } from 'next/navigation';
 
 export default function DepartmentsManagementPage() {
-  const { user } = useAuth();
+  const { user, hasPermission, isLoading } = useAuth();
+  const router = useRouter();
   const [departments, setDepartments] = useState<any[]>([]);
   const [editingDep, setEditingDep] = useState<any | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -48,6 +50,8 @@ export default function DepartmentsManagementPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [archiveId, setArchiveId] = useState<string | null>(null);
   const { toast } = useToast();
+  const canManageDepartments = hasPermission('departments.manage');
+  const canReadAllBranches = hasPermission('branches.read_all');
 
   const loadData = async () => {
     try {
@@ -63,6 +67,12 @@ export default function DepartmentsManagementPage() {
   };
 
   useEffect(() => {
+    if (isLoading) return;
+    if (!canManageDepartments) {
+      router.replace('/unauthorized');
+      return;
+    }
+
     loadData();
 
     // Listen for global system updates (via SSE) to refresh data instantly
@@ -75,17 +85,16 @@ export default function DepartmentsManagementPage() {
 
     window.addEventListener('system_update', handleSystemUpdate);
     return () => window.removeEventListener('system_update', handleSystemUpdate);
-  }, []);
+  }, [isLoading, canManageDepartments, router]);
 
   const departmentRows = useMemo(() => {
     const grouped = new Map<string, any>();
     departments.forEach((dept) => {
-      // In scoped view (for branch managers), we don't group, we show as is
-      const isSuperAdmin = user?.roles?.includes('SUPER_ADMIN');
-      const key = isSuperAdmin ? (dept.code || dept.name) : dept.uuid;
+      // In scoped view, don't group across branches.
+      const key = canReadAllBranches ? (dept.code || dept.name) : dept.uuid;
       
       const existing = grouped.get(key);
-      if (existing && isSuperAdmin) {
+      if (existing && canReadAllBranches) {
         existing.personnel += dept._count?.users ?? 0;
         existing.employees += dept._count?.employees ?? 0;
         existing.branchCount += 1;
@@ -99,14 +108,14 @@ export default function DepartmentsManagementPage() {
       }
     });
     return Array.from(grouped.values());
-  }, [departments, user]);
+  }, [departments, canReadAllBranches]);
 
   const filteredDepartments = departmentRows.filter(dept => 
     dept.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
     dept.code.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const isSuperAdmin = user?.roles?.includes('SUPER_ADMIN');
+  if (isLoading || !canManageDepartments) return null;
 
   const handleCreate = async () => {
     try {
@@ -167,9 +176,13 @@ export default function DepartmentsManagementPage() {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-headline font-bold">Department Directory</h1>
-          <p className="text-muted-foreground">View department names and personnel totals across all branches.</p>
+          <p className="text-muted-foreground">
+            {canReadAllBranches
+              ? 'View department names and personnel totals across all branches.'
+              : `Manage departments in ${user?.location ?? 'your branch'}.`}
+          </p>
         </div>
-        {isSuperAdmin && (
+        {canManageDepartments && (
           <Button className="h-11 px-6 shadow-lg shadow-primary/20" onClick={() => setIsCreateModalOpen(true)}>
             <Plus className="mr-2 h-4 w-4" /> Create Department
           </Button>
@@ -223,7 +236,7 @@ export default function DepartmentsManagementPage() {
                 </TableCell>
                 <TableCell className="text-sm text-muted-foreground">{dept.branchCount}</TableCell>
                 <TableCell>
-                  {isSuperAdmin && (
+                  {canManageDepartments && (
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <Button variant="ghost" size="icon"><MoreVertical className="h-4 w-4" /></Button>
@@ -252,7 +265,11 @@ export default function DepartmentsManagementPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Create New Department</DialogTitle>
-            <DialogDescription>This department will be available in every current and future branch.</DialogDescription>
+            <DialogDescription>
+              {canReadAllBranches
+                ? 'This department will be available in every current and future branch.'
+                : 'This department will be created in your assigned branch.'}
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">

@@ -17,7 +17,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { PermissionGate } from '@/components/auth/permission-gate';
@@ -29,6 +28,7 @@ import { useToast } from '@/hooks/use-toast';
 import { userFriendlyError } from '@/lib/error-message';
 import { PendingBatchesModal } from '@/components/payroll/pending-batches-modal';
 import { formatPayrollDate, formatPayrollPeriod, formatRwf } from '@/lib/payroll-display';
+import { useAuth } from '@/context/auth-context';
 
 const getBatchList = (payload: any) =>
   Array.isArray(payload) ? payload : payload?.batches ?? [];
@@ -60,6 +60,7 @@ function mapApiBatch(batch: any): PayrollBatch {
 
 export default function PayrollAdminPage() {
   const params = useParams();
+  const { user } = useAuth();
   const { toast } = useToast();
   const [searchTerm, setSearchTerm] = useState('');
   const [batches, setBatches] = useState<PayrollBatch[]>([]);
@@ -70,6 +71,9 @@ export default function PayrollAdminPage() {
   const role = params.role as string;
   const uuid = params.uuid as string;
   const basePath = `/${role}/${uuid}`;
+  const roles = user?.roles ?? [];
+  const isSuperAdmin = roles.includes('SUPER_ADMIN');
+  const isBranchManager = roles.includes('BRANCH_MANAGER');
 
   useEffect(() => {
     setIsLoading(true);
@@ -169,6 +173,15 @@ export default function PayrollAdminPage() {
         description: userFriendlyError(error, 'Could not download this payroll batch.'),
       });
     }
+  };
+
+  const canReviewBatch = (batch: PayrollBatch) => {
+    if (['APPROVED', 'REJECTED'].includes(batch.status)) return false;
+    if (batch.status === 'MANAGER_APPROVED') return isSuperAdmin;
+    if (batch.status === 'PENDING' || batch.status === 'IN_REVIEW') {
+      return isBranchManager || isSuperAdmin;
+    }
+    return false;
   };
 
   return (
@@ -314,15 +327,16 @@ export default function PayrollAdminPage() {
                       <DropdownMenuItem onClick={() => handleBatchExport(batch)}>
                         <Download className="mr-2 h-4 w-4" /> Export CSV
                       </DropdownMenuItem>
-                      <PermissionGate permission="payroll.approve">
-                        <DropdownMenuItem className="text-emerald-600" onClick={() => handleApprove(batch)}>
-                          <CheckCircle className="mr-2 h-4 w-4" /> Approve
-                        </DropdownMenuItem>
-                        <DropdownMenuItem className="text-destructive" onClick={() => handleReject(batch)}>
-                          <XCircle className="mr-2 h-4 w-4" /> Reject
-                        </DropdownMenuItem>
-                      </PermissionGate>
-                      <DropdownMenuSeparator />
+                      {canReviewBatch(batch) && (
+                        <PermissionGate permission="payroll.approve">
+                          <DropdownMenuItem className="text-emerald-600" onClick={() => handleApprove(batch)}>
+                            <CheckCircle className="mr-2 h-4 w-4" /> Approve
+                          </DropdownMenuItem>
+                          <DropdownMenuItem className="text-destructive" onClick={() => handleReject(batch)}>
+                            <XCircle className="mr-2 h-4 w-4" /> Reject
+                          </DropdownMenuItem>
+                        </PermissionGate>
+                      )}
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </TableCell>

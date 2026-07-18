@@ -29,14 +29,20 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { getWorkingLocations, createWorkingLocation, updateWorkingLocation } from '@/api/working_locations';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { userFriendlyError } from '@/lib/error-message';
+import { useAuth } from '@/context/auth-context';
+import { useRouter } from 'next/navigation';
 
 export default function LocationsManagementPage() {
+  const { hasPermission, isLoading } = useAuth();
+  const router = useRouter();
   const [locations, setLocations] = useState<any[]>([]);
   const [editingLoc, setEditingLoc] = useState<any | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [newLoc, setNewLoc] = useState({ name: '', type: 'BRANCH' as const, address: '' });
   const [searchQuery, setSearchQuery] = useState('');
   const { toast } = useToast();
+  const canReadAllBranches = hasPermission('branches.read_all');
+  const canManageBranches = hasPermission('branches.manage');
 
   const loadLocations = async () => {
     try {
@@ -52,9 +58,14 @@ export default function LocationsManagementPage() {
   };
 
   useEffect(() => {
+    if (isLoading) return;
+    if (!canReadAllBranches) {
+      router.replace('/unauthorized');
+      return;
+    }
     loadNotifications();
     loadLocations();
-  }, [toast]);
+  }, [isLoading, canReadAllBranches, router, toast]);
 
   // Dummy function just to satisfy the interval added in previous turn if I were to copy paste, but I don't need it here.
   const loadNotifications = () => {};
@@ -63,6 +74,8 @@ export default function LocationsManagementPage() {
     loc.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
     loc.address.toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  if (isLoading || !canReadAllBranches) return null;
 
   const handleCreate = async () => {
     try {
@@ -106,9 +119,11 @@ export default function LocationsManagementPage() {
           <h1 className="text-3xl font-headline font-bold">Branches</h1>
           <p className="text-muted-foreground">Manage headquarters and branch locations.</p>
         </div>
-        <Button className="h-11 px-6 shadow-lg shadow-primary/20" onClick={() => setIsCreateModalOpen(true)}>
-          <Plus className="mr-2 h-4 w-4" /> Create Branch
-        </Button>
+        {canManageBranches && (
+          <Button className="h-11 px-6 shadow-lg shadow-primary/20" onClick={() => setIsCreateModalOpen(true)}>
+            <Plus className="mr-2 h-4 w-4" /> Create Branch
+          </Button>
+        )}
       </div>
 
       <div className="relative w-full max-w-md">
@@ -129,7 +144,7 @@ export default function LocationsManagementPage() {
               <TableHead className="font-bold">Type</TableHead>
               <TableHead className="font-bold">People and departments</TableHead>
               <TableHead className="font-bold">Status</TableHead>
-              <TableHead className="w-[80px]"></TableHead>
+              {canManageBranches && <TableHead className="w-[80px]"></TableHead>}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -162,30 +177,32 @@ export default function LocationsManagementPage() {
                 <TableCell>
                   <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/20">Operational</Badge>
                 </TableCell>
-                <TableCell>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon"><MoreVertical className="h-4 w-4" /></Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem onClick={() => setEditingLoc(loc)}>
-                        <Edit className="mr-2 h-4 w-4" /> Edit Details
-                      </DropdownMenuItem>
-                      <TooltipProvider>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <DropdownMenuItem className="text-muted-foreground opacity-50 cursor-not-allowed">
-                              <ShieldAlert className="mr-2 h-4 w-4" /> Deletion Restricted
-                            </DropdownMenuItem>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            Node deletion is restricted to protect corporate hierarchy.
-                          </TooltipContent>
-                        </Tooltip>
-                      </TooltipProvider>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </TableCell>
+                {canManageBranches && (
+                  <TableCell>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="icon"><MoreVertical className="h-4 w-4" /></Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => setEditingLoc(loc)}>
+                          <Edit className="mr-2 h-4 w-4" /> Edit Details
+                        </DropdownMenuItem>
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <DropdownMenuItem className="text-muted-foreground opacity-50 cursor-not-allowed">
+                                <ShieldAlert className="mr-2 h-4 w-4" /> Deletion Restricted
+                              </DropdownMenuItem>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              Node deletion is restricted to protect corporate hierarchy.
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </TableCell>
+                )}
               </TableRow>
             ))}
           </TableBody>

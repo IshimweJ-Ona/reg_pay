@@ -109,6 +109,7 @@ function UsersManagementContent() {
   const { user: currentUser, hasPermission } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
+  const canReadAllBranches = hasPermission('branches.read_all');
   const [users, setUsers] = useState<User[]>([]);
   const [roles, setRoles] = useState<any[]>([]);
   const [allPermissions, setAllPermissions] = useState<any[]>([]);
@@ -188,8 +189,15 @@ function UsersManagementContent() {
 
     if (hasPermission('users.approve')) {
       try {
-        const [locRes, depRes] = await Promise.all([getWorkingLocations(), getDepartments()]);
-        setLocations(locRes.working_locations || (Array.isArray(locRes) ? locRes : []));
+        const [locRes, depRes] = await Promise.all([
+          canReadAllBranches ? getWorkingLocations() : Promise.resolve({ working_locations: [] }),
+          getDepartments(),
+        ]);
+        setLocations(
+          canReadAllBranches
+            ? locRes.working_locations || (Array.isArray(locRes) ? locRes : [])
+            : [],
+        );
         setDepartments(depRes.departments || (Array.isArray(depRes) ? depRes : []));
       } catch (error) {
         // Non-fatal: the approval panel's branch/department selects just stay empty.
@@ -485,20 +493,22 @@ function UsersManagementContent() {
                       Choose a branch and at least one role, then approve to activate this account, or reject to deny it.
                     </p>
 
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-1.5">
-                        <Label className="text-xs font-bold">Branch</Label>
-                        <select
-                          className="w-full h-9 rounded-lg border bg-white px-2 text-sm"
-                          value={approveWorkingLocationId}
-                          onChange={(e) => { setApproveWorkingLocationId(e.target.value); setApproveDepartmentId(''); }}
-                        >
-                          <option value="">Select branch</option>
-                          {locations.map((l: any) => (
-                            <option key={l.uuid ?? l.id} value={l.uuid ?? l.id}>{l.name}</option>
-                          ))}
-                        </select>
-                      </div>
+                    <div className={cn("grid gap-3", canReadAllBranches ? "grid-cols-2" : "grid-cols-1")}>
+                      {canReadAllBranches && (
+                        <div className="space-y-1.5">
+                          <Label className="text-xs font-bold">Branch</Label>
+                          <select
+                            className="w-full h-9 rounded-lg border bg-white px-2 text-sm"
+                            value={approveWorkingLocationId}
+                            onChange={(e) => { setApproveWorkingLocationId(e.target.value); setApproveDepartmentId(''); }}
+                          >
+                            <option value="">Select branch</option>
+                            {locations.map((l: any) => (
+                              <option key={l.uuid ?? l.id} value={l.uuid ?? l.id}>{l.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
                       <div className="space-y-1.5">
                         <Label className="text-xs font-bold">Department (optional)</Label>
                         <select
