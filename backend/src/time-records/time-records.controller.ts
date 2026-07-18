@@ -83,6 +83,23 @@ export class TimeRecordsController {
   }
 
   @Permissions('attendance.read')
+  @Get('pending')
+  findPending(
+    @CurrentUser() actor: CurrentUserType,
+    @Query('start_date') startDate?: string,
+    @Query('end_date') endDate?: string,
+    @Query('working_location_id') workingLocationId?: string,
+    @Query('category') category?: string,
+  ) {
+    return this.timeRecordsService.findPending(actor, {
+      start_date: startDate,
+      end_date: endDate,
+      working_location_id: workingLocationId,
+      category,
+    });
+  }
+
+  @Permissions('attendance.read')
   @Get()
   findAll(
     @CurrentUser() actor: CurrentUserType,

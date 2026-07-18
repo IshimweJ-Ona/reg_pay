@@ -1,4 +1,3 @@
-import { ATTENDANCE_STATUS } from '@prisma/client';
 import {
   IsDateString,
   IsEnum,
@@ -10,13 +9,18 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
+export enum AttendanceStatus {
+  PRESENT = 'PRESENT',
+  ABSENT = 'ABSENT',
+}
+
 export class CreateTimeRecordDto {
   @IsString()
   @IsNotEmpty()
-  employee_id: string;
+  employee_id!: string;
 
   @IsDateString()
-  attendance_date: string;
+  attendance_date!: string;
 
   @IsOptional()
   @IsNumber()
@@ -24,14 +28,7 @@ export class CreateTimeRecordDto {
   @Type(() => Number)
   hours_worked?: number;
 
-  
   @IsOptional()
-  @IsNumber()
-  @Min(0)
-  @Type(() => Number)
-  overtime_hours?: number;
-
-  @IsOptional()
-  @IsEnum(ATTENDANCE_STATUS)
-  attendance_status?: ATTENDANCE_STATUS;
+  @IsEnum(AttendanceStatus)
+  attendance_status?: AttendanceStatus;
 }

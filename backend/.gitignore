@@ -2,12 +2,16 @@ node_modules/
 dist/
 .temp/
 .tmp/
+.cache/
+.turbo/
+*.tsbuildinfo
 
 node_modules/.prisma/
 prisma/generated/
-prisma/mgrations/*-dev/
+prisma/migrations/*-dev/
 
-uploads/
+uploads/*
+!uploads/.gitkeep
 
 logs/
 *.log
@@ -37,11 +41,14 @@ Thumbs.db
 .settings/
 
 .env
+.env.*
 .env.local
 .env.*.local
 .env.development.local
 .env.test.local
 .env.production.local
+!.env.example
+!.env.sample
 
 pids/
 *.pid
@@ -50,5 +57,4 @@ pids/
 
 report.*.json
 
-docker-entrypoint.sh
 docker-data/

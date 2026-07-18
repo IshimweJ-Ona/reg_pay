@@ -1,4 +1,3 @@
-import { GENDER } from '@prisma/client';
 import {
   IsEmail,
   IsEnum,
@@ -11,6 +10,11 @@ import {
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
+export enum GENDER {
+  MALE = 'MALE',
+  FEMALE = 'FEMALE',
+}
+
 export class RegisterDto {
   @ApiProperty({
     example: 'Jean',
@@ -18,7 +22,7 @@ export class RegisterDto {
   })
   @IsString()
   @IsNotEmpty()
-  first_name: string;
+  first_name!: string;
 
   @ApiProperty({
     example: 'Mugisha',
@@ -26,7 +30,7 @@ export class RegisterDto {
   })
   @IsString()
   @IsNotEmpty()
-  last_name: string;
+  last_name!: string;
 
   @ApiProperty({
     example: 'jean.mugisha1@gmail.com',
@@ -37,7 +41,7 @@ export class RegisterDto {
   @Matches(/^[a-zA-Z0-9._%+-]+@(gmail\.com|reg\.com|yahoo\.com|reg\.rw)$/, {
     message: 'Email must be a valid @gmail.com, @yahoo.com or @reg.rw address.',
   })
-  email: string;
+  email!: string;
 
   @ApiProperty({
     example: '+250788628835',
@@ -49,7 +53,7 @@ export class RegisterDto {
   @Matches(/^\+2507[2389][0-9]{7}$/, {
     message: 'Phone number must be a valid Rwanda number (+2507...).',
   })
-  phone_number: string;
+  phone_number!: string;
 
   @ApiProperty({
     example: 'MyP@ssw0rd1!',
@@ -59,7 +63,7 @@ export class RegisterDto {
   })
   @IsString()
   @IsNotEmpty()
-  password: string;
+  password!: string;
 
   @ApiProperty({
     enum: GENDER,
@@ -67,7 +71,7 @@ export class RegisterDto {
     description: 'Gender of the registering user.',
   })
   @IsEnum(GENDER)
-  gender: GENDER;
+  gender!: GENDER;
 
   @ApiPropertyOptional({
     example: 'c3d4e5f6-a7b8-9012-cdef-123456789012',
@@ -85,7 +89,7 @@ export class RegisterDto {
   })
   @IsOptional()
   @IsString()
-  working_location_id!: string;
+  working_location_id?: string;
 
   @ApiPropertyOptional({
     example: ['b2c3d4e5-f6a7-8901-bcde-f12345678901'],
@@ -95,7 +99,7 @@ export class RegisterDto {
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
-  role_ids!: string[];
+  role_ids?: string[];
 
   @ApiPropertyOptional({
     example: ['d4e5f6a7-8901-bcde-f123-456789012345'],
@@ -105,5 +109,5 @@ export class RegisterDto {
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
-  permission_ids!: string[];
+  permission_ids?: string[];
 }

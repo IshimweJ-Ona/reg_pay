@@ -4,7 +4,10 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { ACTIVITY_TYPE, AUDIT_ACTION, STATUS_USER } from '@prisma/client';
+import {
+  audit_logs_activity_type as ACTIVITY_TYPE,
+  audit_logs_action as AUDIT_ACTION,
+} from '@prisma/client';
 import { compareHash, hashValue, hashToken } from '../common/utils/hash.util';
 import {
   isNumericId,
@@ -138,7 +141,8 @@ export class AuthService {
         password_hash: await hashPassword(dto.password),
         department_id: departmentId,
         working_location_id: workingLocationId,
-        status: STATUS_USER.PENDING,
+        status: 'PENDING',
+        updated_at: new Date(),
       },
       select: {
         id: true,
@@ -149,8 +153,8 @@ export class AuthService {
         phone_number: true,
         status: true,
         created_at: true,
-        working_location: { select: { name: true } },
-        department: { select: { name: true } },
+        working_locations_users_working_location_idToworking_locations: { select: { name: true } },
+        departments: { select: { name: true } },
       },
     });
 
@@ -194,11 +198,11 @@ export class AuthService {
           deleted_at: null,
         },
         include: {
-          roles: { include: { role: true } },
+          user_roles: { include: { roles: true } },
           user_permissions: true,
-          permission_overrides: true,
-          working_location: true,
-          department: true,
+          user_permission_overrides: true,
+          working_locations_users_working_location_idToworking_locations: true,
+          departments: true,
         },
       });
 
@@ -220,13 +224,13 @@ export class AuthService {
         );
       }
 
-      if (user.status === STATUS_USER.SUSPENDED) {
+      if (user.status === 'SUSPENDED') {
         throw new UnauthorizedException(
           'Your account has been suspended. Please contact the system administrator for assistance.',
         );
       }
 
-      if (user.status === STATUS_USER.REJECTED) {
+      if (user.status === 'REJECTED') {
         throw new UnauthorizedException(
           'Your registration request was rejected. Please contact support if you believe this is an error.',
         );
@@ -254,7 +258,7 @@ export class AuthService {
 
       await this.writeLoginAudit(user.id, context.ipAddress, true);
 
-      const roles = user.roles.map((r) => r.role.name);
+      const roles = user.user_roles.map((r) => r.roles.name);
       let rolePath = 'users';
       if (roles.includes('SUPER_ADMIN')) {
         rolePath = 'super_admin';
@@ -273,7 +277,7 @@ export class AuthService {
       }
 
       let redirectUrl = `/${rolePath}/${user.uuid}`;
-      if (user.status === STATUS_USER.PENDING) {
+      if (user.status === 'PENDING') {
         redirectUrl = `/auth/pending/${user.uuid}`;
       }
 
@@ -296,11 +300,11 @@ export class AuthService {
     const user = await this.prisma.users.findUnique({
       where: { id: BigInt(userId) },
       include: {
-        roles: { include: { role: true } },
+        user_roles: { include: { roles: true } },
         user_permissions: true,
-        permission_overrides: true,
-        working_location: true,
-        department: true,
+        user_permission_overrides: true,
+        working_locations_users_working_location_idToworking_locations: true,
+        departments: true,
       },
     });
 
@@ -310,7 +314,7 @@ export class AuthService {
 
     const effectivePermissions = await this.buildEffectivePermissions(user);
 
-    const roles = user.roles.map((ur) => ur.role.name);
+    const roles = user.user_roles.map((ur) => ur.roles.name);
     const isSuperAdmin = roles.includes('SUPER_ADMIN');
     let adminContacts: Array<{
       name: string;
@@ -325,7 +329,7 @@ export class AuthService {
           is_active: true,
         },
         select: {
-          user: {
+          users_branch_managers_user_idTousers: {
             select: {
               first_name: true,
               last_name: true,
@@ -336,10 +340,11 @@ export class AuthService {
         },
       });
       if (branchManager) {
+        const bm = branchManager as any;
         adminContacts.push({
-          name: `${branchManager.user.first_name} ${branchManager.user.last_name}`,
-          email: branchManager.user.email,
-          phone_number: branchManager.user.phone_number,
+          name: `${bm.users_branch_managers_user_idTousers?.first_name ?? ''} ${bm.users_branch_managers_user_idTousers?.last_name ?? ''}`.trim(),
+          email: bm.users_branch_managers_user_idTousers?.email ?? '',
+          phone_number: bm.users_branch_managers_user_idTousers?.phone_number ?? '',
         });
       }
     }
@@ -353,7 +358,7 @@ export class AuthService {
         const superAdminUsers = await this.prisma.user_roles.findMany({
           where: { role_id: superAdminRole.id },
           include: {
-            user: {
+            users: {
               select: {
                 first_name: true,
                 last_name: true,
@@ -365,9 +370,9 @@ export class AuthService {
         });
         for (const sa of superAdminUsers) {
           adminContacts.push({
-            name: `${sa.user.first_name} ${sa.user.last_name}`,
-            email: sa.user.email,
-            phone_number: sa.user.phone_number,
+            name: `${(sa as any).users?.first_name ?? ''} ${(sa as any).users?.last_name ?? ''}`.trim(),
+            email: (sa as any).users?.email ?? '',
+            phone_number: (sa as any).users?.phone_number ?? '',
           });
         }
       }
@@ -388,24 +393,24 @@ export class AuthService {
           name: role,
         })),
         permissions: effectivePermissions.map((key) => ({ key })),
-        working_location: user.working_location
+        working_location: (user as any).working_locations_users_working_location_idToworking_locations
           ? {
-              ...user.working_location,
-              id: user.working_location.id.toString(),
-              created_by: user.working_location.created_by?.toString() ?? null,
-              updated_by: user.working_location.updated_by?.toString() ?? null,
-              deleted_by: user.working_location.deleted_by?.toString() ?? null,
+              ...(user as any).working_locations_users_working_location_idToworking_locations,
+              id: (user as any).working_locations_users_working_location_idToworking_locations.id.toString(),
+              created_by: (user as any).working_locations_users_working_location_idToworking_locations.created_by?.toString() ?? null,
+              updated_by: (user as any).working_locations_users_working_location_idToworking_locations.updated_by?.toString() ?? null,
+              deleted_by: (user as any).working_locations_users_working_location_idToworking_locations.deleted_by?.toString() ?? null,
             }
           : null,
-        department: user.department
+        department: (user as any).departments
           ? {
-              ...user.department,
-              id: user.department.id.toString(),
+              ...(user as any).departments,
+              id: (user as any).departments.id.toString(),
               working_location_id:
-                user.department.working_location_id.toString(),
+                (user as any).departments.working_location_id.toString(),
             }
           : null,
-        permission_overrides: (user.permission_overrides ?? []).map((o) => ({
+        permission_overrides: ((user as any).user_permission_overrides ?? []).map((o: any) => ({
           id: o.id.toString(),
           permission_key: o.permission_key,
           is_allowed: o.is_allowed,
@@ -432,8 +437,8 @@ export class AuthService {
     const session = await this.prisma.user_sessions.findFirst({
       where: { refresh_token_hash: tokenHash },
       include: {
-        user: {
-          include: { roles: { include: { role: true } } },
+        users: {
+          include: { user_roles: { include: { roles: true } } },
         },
       },
     });
@@ -463,13 +468,13 @@ export class AuthService {
       throw new UnauthorizedException('Invalid or revoked refresh token.');
     }
 
-    const payload = await this.buildPayload(session.user.id);
+    const payload = await this.buildPayload((session as any).users.id);
     const tokens = await this.createTokenPair(payload);
 
     await this.prisma.user_sessions.create({
       data: {
         uuid: generateUUID(),
-        user_id: session.user.id,
+        user_id: (session as any).users.id,
         refresh_token_hash: hashToken(tokens.refresh_token),
         device_info: this.normalizeDeviceInfo(context?.deviceInfo),
         ip_address: context?.ipAddress,
@@ -477,7 +482,7 @@ export class AuthService {
       },
     });
 
-    const roles = session.user.roles.map((ur) => ur.role.name);
+    const roles = (session as any).users.user_roles.map((ur: any) => ur.roles.name);
     let rolePath = 'users';
     if (roles.includes('SUPER_ADMIN')) rolePath = 'super_admin';
     else if (roles.includes('BRANCH_MANAGER')) rolePath = 'branch_manager';
@@ -487,7 +492,7 @@ export class AuthService {
 
     return {
       ...tokens,
-      redirectUrl: `/${rolePath}/${session.user.uuid}`,
+      redirectUrl: `/${rolePath}/${(session as any).users.uuid}`,
     };
   }
 
@@ -607,9 +612,9 @@ export class AuthService {
     const user = await this.prisma.users.findUnique({
       where: { id: userId },
       include: {
-        roles: { include: { role: true } },
+        user_roles: { include: { roles: true } },
         user_permissions: true,
-        permission_overrides: true,
+        user_permission_overrides: true,
       },
     });
 
@@ -624,7 +629,7 @@ export class AuthService {
       first_name: user.first_name,
       last_name: user.last_name,
       phone_number: user.phone_number,
-      roles: user.roles.map((r) => r.role.name),
+      roles: user.user_roles.map((r) => r.roles.name),
       permissions: permissionKeys,
       status: user.status,
       department_id: user.department_id?.toString() ?? null,
@@ -638,7 +643,7 @@ export class AuthService {
       // actually took effect until they logged out and back in, and even
       // then only via /auth/me's separate buildEffectivePermissions() path
       // — the JWT-based guard never saw it.
-      permission_overrides: (user.permission_overrides ?? []).map((o) => ({
+      permission_overrides: (user.user_permission_overrides ?? []).map((o) => ({
         permission_key: o.permission_key,
         is_allowed: o.is_allowed,
       })),
@@ -662,8 +667,8 @@ export class AuthService {
     const permissionSet = new Set<string>();
 
     // Collect from roles
-    for (const userRole of user.roles ?? []) {
-      const keys = (userRole.role?.permission_keys as string[]) ?? [];
+    for (const userRole of user.user_roles ?? []) {
+      const keys = (userRole.roles?.permission_keys as string[]) ?? [];
       for (const key of keys) {
         permissionSet.add(key);
       }
@@ -683,7 +688,7 @@ export class AuthService {
     }
 
     // Apply overrides
-    for (const override of user.permission_overrides ?? []) {
+    for (const override of user.user_permission_overrides ?? []) {
       if (override.is_allowed) {
         permissionSet.add(override.permission_key);
       } else {
@@ -707,14 +712,14 @@ export class AuthService {
           entity_id: userId,
           module_name: 'AUTH',
           activity_type: success
-            ? (ACTIVITY_TYPE as any).LOGIN
-            : (ACTIVITY_TYPE as any).FAILED_LOGIN,
+            ? ('LOGIN' as any)
+            : ('FAILED_LOGIN' as any),
           activity_description: success
             ? 'User logged in successfully.'
             : 'Failed login attempt.',
           action: success
-            ? (AUDIT_ACTION as any).LOGIN
-            : (AUDIT_ACTION as any).DENIED,
+            ? ('LOGIN' as any)
+            : ('DENIED' as any),
           ip_address: ipAddress,
         },
       });

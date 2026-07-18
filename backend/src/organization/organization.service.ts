@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException, Inject } from '@nestjs/common';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import * as cacheManager from 'cache-manager';
-import { ACTIVITY_TYPE, AUDIT_ACTION, WORKING_LOCATION_TYPE, Prisma } from '@prisma/client';
+import { audit_logs_activity_type, audit_logs_action, working_locations_type, Prisma } from '@prisma/client';
 
 import type { CurrentUserType } from '../auth/types/current-user.type';
 import { isNumericId, normalizeSearch, requireUuidOrNumeric } from '../common/utils/lookup.util';
@@ -49,9 +49,9 @@ export class OrganizationService {
       throw new BadRequestException(`A working location named '${duplicate.name}' already exists.`);
     }
 
-    if (locationType === WORKING_LOCATION_TYPE.HQ) {
+    if (locationType === working_locations_type.HQ) {
       const existingHq = await this.prisma.working_locations.findFirst({
-        where: { type: WORKING_LOCATION_TYPE.HQ, deleted_at: null },
+        where: { type: working_locations_type.HQ, deleted_at: null },
         select: { id: true },
       });
       if (existingHq) throw new BadRequestException('Only one HQ can exist.');
@@ -65,6 +65,7 @@ export class OrganizationService {
           type: locationType,
           address: locationAddress,
           created_by: BigInt(actor.userId),
+          updated_at: new Date(),
         },
       });
 
@@ -82,6 +83,7 @@ export class OrganizationService {
             code: department.code,
             name: department.name,
             description: department.description,
+            updated_at: new Date(),
           })),
           skipDuplicates: true,
         });
@@ -93,9 +95,9 @@ export class OrganizationService {
           entity_table: 'working_locations',
           entity_id: created.id,
           module_name: 'ORGANIZATION',
-          activity_type: ACTIVITY_TYPE.CREATE,
+          activity_type: audit_logs_activity_type.CREATE,
           activity_description: `Created ${locationType.toLowerCase()} working location.`,
-          action: AUDIT_ACTION.CREATED,
+          action: audit_logs_action.CREATED,
           old_values: Prisma.JsonNull,
           new_values: { name: created.name, type: created.type, address: created.address },
         },
@@ -146,7 +148,17 @@ export class OrganizationService {
         ...(q ? { OR: [{ name: { contains: q } }, { address: { contains: q } }] } : {}),
       },
       include: {
-        _count: { select: { users: true, departments: true, employees: true } },
+        // "users" isn't a valid relation name here because working_locations
+        // has FOUR relations to the users table (users stationed here, plus
+        // created_by/updated_by/deleted_by). Prisma auto-names the one we
+        // want after the FK field + relation target.
+        _count: {
+          select: {
+            users_users_working_location_idToworking_locations: true,
+            departments: true,
+            employees: true,
+          },
+        },
       },
       orderBy: [{ type: 'asc' }, { name: 'asc' }],
     });
@@ -179,9 +191,9 @@ export class OrganizationService {
       throw new BadRequestException(`A working location named '${duplicate.name}' already exists.`);
     }
 
-    if (newType === WORKING_LOCATION_TYPE.HQ && current.type !== WORKING_LOCATION_TYPE.HQ) {
+    if (newType === working_locations_type.HQ && current.type !== working_locations_type.HQ) {
       const existingHq = await this.prisma.working_locations.findFirst({
-        where: { type: WORKING_LOCATION_TYPE.HQ, deleted_at: null },
+        where: { type: working_locations_type.HQ, deleted_at: null },
         select: { id: true },
       });
       if (existingHq) throw new BadRequestException('Only one headquarters branch can exist.');
@@ -197,6 +209,7 @@ export class OrganizationService {
           type: newType,
           address: newAddress,
           updated_by: BigInt(actor.userId),
+          updated_at: new Date(),
         },
       });
 
@@ -206,9 +219,9 @@ export class OrganizationService {
           entity_table: 'working_locations',
           entity_id: saved.id,
           module_name: 'ORGANIZATION',
-          activity_type: ACTIVITY_TYPE.UPDATE,
+          activity_type: audit_logs_activity_type.UPDATE,
           activity_description: 'Updated branch details.',
-          action: AUDIT_ACTION.UPDATED,
+          action: audit_logs_action.UPDATED,
           old_values: oldValues,
           new_values: { name: saved.name, type: saved.type, address: saved.address },
         },
@@ -230,7 +243,7 @@ export class OrganizationService {
     const deleted = await this.prisma.$transaction(async (tx) => {
       await tx.working_locations.update({
         where: { id: current.id },
-        data: { deleted_at: new Date(), deleted_by: BigInt(actor.userId) },
+        data: { deleted_at: new Date(), deleted_by: BigInt(actor.userId), updated_at: new Date() },
       });
 
       await tx.audit_logs.create({
@@ -239,9 +252,9 @@ export class OrganizationService {
           entity_table: 'working_locations',
           entity_id: current.id,
           module_name: 'ORGANIZATION',
-          activity_type: ACTIVITY_TYPE.UPDATE,
+          activity_type: audit_logs_activity_type.UPDATE,
           activity_description: 'Soft deleted working location.',
-          action: AUDIT_ACTION.UPDATED,
+          action: audit_logs_action.UPDATED,
           old_values: { deleted_at: current.deleted_at },
           new_values: { deleted_at: new Date().toISOString() },
         },
@@ -303,7 +316,11 @@ export class OrganizationService {
           user_id: userId,
           assigned_by: BigInt(actor.userId),
         },
-        include: { user: true, branch: true },
+        // branch_managers has two relations to `users` (assigned_by vs the
+        // manager themself), so Prisma auto-names the manager relation
+        // `users_branch_managers_user_idTousers`. The location relation is
+        // just `working_locations`, not `branch`.
+        include: { users_branch_managers_user_idTousers: true, working_locations: true },
       });
 
       await tx.audit_logs.create({
@@ -312,9 +329,9 @@ export class OrganizationService {
           entity_table: 'branch_managers',
           entity_id: assigned.id,
           module_name: 'ORGANIZATION',
-          activity_type: ACTIVITY_TYPE.UPDATE,
+          activity_type: audit_logs_activity_type.UPDATE,
           activity_description: 'Assigned active branch manager.',
-          action: AUDIT_ACTION.UPDATED,
+          action: audit_logs_action.UPDATED,
           old_values: {
             working_location_id: workingLocationId.toString(),
             user_id: previousManager?.user_id?.toString() ?? null,
@@ -357,18 +374,19 @@ export class OrganizationService {
   }
 
   private serializeManager(manager: Record<string, any>) {
+    const managerUser = manager.users_branch_managers_user_idTousers;
     return {
       ...manager,
       id: manager.id.toString(),
       working_location_id: manager.working_location_id?.toString(),
       user_id: manager.user_id.toString(),
       assigned_by: manager.assigned_by.toString(),
-      user: manager.user
+      user: managerUser
         ? {
-            ...manager.user,
-            id: manager.user.id.toString(),
-            working_location_id: manager.user.working_location_id?.toString() ?? null,
-            department_id: manager.user.department_id?.toString() ?? null,
+            ...managerUser,
+            id: managerUser.id.toString(),
+            working_location_id: managerUser.working_location_id?.toString() ?? null,
+            department_id: managerUser.department_id?.toString() ?? null,
           }
         : undefined,
     };

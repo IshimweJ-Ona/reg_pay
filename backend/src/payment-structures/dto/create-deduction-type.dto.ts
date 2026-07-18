@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { DEDUCTION_MODE } from '@prisma/client';
+import { deduction_types_deduction_mode } from '@prisma/client';
 import {
   IsBoolean,
   IsDecimal,
@@ -19,13 +19,13 @@ export class CreateDeductionTypeDto {
   name: string;
 
   @ApiProperty({
-    enum: DEDUCTION_MODE,
-    example: DEDUCTION_MODE.FIXED,
+    enum: deduction_types_deduction_mode,
+    example: deduction_types_deduction_mode.FIXED,
     description:
       'Whether the deduction is a FIXED amount or a PERCENTAGE of basic salary.',
   })
-  @IsEnum(DEDUCTION_MODE)
-  deduction_mode: DEDUCTION_MODE;
+  @IsEnum(deduction_types_deduction_mode)
+  deduction_mode: deduction_types_deduction_mode;
 
   @ApiPropertyOptional({
     example: '5000.00',

@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { PrismaService } from '../prisma/prisma.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { RolesService } from './roles.service';
 
 describe('RolesService', () => {
@@ -23,6 +24,16 @@ describe('RolesService', () => {
           useValue: {
             get: jest.fn(),
             set: jest.fn(),
+            del: jest.fn(),
+          },
+        },
+        {
+          provide: NotificationsService,
+          useValue: {
+            create: jest.fn(),
+            notifyAdmins: jest.fn(),
+            notifyBranchManager: jest.fn(),
+            broadcast: jest.fn(),
           },
         },
       ],

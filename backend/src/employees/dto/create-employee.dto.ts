@@ -1,4 +1,4 @@
-import { GENDER } from '@prisma/client';
+import { person_gender } from '@prisma/client';
 import {
   IsDateString,
   IsEmail,
@@ -63,13 +63,13 @@ export class CreateEmployeeDto {
   national_id?: string;
 
   @ApiPropertyOptional({
-    enum: GENDER,
-    example: GENDER.MALE,
+    enum: person_gender,
+    example: person_gender.MALE,
     description: 'Employee gender.',
   })
   @IsOptional()
-  @IsEnum(GENDER)
-  gender?: GENDER;
+  @IsEnum(person_gender)
+  gender?: person_gender;
 
   @ApiPropertyOptional({
     type: String,

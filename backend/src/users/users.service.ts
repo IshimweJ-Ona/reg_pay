@@ -8,11 +8,9 @@ import {
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import * as cacheManager from 'cache-manager';
 import {
-  ACTIVITY_TYPE,
-  AUDIT_ACTION,
-  APPROVAL_STATUS,
-  STATUS_USER,
-  TRANSFER_SUBJECT,
+  audit_logs_activity_type as ACTIVITY_TYPE,
+  audit_logs_action as AUDIT_ACTION,
+  transfer_requests_subject_type,
 } from '@prisma/client';
 
 // Standard relative imports to ensure consistency across the project
@@ -25,6 +23,7 @@ import {
   normalizeSearch,
   requireUuidOrNumeric,
 } from '../common/utils/lookup.util';
+import { hasEffectivePermission } from '../common/utils/effective-permissions.util';
 import { generateUUID } from '../common/utils/uuid.util';
 
 import type { CurrentUserType } from '../auth/types/current-user.type';
@@ -118,9 +117,9 @@ export class UsersService {
           gender: data.gender,
           department_id: departmentId,
           working_location_id: workingLocationId,
-
           // user pending by default
-          status: STATUS_USER.INACTIVE,
+          status: 'INACTIVE',
+          updated_at: new Date(),
         },
       });
 
@@ -152,11 +151,11 @@ export class UsersService {
             entity_table: 'users',
             entity_id: created.id,
             module_name: 'USER_MANAGEMENT',
-            activity_type: ACTIVITY_TYPE.CREATE,
+            activity_type: 'CREATE' as any,
             activity_description: 'Created pending user account.',
-            action: AUDIT_ACTION.CREATED,
+            action: 'CREATED' as any,
             new_values: {
-              status: STATUS_USER.INACTIVE,
+              status: 'INACTIVE',
               working_location_id: workingLocationId?.toString() ?? null,
               department_id: departmentId?.toString() ?? null,
               role_ids: roleIds.map((roleId) => roleId.toString()),
@@ -200,7 +199,7 @@ export class UsersService {
 
         ...(filters.status
           ? {
-              status: filters.status as STATUS_USER,
+              status: filters.status as any,
             }
           : {}),
 
@@ -255,7 +254,7 @@ export class UsersService {
 
     const users = await this.prisma.users.findMany({
       where: {
-        status: { in: [STATUS_USER.PENDING, STATUS_USER.INACTIVE] },
+        status: { in: ['PENDING', 'INACTIVE'] },
         deleted_at: null,
         ...this.userScopeWhere(actor),
 
@@ -386,7 +385,8 @@ export class UsersService {
         data: {
           working_location_id: workingLocationId,
           department_id: departmentId,
-          status: STATUS_USER.ACTIVE,
+          status: 'ACTIVE',
+          updated_at: new Date(),
         },
       });
 
@@ -468,9 +468,9 @@ export class UsersService {
           entity_table: 'users',
           entity_id: user.id,
           module_name: 'USER_MANAGEMENT',
-          activity_type: ACTIVITY_TYPE.UPDATE,
+          activity_type: 'UPDATE' as any,
           activity_description: 'User account approved and activated.',
-          action: AUDIT_ACTION.APPROVED,
+          action: 'APPROVED' as any,
         },
       });
 
@@ -513,7 +513,8 @@ export class UsersService {
         where: { id: user.id },
         data: {
           deleted_at: new Date(),
-          status: STATUS_USER.REJECTED,
+          status: 'REJECTED',
+          updated_at: new Date(),
         },
       });
 
@@ -533,9 +534,9 @@ export class UsersService {
           entity_table: 'users',
           entity_id: user.id,
           module_name: 'USER_MANAGEMENT',
-          activity_type: ACTIVITY_TYPE.DELETE,
+          activity_type: 'DELETE' as any,
           activity_description: `User rejected: ${reason}`,
-          action: AUDIT_ACTION.DENIED,
+          action: 'DENIED' as any,
         },
       });
     });
@@ -561,12 +562,12 @@ export class UsersService {
         is_active: true,
         user_id: { not: userId },
       },
-      include: { user: true },
+      include: { users_branch_managers_user_idTousers: true },
     });
 
     if (existing) {
       throw new BadRequestException(
-        `This branch already has an active Branch Manager: ${existing.user.first_name} ${existing.user.last_name}. Only one is allowed.`,
+        `This branch already has an active Branch Manager: ${(existing as any).users_branch_managers_user_idTousers?.first_name} ${(existing as any).users_branch_managers_user_idTousers?.last_name}. Only one is allowed.`,
       );
     }
   }
@@ -588,7 +589,8 @@ export class UsersService {
       const suspended = await tx.users.update({
         where: { id: user.id },
         data: {
-          status: STATUS_USER.SUSPENDED,
+          status: 'SUSPENDED',
+          updated_at: new Date(),
         },
         include: this.userIncludes(),
       });
@@ -608,7 +610,8 @@ export class UsersService {
     const reactivated = await this.prisma.users.update({
       where: { id: user.id },
       data: {
-        status: STATUS_USER.ACTIVE,
+        status: 'ACTIVE',
+        updated_at: new Date(),
       },
       include: this.userIncludes(),
     });
@@ -764,6 +767,7 @@ export class UsersService {
           is_allowed: dto.is_allowed,
           reason: dto.reason,
           changed_by: BigInt(actor.userId),
+          updated_at: new Date(),
         },
         create: {
           uuid: generateUUID(),
@@ -772,6 +776,7 @@ export class UsersService {
           is_allowed: dto.is_allowed,
           reason: dto.reason,
           changed_by: BigInt(actor.userId),
+          updated_at: new Date(),
         },
       });
 
@@ -781,11 +786,11 @@ export class UsersService {
           entity_table: 'user_permission_overrides',
           entity_id: user.id,
           module_name: 'USER_MANAGEMENT',
-          activity_type: ACTIVITY_TYPE.UPDATE,
+          activity_type: 'UPDATE' as any,
           activity_description: dto.is_allowed
             ? `Activated user permission: ${permission.permission_key}.`
             : `Deactivated user permission: ${permission.permission_key}.`,
-          action: AUDIT_ACTION.UPDATED,
+          action: 'UPDATED' as any,
           new_values: {
             user_id: user.id.toString(),
             permission_key: permission.permission_key,
@@ -811,6 +816,7 @@ export class UsersService {
             is_allowed: dto.is_allowed,
             read_only: true,
           },
+          updated_at: new Date(),
         },
       });
 
@@ -858,7 +864,7 @@ export class UsersService {
     const request = await this.prisma.transfer_requests.create({
       data: {
         uuid: generateUUID(),
-        subject_type: TRANSFER_SUBJECT.USER,
+        subject_type: 'USER',
         user_id: user.id,
         old_working_location_id: user.working_location_id,
         new_working_location_id: newLocationId,
@@ -904,7 +910,7 @@ export class UsersService {
   async approveTransfer(requestUuid: string, actor: CurrentUserType) {
     const request = await this.findTransferRequestOrThrow(
       requestUuid,
-      TRANSFER_SUBJECT.USER,
+      'USER' as any,
     );
 
     if (!request.user_id) {
@@ -962,13 +968,14 @@ export class UsersService {
           data: {
             working_location_id: request.new_working_location_id,
             department_id: request.new_department_id,
+            updated_at: new Date(),
           },
         });
 
         const approved = await tx.transfer_requests.update({
           where: { id: request.id },
           data: {
-            status: APPROVAL_STATUS.APPROVED,
+            status: 'APPROVED',
             approved_by: BigInt(actor.userId),
             approved_at: new Date(),
             current_level: 'FINALIZED',
@@ -1009,14 +1016,14 @@ export class UsersService {
   ) {
     const request = await this.findTransferRequestOrThrow(
       requestUuid,
-      TRANSFER_SUBJECT.USER,
+      'USER' as any,
     );
 
     const rejected = await this.prisma.transfer_requests.update({
       where: { id: request.id },
 
       data: {
-        status: APPROVAL_STATUS.REJECTED,
+        status: 'REJECTED',
         rejection_reason: dto.rejection_reason,
         approved_by: BigInt(actor.userId),
         approved_at: new Date(),
@@ -1051,9 +1058,9 @@ export class UsersService {
       where: { email },
 
       include: {
-        roles: {
+        user_roles: {
           include: {
-            role: true,
+            roles: true,
           },
         },
       },
@@ -1307,13 +1314,13 @@ export class UsersService {
 
   private async findTransferRequestOrThrow(
     uuid: string,
-    subjectType: TRANSFER_SUBJECT,
+    subjectType: transfer_requests_subject_type,
   ) {
     const request = await this.prisma.transfer_requests.findFirst({
       where: {
         uuid,
         subject_type: subjectType,
-        status: APPROVAL_STATUS.PENDING,
+        status: 'PENDING',
       },
     });
 
@@ -1326,15 +1333,34 @@ export class UsersService {
 
   private userIncludes() {
     return {
-      working_location: true,
-      department: true,
-      roles: {
+      working_locations: {
+        select: {
+          uuid: true,
+          name: true,
+          type: true,
+          address: true,
+          created_at: true,
+          updated_at: true,
+          created_by: true,
+          updated_by: true,
+          deleted_by: true,
+        },
+      },
+      departments: {
+        select: {
+          uuid: true,
+          name: true,
+          code: true,
+          working_location_id: true,
+        },
+      },
+      user_roles: {
         include: {
-          role: true,
+          roles: true,
         },
       },
       user_permissions: true,
-      permission_overrides: true,
+      user_permission_overrides: true,
     };
   }
 
@@ -1348,37 +1374,37 @@ export class UsersService {
 
       department_id: user.department_id?.toString() ?? null,
 
-      roles: user.roles?.map((userRole) => ({
+      roles: user.user_roles?.map((userRole: any) => ({
         id: userRole.id.toString(),
         role_id: userRole.role_id.toString(),
-        name: userRole.role?.name,
+        name: userRole.roles?.name,
       })),
 
       permissions: this.serializeEffectivePermissions(user),
 
       permission_overrides:
-        user.permission_overrides?.map((override) => ({
+        user.user_permission_overrides?.map((override: any) => ({
           id: override.id.toString(),
           permission_key: override.permission_key,
           is_allowed: override.is_allowed,
           reason: override.reason,
         })) ?? [],
 
-      working_location: user.working_location
+      working_location: user.working_locations
         ? {
-            ...user.working_location,
-            id: user.working_location.id.toString(),
-            created_by: user.working_location.created_by?.toString() ?? null,
-            updated_by: user.working_location.updated_by?.toString() ?? null,
-            deleted_by: user.working_location.deleted_by?.toString() ?? null,
+            ...user.working_locations,
+            id: user.working_locations.id.toString(),
+            created_by: user.working_locations.created_by?.toString() ?? null,
+            updated_by: user.working_locations.updated_by?.toString() ?? null,
+            deleted_by: user.working_locations.deleted_by?.toString() ?? null,
           }
         : null,
 
-      department: user.department
+      department: user.departments
         ? {
-            ...user.department,
-            id: user.department.id.toString(),
-            working_location_id: user.department.working_location_id.toString(),
+            ...user.departments,
+            id: user.departments.id.toString(),
+            working_location_id: user.departments.working_location_id.toString(),
           }
         : null,
     };
@@ -1388,8 +1414,8 @@ export class UsersService {
     const permissionMap = new Map<string, Record<string, any>>();
 
     // 1. Collect direct and role-based permissions
-    for (const userRole of user.roles ?? []) {
-      const keys = (userRole.role?.permission_keys as string[]) ?? [];
+    for (const userRole of user.user_roles ?? []) {
+      const keys = (userRole.roles?.permission_keys as string[]) ?? [];
       for (const key of keys) {
         let name = key.split('.').map((s) => s.charAt(0).toUpperCase() + s.slice(1)).join(' ');
         let moduleName = 'SYSTEM';
@@ -1449,7 +1475,7 @@ export class UsersService {
     }
 
     // 3. Apply overrides (EXPLICIT DENY takes precedence)
-    for (const override of user.permission_overrides ?? []) {
+    for (const override of user.user_permission_overrides ?? []) {
       const permissionKey = override.permission_key;
       if (!permissionKey) continue;
 
@@ -1544,9 +1570,9 @@ export class UsersService {
     }
 
     const baseWhere: any = {
-      roles: {
+      user_roles: {
         none: {
-          role: {
+          roles: {
             name: {
               in: ['SUPER_ADMIN'],
             },
@@ -1554,6 +1580,10 @@ export class UsersService {
         },
       },
     };
+
+    if (hasEffectivePermission(actor, 'users.read_all')) {
+      return baseWhere;
+    }
 
     if (this.isBranchManager(actor) && actor.working_location_id) {
       return {

@@ -88,14 +88,20 @@ export class PaymentStructuresController {
 
   @Permissions('payment-structures.read')
   @Get('employee/:employeeId')
-  findByEmployee(@Param('employeeId') employeeId: string) {
-    return this.paymentStructuresService.findByEmployee(employeeId);
+  findByEmployee(
+    @Param('employeeId') employeeId: string,
+    @CurrentUser() actor: CurrentUserType,
+  ) {
+    return this.paymentStructuresService.findByEmployee(employeeId, actor);
   }
 
   @Permissions('payment-structures.read')
   @Get('employee/:employeeId/active')
-  findActiveByEmployee(@Param('employeeId') employeeId: string) {
-    return this.paymentStructuresService.findActiveByEmployee(employeeId);
+  findActiveByEmployee(
+    @Param('employeeId') employeeId: string,
+    @CurrentUser() actor: CurrentUserType,
+  ) {
+    return this.paymentStructuresService.findActiveByEmployee(employeeId, actor);
   }
 
   @Permissions('payment-structures.create')
@@ -109,8 +115,11 @@ export class PaymentStructuresController {
 
   @Permissions('payment-structures.read')
   @Get('employee-deductions/employee/:employeeId')
-  findEmployeeDeductions(@Param('employeeId') employeeId: string) {
-    return this.paymentStructuresService.findEmployeeDeductions(employeeId);
+  findEmployeeDeductions(
+    @Param('employeeId') employeeId: string,
+    @CurrentUser() actor: CurrentUserType,
+  ) {
+    return this.paymentStructuresService.findEmployeeDeductions(employeeId, actor);
   }
 
   @Permissions('payment-structures.update')
@@ -147,8 +156,11 @@ export class PaymentStructuresController {
 
   @Permissions('payment-structures.read')
   @Get('allowances/employee/:employeeId')
-  findAllowances(@Param('employeeId') employeeId: string) {
-    return this.paymentStructuresService.findAllowances(employeeId);
+  findAllowances(
+    @Param('employeeId') employeeId: string,
+    @CurrentUser() actor: CurrentUserType,
+  ) {
+    return this.paymentStructuresService.findAllowances(employeeId, actor);
   }
 
   @Permissions('payment-structures.update')

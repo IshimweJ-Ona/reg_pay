@@ -6,7 +6,11 @@ import {
 } from '@nestjs/common';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import * as cacheManager from 'cache-manager';
-import { ACTIVITY_TYPE, AUDIT_ACTION, Prisma, EMPLOYMENT_TYPE } from '@prisma/client';
+import {
+  audit_logs_activity_type as ACTIVITY_TYPE,
+  audit_logs_action as AUDIT_ACTION,
+  Prisma,
+} from '@prisma/client';
 import type { CurrentUserType } from '../auth/types/current-user.type';
 import { isNumericId, requireUuidOrNumeric } from '../common/utils/lookup.util';
 import { generateUUID } from '../common/utils/uuid.util';
@@ -42,7 +46,7 @@ export class IkiminaService {
           orderBy: { effective_from: 'desc' },
           take: 1,
         },
-        employment_category: true,
+        employment_categories: true,
       },
     });
 
@@ -52,8 +56,8 @@ export class IkiminaService {
 
     // Check payroll frequency — only MONTHLY employees may join Ikimina
     const frequency = employee.payment_structures?.[0]?.payroll_frequency
-      ?? employee.employment_category?.payroll_frequency;
-    if (frequency !== EMPLOYMENT_TYPE.MONTHLY) {
+      ?? employee.employment_categories?.payroll_frequency;
+    if (frequency !== 'MONTHLY') {
       throw new BadRequestException(
         'Only employees with a MONTHLY payroll frequency may join Ikimina. This employee\'s payroll frequency is ' + frequency + '.',
       );
@@ -77,8 +81,16 @@ export class IkiminaService {
           monthly_amount: dto.monthly_amount,
           is_active: dto.is_active ?? true,
           created_by: BigInt(actor.userId),
+          // Denormalized from the employee at write-time so
+          // permission-driven query scoping (MODULE_SCOPE_CONFIG) can
+          // filter memberships by location without a relation join — this
+          // is the fix for memberships previously having no effective
+          // location scoping at all.
+          working_location_id: employee.working_location_id,
+          department_id: employee.department_id,
+          updated_at: new Date(),
         },
-        include: { employee: true },
+        include: { employees: true },
       });
 
       await tx.audit_logs.create({
@@ -88,9 +100,9 @@ export class IkiminaService {
           entity_table: 'ikimina_memberships',
           entity_id: created.id,
           module_name: 'IKIMINA',
-          activity_type: ACTIVITY_TYPE.CREATE,
+          activity_type: 'CREATE' as any,
           activity_description: 'Created Ikimina savings membership.',
-          action: AUDIT_ACTION.CREATED,
+          action: 'CREATED' as any,
           old_values: Prisma.JsonNull,
           new_values: {
             employee_id: employeeId.toString(),
@@ -109,10 +121,10 @@ export class IkiminaService {
   async findMemberships(actor: CurrentUserType) {
     const memberships = await this.prisma.ikimina_memberships.findMany({
       include: {
-        employee: {
-          include: { department: true, working_location: true },
+        employees: {
+          include: { departments: true, working_locations: true },
         },
-        contributions: {
+        ikimina_contributions: {
           select: { amount: true },
         },
       },
@@ -120,8 +132,8 @@ export class IkiminaService {
     });
 
     return memberships.map((m) => {
-      const totalSavings = m.contributions.reduce(
-        (sum, c) => sum + Number(c.amount),
+      const totalSavings = (m as any).ikimina_contributions.reduce(
+        (sum: number, c: any) => sum + Number(c.amount),
         0,
       );
       return {
@@ -136,8 +148,8 @@ export class IkiminaService {
     const membership = await this.prisma.ikimina_memberships.findUnique({
       where: { employee_id: eid },
       include: {
-        employee: true,
-        contributions: {
+        employees: true,
+        ikimina_contributions: {
           orderBy: { contribution_date: 'desc' },
         },
       },
@@ -145,15 +157,15 @@ export class IkiminaService {
 
     if (!membership) throw new NotFoundException('No Ikimina membership found for this employee.');
 
-    const totalSavings = membership.contributions.reduce(
-      (sum, c) => sum + Number(c.amount),
+    const totalSavings = (membership as any).ikimina_contributions.reduce(
+      (sum: number, c: any) => sum + Number(c.amount),
       0,
     );
 
     return {
       ...this.serializeMembership(membership),
       total_savings: totalSavings,
-      contributions: membership.contributions.map((c) => ({
+      contributions: (membership as any).ikimina_contributions.map((c: any) => ({
         ...c,
         id: c.id.toString(),
         employee_id: c.employee_id.toString(),
@@ -177,8 +189,9 @@ export class IkiminaService {
         data: {
           monthly_amount: dto.monthly_amount ?? membership.monthly_amount,
           is_active: dto.is_active ?? membership.is_active,
+          updated_at: new Date(),
         },
-        include: { employee: true },
+        include: { employees: true },
       });
 
       await tx.audit_logs.create({
@@ -188,9 +201,9 @@ export class IkiminaService {
           entity_table: 'ikimina_memberships',
           entity_id: saved.id,
           module_name: 'IKIMINA',
-          activity_type: ACTIVITY_TYPE.UPDATE,
+          activity_type: 'UPDATE' as any,
           activity_description: 'Updated Ikimina membership.',
-          action: AUDIT_ACTION.UPDATED,
+          action: 'UPDATED' as any,
           old_values: {
             monthly_amount: membership.monthly_amount.toString(),
             is_active: membership.is_active,
@@ -285,14 +298,16 @@ export class IkiminaService {
       id: membership.id.toString(),
       employee_id: membership.employee_id.toString(),
       created_by: membership.created_by?.toString() ?? null,
+      working_location_id: membership.working_location_id?.toString() ?? null,
+      department_id: membership.department_id?.toString() ?? null,
       monthly_amount: Number(membership.monthly_amount),
-      employee: membership.employee
+      employee: membership.employees
         ? {
-            ...membership.employee,
-            id: membership.employee.id.toString(),
-            department_id: membership.employee.department_id?.toString() ?? null,
-            working_location_id: membership.employee.working_location_id?.toString() ?? null,
-            employment_category_id: membership.employee.employment_category_id?.toString() ?? null,
+            ...membership.employees,
+            id: membership.employees.id.toString(),
+            department_id: membership.employees.department_id?.toString() ?? null,
+            working_location_id: membership.employees.working_location_id?.toString() ?? null,
+            employment_category_id: membership.employees.employment_category_id?.toString() ?? null,
           }
         : undefined,
     };

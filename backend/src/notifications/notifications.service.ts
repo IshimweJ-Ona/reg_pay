@@ -79,37 +79,30 @@ export class NotificationsService {
         type: dto.type,
         reference_id: dto.referenceId,
         metadata: dto.metadata,
+        updated_at: new Date(),
       },
       include: {
-        sender: {
+        users_notifications_sender_idTousers: {
           select: {
             first_name: true,
             last_name: true,
           },
         },
-        user: {
+        users_notifications_user_idTousers: {
           select: {
             uuid: true,
             first_name: true,
             last_name: true,
             email: true,
             phone_number: true,
-            working_location: { select: { name: true } },
-            department: { select: { name: true } },
+            working_locations_users_working_location_idToworking_locations: { select: { name: true } },
+            departments: { select: { name: true } },
           },
         },
       },
     });
 
-    let referenceUser: {
-      uuid: string;
-      first_name: string;
-      last_name: string;
-      email: string;
-      phone_number: string;
-      working_location: { name: string } | null;
-      department: { name: string } | null;
-    } | null = null;
+    let referenceUser: any = null;
     if (dto.type === 'REGISTRATION_REQUEST' && dto.referenceId) {
       referenceUser = await this.prisma.users.findUnique({
         where: { uuid: dto.referenceId },
@@ -119,8 +112,8 @@ export class NotificationsService {
           last_name: true,
           email: true,
           phone_number: true,
-          working_location: { select: { name: true } },
-          department: { select: { name: true } },
+          working_locations_users_working_location_idToworking_locations: { select: { name: true } },
+          departments: { select: { name: true } },
         },
       });
     }
@@ -130,7 +123,7 @@ export class NotificationsService {
       id: notification.id.toString(),
       user_id: notification.user_id?.toString(),
       sender_id: notification.sender_id?.toString(),
-      user: referenceUser ?? notification.user,
+      user: referenceUser ?? (notification as any).users_notifications_user_idTousers,
     };
 
     if (dto.userId) {
@@ -167,10 +160,10 @@ export class NotificationsService {
     if (userId) {
       const user = await this.prisma.users.findUnique({
         where: { uuid: userId },
-        include: { roles: { include: { role: true } } },
+        include: { user_roles: { include: { roles: true } } },
       });
 
-      const roles = user?.roles.map((r) => r.role.name) || [];
+      const roles = user?.user_roles.map((r) => r.roles.name) || [];
       const isAdmin = roles.includes('SUPER_ADMIN');
 
       const orConditions: any[] = [{ user_id: user?.id }];
@@ -199,21 +192,21 @@ export class NotificationsService {
       where,
       orderBy: { created_at: 'desc' },
       include: {
-        sender: {
+        users_notifications_sender_idTousers: {
           select: {
             first_name: true,
             last_name: true,
           },
         },
-        user: {
+        users_notifications_user_idTousers: {
           select: {
             uuid: true,
             first_name: true,
             last_name: true,
             email: true,
             phone_number: true,
-            working_location: { select: { name: true } },
-            department: { select: { name: true } },
+            working_locations_users_working_location_idToworking_locations: { select: { name: true } },
+            departments: { select: { name: true } },
           },
         },
       },
@@ -233,8 +226,8 @@ export class NotificationsService {
           last_name: true,
           email: true,
           phone_number: true,
-          working_location: { select: { name: true } },
-          department: { select: { name: true } },
+          working_locations_users_working_location_idToworking_locations: { select: { name: true } },
+          departments: { select: { name: true } },
         },
       });
     }
@@ -254,7 +247,7 @@ export class NotificationsService {
         id: n.id.toString(),
         user_id: n.user_id?.toString(),
         sender_id: n.sender_id?.toString(),
-        user: referenceUser ?? n.user,
+        user: referenceUser ?? (n as any).users_notifications_user_idTousers,
       };
     });
   }

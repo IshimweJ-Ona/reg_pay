@@ -5,8 +5,13 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { ACTIVITY_TYPE, ATTENDANCE_STATUS, AUDIT_ACTION } from '@prisma/client';
+import {
+  audit_logs_activity_type as ACTIVITY_TYPE,
+  audit_logs_action as AUDIT_ACTION,
+} from '@prisma/client';
+import { AttendanceStatus as ATTENDANCE_STATUS } from './dto/create-time-record.dto';
 import type { CurrentUserType } from '../auth/types/current-user.type';
+import { hasEffectivePermission } from '../common/utils/effective-permissions.util';
 import { generateUUID } from '../common/utils/uuid.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { ApproveTimeRecordDto } from './dto/approve-time-record.dto';
@@ -40,10 +45,9 @@ export class TimeRecordsService {
       );
     }
 
-    const { hours_worked, overtime_hours } = this.normalizeHours(
-      dto.attendance_status ?? ATTENDANCE_STATUS.PRESENT,
+    const hours_worked = this.normalizeHours(
+      dto.attendance_status ?? 'PRESENT' as any,
       dto.hours_worked,
-      dto.overtime_hours,
     );
 
     const record = await this.prisma.$transaction(async (tx) => {
@@ -53,10 +57,15 @@ export class TimeRecordsService {
           employee_id: employeeId,
           attendance_date: attendanceDate,
           hours_worked,
-          overtime_hours,
-          attendance_status: dto.attendance_status ?? ATTENDANCE_STATUS.PRESENT,
+          attendance_status: dto.attendance_status ?? 'PRESENT' as any,
+          // Denormalized from the employee at write-time so permission-driven
+          // query scoping (MODULE_SCOPE_CONFIG) can filter this table
+          // directly without a relation join.
+          working_location_id: employee.working_location_id,
+          department_id: employee.department_id,
+          updated_at: new Date(),
         },
-        include: this.includes(),
+        include: this.includes() as any,
       });
 
       await tx.audit_logs.create({
@@ -205,13 +214,13 @@ export class TimeRecordsService {
 
       if (
         recordDto.attendance_status === 'ABSENT' &&
-        ((recordDto.hours_worked ?? 0) > 0 || (recordDto.overtime_hours ?? 0) > 0)
+        (recordDto.hours_worked ?? 0) > 0
       ) {
         errors.push({
           row,
           employee_id: recordDto.employee_id,
           message:
-            'hours_worked and overtime_hours must be 0 when attendance_status is ABSENT',
+            'hours_worked must be 0 when attendance_status is ABSENT',
         });
       }
 
@@ -259,11 +268,11 @@ export class TimeRecordsService {
       for (const recordDto of records) {
         const employeeId = BigInt(recordDto.employee_id);
         const attendanceDate = new Date(recordDto.attendance_date);
+        const emp = employeeMap.get(recordDto.employee_id);
 
-        const { hours_worked, overtime_hours } = this.normalizeHours(
+        const hours_worked = this.normalizeHours(
           recordDto.attendance_status,
           recordDto.hours_worked,
-          recordDto.overtime_hours,
         );
 
         const upserted = await tx.time_records.upsert({
@@ -276,7 +285,6 @@ export class TimeRecordsService {
           update: {
             attendance_status: recordDto.attendance_status,
             hours_worked,
-            overtime_hours,
           },
           create: {
             uuid: generateUUID(),
@@ -284,7 +292,9 @@ export class TimeRecordsService {
             attendance_date: attendanceDate,
             attendance_status: recordDto.attendance_status,
             hours_worked,
-            overtime_hours,
+            working_location_id: emp?.working_location_id ?? null,
+            department_id: emp?.department_id ?? null,
+            updated_at: new Date(),
           },
         });
         results.push(upserted);
@@ -330,17 +340,21 @@ export class TimeRecordsService {
 
     employees.forEach((emp) => this.ensureActorCanAccessEmployee(actor, emp));
 
+    const employeeById = new Map(
+      employees.map((emp) => [emp.id.toString(), emp]),
+    );
+
     const results = await this.prisma.$transaction(async (tx) => {
       const synced: any[] = [];
 
       for (const recordDto of dto.records) {
         const employeeId = this.toBigInt(recordDto.employee_id, 'employee_id');
         const attendanceDate = new Date(recordDto.attendance_date);
+        const emp = employeeById.get(employeeId.toString());
 
-        const { hours_worked, overtime_hours } = this.normalizeHours(
+        const hours_worked = this.normalizeHours(
           recordDto.attendance_status,
           recordDto.hours_worked,
-          recordDto.overtime_hours,
         );
 
         const record = await tx.time_records.upsert({
@@ -352,7 +366,6 @@ export class TimeRecordsService {
           },
           update: {
             hours_worked,
-            overtime_hours: overtime_hours ?? undefined,
             attendance_status:
               recordDto.attendance_status ?? ATTENDANCE_STATUS.PRESENT,
           },
@@ -361,9 +374,11 @@ export class TimeRecordsService {
             employee_id: employeeId,
             attendance_date: attendanceDate,
             hours_worked,
-            overtime_hours,
             attendance_status:
-              recordDto.attendance_status ?? ATTENDANCE_STATUS.PRESENT,
+              recordDto.attendance_status ?? 'PRESENT' as any,
+            working_location_id: emp?.working_location_id ?? null,
+            department_id: emp?.department_id ?? null,
+            updated_at: new Date(),
           },
         });
         synced.push(record);
@@ -383,22 +398,21 @@ export class TimeRecordsService {
     dto: UpdateTimeRecordDto,
     actor: CurrentUserType,
   ) {
-    const record = await this.findByUuidOrThrow(uuid);
-    this.ensureActorCanAccessEmployee(actor, record.employee);
+    const timeRecord = await this.findByUuidOrThrow(uuid);
+    this.ensureActorCanAccessEmployee(actor, timeRecord.employees);
+    this.ensureActorCanAccessEmployee(actor, timeRecord.employees);
 
-    const resolvedStatus = dto.attendance_status ?? record.attendance_status;
-    const { hours_worked, overtime_hours } = this.normalizeHours(
+    const resolvedStatus = dto.attendance_status ?? timeRecord.attendance_status;
+    const hours_worked = this.normalizeHours(
       resolvedStatus,
-      dto.hours_worked ?? Number(record.hours_worked ?? 0),
-      dto.overtime_hours ?? Number(record.overtime_hours ?? 0),
+      dto.hours_worked ?? Number(timeRecord.hours_worked ?? 0),
     );
 
     const updated = await this.prisma.$transaction(async (tx) => {
       const saved = await tx.time_records.update({
-        where: { id: record.id },
+        where: { id: timeRecord.id },
         data: {
           hours_worked,
-          overtime_hours,
           attendance_status: dto.attendance_status ?? undefined,
         },
         include: this.includes(),
@@ -407,19 +421,18 @@ export class TimeRecordsService {
       await tx.audit_logs.create({
         data: {
           user_id: BigInt(actor.userId),
-          employee_id: record.employee_id,
+          employee_id: timeRecord.employee_id,
           entity_table: 'time_records',
-          entity_id: record.id,
+          entity_id: timeRecord.id,
           module_name: 'ATTENDANCE',
           activity_type: ACTIVITY_TYPE.UPDATE,
           activity_description: 'Updated attendance record.',
           action: AUDIT_ACTION.UPDATED,
           new_values: {
             hours_worked,
-            overtime_hours,
             attendance_status: dto.attendance_status ?? undefined,
           },
-          changed_fields: ['hours_worked', 'overtime_hours', 'attendance_status'],
+          changed_fields: ['hours_worked', 'attendance_status'],
         },
       });
 
@@ -434,12 +447,12 @@ export class TimeRecordsService {
     dto: ApproveTimeRecordDto,
     actor: CurrentUserType,
   ) {
-    const record = await this.findByUuidOrThrow(uuid);
-    this.ensureActorCanAccessEmployee(actor, record.employee);
+    const timeRecord = await this.findByUuidOrThrow(uuid);
+    this.ensureActorCanAccessEmployee(actor, timeRecord.employees);
 
     const approved = await this.prisma.$transaction(async (tx) => {
       const saved = await tx.time_records.update({
-        where: { id: record.id },
+        where: { id: timeRecord.id },
         data: { approved_by: BigInt(actor.userId) },
         include: this.includes(),
       });
@@ -447,9 +460,9 @@ export class TimeRecordsService {
       await tx.audit_logs.create({
         data: {
           user_id: BigInt(actor.userId),
-          employee_id: record.employee_id,
+          employee_id: timeRecord.employee_id,
           entity_table: 'time_records',
-          entity_id: record.id,
+          entity_id: timeRecord.id,
           module_name: 'ATTENDANCE',
           activity_type: ACTIVITY_TYPE.UPDATE,
           activity_description: dto.comment
@@ -477,7 +490,7 @@ export class TimeRecordsService {
     },
   ) {
     const where: any = {
-      employee: {
+      employees: {
         deleted_at: null,
         ...this.employeeScopeWhere(actor),
       },
@@ -496,7 +509,7 @@ export class TimeRecordsService {
     if (filters?.working_location_id) {
       const wlId = await this.resolveWorkingLocationId(filters.working_location_id);
       if (wlId === null) return [];
-      where.employee = { ...where.employee, working_location_id: wlId };
+      where.employees = { ...where.employees, working_location_id: wlId };
     }
 
     const records = await this.prisma.time_records.findMany({
@@ -538,22 +551,22 @@ export class TimeRecordsService {
       const wlId = await this.resolveWorkingLocationId(workingLocationId);
 
       if (wlId !== null) {
-        where.employee = { working_location_id: wlId };
+        where.employees = { working_location_id: wlId };
       } else {
         return [];
       }
     }
 
     if (category) {
-      where.employee = {
-        ...(where.employee || {}),
-        employment_category: { name: category },
+      where.employees = {
+        ...(where.employees || {}),
+        employment_categories: { name: category },
       };
     }
 
     if (actor) {
-      where.employee = {
-        ...(where.employee || {}),
+      where.employees = {
+        ...(where.employees || {}),
         ...this.employeeScopeWhere(actor),
       };
     }
@@ -566,6 +579,145 @@ export class TimeRecordsService {
     return records.map((r) => this.serialize(r));
   }
 
+  async findPending(
+    actor: CurrentUserType,
+    filters?: {
+      start_date?: string;
+      end_date?: string;
+      working_location_id?: string;
+      category?: string;
+    },
+  ) {
+    const { start, end } = this.resolvePendingPeriod(
+      filters?.start_date,
+      filters?.end_date,
+    );
+    const dates = this.enumerateDateKeys(start, end);
+
+    const employeeWhere: any = {
+      status: 'ACTIVE',
+      deleted_at: null,
+      ...this.employeeScopeWhere(actor),
+    };
+
+    if (filters?.working_location_id) {
+      const wlId = await this.resolveWorkingLocationId(filters.working_location_id);
+      if (wlId === null) return this.emptyPendingResponse(start, end);
+
+      if (
+        !this.isSystemAdmin(actor) &&
+        !hasEffectivePermission(actor, 'attendance.read_all') &&
+        actor.working_location_id !== wlId.toString()
+      ) {
+        throw new ForbiddenException(
+          'You can only view pending attendance in your working location.',
+        );
+      }
+
+      employeeWhere.working_location_id = wlId;
+    }
+
+    const category = filters?.category?.trim();
+    if (category && category.toUpperCase() !== 'ALL') {
+      employeeWhere.employment_categories = {
+        name: this.normalizeCategoryName(category),
+      };
+    }
+
+    const employees = await this.prisma.employees.findMany({
+      where: employeeWhere,
+      select: {
+        id: true,
+        uuid: true,
+        first_name: true,
+        last_name: true,
+        working_location_id: true,
+        department_id: true,
+        departments: { select: { uuid: true, name: true } },
+        working_locations: { select: { uuid: true, name: true } },
+        employment_categories: {
+          select: { uuid: true, name: true, payroll_frequency: true },
+        },
+      },
+      orderBy: [{ first_name: 'asc' }, { last_name: 'asc' }],
+    });
+
+    if (!employees.length) return this.emptyPendingResponse(start, end);
+
+    const employeeIds = employees.map((employee) => employee.id);
+    const records = await this.prisma.time_records.findMany({
+      where: {
+        employee_id: { in: employeeIds },
+        attendance_date: {
+          gte: start,
+          lte: end,
+        },
+      },
+      select: {
+        employee_id: true,
+        attendance_date: true,
+      },
+    });
+
+    const recordedDatesByEmployee = new Map<string, Set<string>>();
+    for (const record of records) {
+      const employeeId = record.employee_id.toString();
+      const dateSet = recordedDatesByEmployee.get(employeeId) ?? new Set<string>();
+      dateSet.add(this.dateKey(record.attendance_date));
+      recordedDatesByEmployee.set(employeeId, dateSet);
+    }
+
+    const pending = employees
+      .map((employee) => {
+        const employeeId = employee.id.toString();
+        const recordedDates =
+          recordedDatesByEmployee.get(employeeId) ?? new Set<string>();
+        const missing_dates = dates.filter((date) => !recordedDates.has(date));
+
+        return {
+          employee_id: employeeId,
+          employee_uuid: employee.uuid,
+          employee_name: `${employee.first_name} ${employee.last_name}`.trim(),
+          working_location_id: employee.working_location_id?.toString() ?? null,
+          working_location: employee.working_locations
+            ? {
+                uuid: employee.working_locations.uuid,
+                name: employee.working_locations.name,
+              }
+            : null,
+          department_id: employee.department_id?.toString() ?? null,
+          department: employee.departments
+            ? {
+                uuid: employee.departments.uuid,
+                name: employee.departments.name,
+              }
+            : null,
+          employment_category: employee.employment_categories
+            ? {
+                uuid: employee.employment_categories.uuid,
+                name: employee.employment_categories.name,
+                payroll_frequency:
+                  employee.employment_categories.payroll_frequency,
+              }
+            : null,
+          missing_dates,
+          missing_count: missing_dates.length,
+        };
+      })
+      .filter((employee) => employee.missing_count > 0);
+
+    return {
+      start_date: this.dateKey(start),
+      end_date: this.dateKey(end),
+      total_pending_employees: pending.length,
+      total_missing_entries: pending.reduce(
+        (sum, employee) => sum + employee.missing_count,
+        0,
+      ),
+      pending,
+    };
+  }
+
   async findByEmployee(
     employeeIdInput: string,
     actor: CurrentUserType,
@@ -573,7 +725,7 @@ export class TimeRecordsService {
   ) {
     const employeeId = this.toBigInt(employeeIdInput, 'employee_id');
     const employee = await this.ensureEmployee(employeeId);
-    this.ensureActorCanAccessEmployee(actor, employee);
+    this.ensureActorCanReadEmployee(actor, employee);
 
     const where: any = { employee_id: employeeId };
     if (filters?.start_date || filters?.end_date) {
@@ -594,7 +746,7 @@ export class TimeRecordsService {
   private async findByUuidOrThrow(uuid: string) {
     const record = await this.prisma.time_records.findUnique({
       where: { uuid },
-      include: { employee: true },
+      include: { employees: true },
     });
 
     if (!record) throw new NotFoundException('Time record not found.');
@@ -613,8 +765,10 @@ export class TimeRecordsService {
 
   private includes() {
     return {
-      employee: { include: { employment_category: true, department: true } },
-      approvedBy: true,
+      employees: {
+        include: { employment_categories: true, departments: true },
+      },
+      users: true,
     };
   }
 
@@ -625,7 +779,6 @@ export class TimeRecordsService {
       employee_id: record.employee_id.toString(),
       approved_by: record.approved_by?.toString() ?? null,
       hours_worked: record.hours_worked?.toString() ?? null,
-      overtime_hours: record.overtime_hours?.toString() ?? null,
       employee: record.employee
         ? {
             ...record.employee,
@@ -651,17 +804,13 @@ export class TimeRecordsService {
   }
 
   private normalizeHours(
-    status: ATTENDANCE_STATUS | undefined,
+    status: any,
     hoursWorked?: number,
-    overtimeHours?: number,
-  ) {
-    if (status === ATTENDANCE_STATUS.ABSENT) {
-      return { hours_worked: 0, overtime_hours: 0 };
+  ): number {
+    if (status === 'ABSENT') {
+      return 0;
     }
-    return {
-      hours_worked: hoursWorked ?? 0,
-      overtime_hours: overtimeHours ?? 0,
-    };
+    return hoursWorked ?? 0;
   }
 
   private toBigInt(value: string, fieldName: string): bigint {
@@ -673,12 +822,69 @@ export class TimeRecordsService {
     return BigInt(value);
   }
 
+  private resolvePendingPeriod(startInput?: string, endInput?: string) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const start = startInput
+      ? new Date(startInput)
+      : new Date(today.getFullYear(), today.getMonth(), 1);
+    const end = endInput ? new Date(endInput) : today;
+
+    start.setHours(0, 0, 0, 0);
+    end.setHours(0, 0, 0, 0);
+
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+      throw new BadRequestException('Please choose a valid attendance date range.');
+    }
+
+    if (end.getTime() < start.getTime()) {
+      throw new BadRequestException(
+        'end_date must be greater than or equal to start_date.',
+      );
+    }
+
+    return { start, end };
+  }
+
+  private enumerateDateKeys(start: Date, end: Date) {
+    const dates: string[] = [];
+    const cursor = new Date(start);
+
+    while (cursor.getTime() <= end.getTime()) {
+      dates.push(this.dateKey(cursor));
+      cursor.setDate(cursor.getDate() + 1);
+    }
+
+    return dates;
+  }
+
+  private dateKey(date: Date) {
+    return dayjs(date).format('YYYY-MM-DD');
+  }
+
+  private emptyPendingResponse(start: Date, end: Date) {
+    return {
+      start_date: this.dateKey(start),
+      end_date: this.dateKey(end),
+      total_pending_employees: 0,
+      total_missing_entries: 0,
+      pending: [],
+    };
+  }
+
+  private normalizeCategoryName(category: string) {
+    const normalized = category.trim().toLowerCase();
+    return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+  }
+
   private isSystemAdmin(actor?: CurrentUserType) {
     return !!actor?.roles?.some((role) => ['SUPER_ADMIN'].includes(role));
   }
 
   private employeeScopeWhere(actor: CurrentUserType) {
     if (this.isSystemAdmin(actor)) return {};
+    if (hasEffectivePermission(actor, 'attendance.read_all')) return {};
 
     const where: Record<string, any> = {};
     if (actor.working_location_id) {
@@ -740,5 +946,17 @@ export class TimeRecordsService {
         'You can only manage attendance for your department.',
       );
     }
+  }
+
+  private ensureActorCanReadEmployee(
+    actor: CurrentUserType,
+    employee: {
+      working_location_id?: bigint | null;
+      department_id?: bigint | null;
+    },
+  ) {
+    if (this.isSystemAdmin(actor)) return;
+    if (hasEffectivePermission(actor, 'attendance.read_all')) return;
+    this.ensureActorCanAccessEmployee(actor, employee);
   }
 }

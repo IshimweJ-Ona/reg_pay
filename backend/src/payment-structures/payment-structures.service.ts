@@ -1,10 +1,12 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { ACTIVITY_TYPE, AUDIT_ACTION, EMPLOYMENT_TYPE } from '@prisma/client';
+import { audit_logs_activity_type, audit_logs_action, payment_structures_payroll_frequency } from '@prisma/client';
 import type { CurrentUserType } from '../auth/types/current-user.type';
+import { hasEffectivePermission } from '../common/utils/effective-permissions.util';
 import { generateUUID } from '../common/utils/uuid.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { calculateRwandaPaye } from '../common/utils/tax.util';
@@ -39,12 +41,14 @@ export class PaymentStructuresService {
   private async ensureEmployee(employeeId: bigint) {
     const employee = await this.prisma.employees.findFirst({
       where: { id: employeeId, deleted_at: null },
-      select: { id: true },
+      select: { id: true, working_location_id: true, department_id: true },
     });
 
     if (!employee) {
       throw new BadRequestException('Employee does not exist.');
     }
+
+    return employee;
   }
 
   /**
@@ -61,7 +65,7 @@ export class PaymentStructuresService {
     dailyRate: string,
     fallbackBasicSalary?: string,
   ): Promise<string> {
-    if (payrollFrequency !== EMPLOYMENT_TYPE.CUSTOM) {
+    if (payrollFrequency !== payment_structures_payroll_frequency.CUSTOM) {
       return fallbackBasicSalary ?? '0';
     }
 
@@ -92,7 +96,8 @@ export class PaymentStructuresService {
     const employeeId = this.toBigInt(dto.employee_id, 'employee_id');
     const effectiveFrom = new Date(dto.effective_from);
 
-    await this.ensureEmployee(employeeId);
+    const employee = await this.ensureEmployee(employeeId);
+    this.ensureActorCanManageEmployee(actor, employee);
 
     const overlapping = await this.prisma.payment_structures.findFirst({
       where: {
@@ -131,7 +136,7 @@ export class PaymentStructuresService {
     const structure = await this.prisma.$transaction(async (tx) => {
       await tx.payment_structures.updateMany({
         where: { employee_id: employeeId, effective_to: null },
-        data: { effective_to: effectiveFrom },
+        data: { effective_to: effectiveFrom, updated_at: new Date() },
       });
 
       const created = await tx.payment_structures.create({
@@ -145,8 +150,9 @@ export class PaymentStructuresService {
           tax_percentage: dto.tax_percentage,
           custom_work_days: null,
           effective_from: effectiveFrom,
+          updated_at: new Date(),
         },
-        include: { employee: true },
+        include: { employees: true },
       });
 
       await tx.audit_logs.create({
@@ -156,9 +162,9 @@ export class PaymentStructuresService {
           entity_table: 'payment_structures',
           entity_id: created.id,
           module_name: 'PAYMENT_STRUCTURES',
-          activity_type: ACTIVITY_TYPE.CREATE,
+          activity_type: audit_logs_activity_type.CREATE,
           activity_description: 'Created employee payment structure.',
-          action: AUDIT_ACTION.CREATED,
+          action: audit_logs_action.CREATED,
         },
       });
 
@@ -174,6 +180,8 @@ export class PaymentStructuresService {
     actor: CurrentUserType,
   ) {
     const existing = await this.findByUuidOrThrow(uuid);
+    const employee = await this.ensureEmployee(existing.employee_id);
+    this.ensureActorCanManageEmployee(actor, employee);
 
     const effectiveFrequency = dto.payroll_frequency ?? existing.payroll_frequency;
     const effectiveDailyRate = dto.daily_rate ?? existing.daily_rate.toString();
@@ -182,7 +190,7 @@ export class PaymentStructuresService {
     // rate, or an explicit basic_salary override changes - otherwise leave
     // the stored value untouched.
     const basicSalary =
-      effectiveFrequency === EMPLOYMENT_TYPE.CUSTOM
+      effectiveFrequency === payment_structures_payroll_frequency.CUSTOM
         ? await this.resolveBasicSalary(
             existing.employee_id,
             effectiveFrequency,
@@ -201,31 +209,36 @@ export class PaymentStructuresService {
         tax_percentage: dto.tax_percentage,
         custom_work_days: null,
         effective_to: dto.effective_to ? new Date(dto.effective_to) : undefined,
+        updated_at: new Date(),
       },
-      include: { employee: true },
+      include: { employees: true },
     });
 
     return this.serialize(updated);
   }
 
-  async findByEmployee(employeeIdInput: string) {
+  async findByEmployee(employeeIdInput: string, actor: CurrentUserType) {
     const employeeId = this.toBigInt(employeeIdInput, 'employee_id');
+    const employee = await this.ensureEmployee(employeeId);
+    this.ensureActorCanReadEmployee(actor, employee);
 
     const structures = await this.prisma.payment_structures.findMany({
       where: { employee_id: employeeId },
-      include: { employee: true },
+      include: { employees: true },
       orderBy: { effective_from: 'desc' },
     });
 
     return structures.map((s) => this.serialize(s));
   }
 
-  async findActiveByEmployee(employeeIdInput: string) {
+  async findActiveByEmployee(employeeIdInput: string, actor: CurrentUserType) {
     const employeeId = this.toBigInt(employeeIdInput, 'employee_id');
+    const employee = await this.ensureEmployee(employeeId);
+    this.ensureActorCanReadEmployee(actor, employee);
 
     const structure = await this.prisma.payment_structures.findFirst({
       where: { employee_id: employeeId, effective_to: null },
-      include: { employee: true },
+      include: { employees: true },
     });
 
     if (!structure) {
@@ -282,16 +295,16 @@ export class PaymentStructuresService {
       overtime_rate: structure.overtime_rate.toString(),
       tax_percentage: structure.tax_percentage.toString(),
 
-      employee: structure.employee
+      employee: structure.employees
         ? {
-            ...structure.employee,
-            id: structure.employee.id.toString(),
-            created_by: structure.employee.created_by?.toString() ?? null,
-            department_id: structure.employee.department_id?.toString() ?? null,
+            ...structure.employees,
+            id: structure.employees.id.toString(),
+            created_by: structure.employees.created_by?.toString() ?? null,
+            department_id: structure.employees.department_id?.toString() ?? null,
             working_location_id:
-              structure.employee.working_location_id?.toString() ?? null,
+              structure.employees.working_location_id?.toString() ?? null,
             employment_category_id:
-              structure.employee.employment_category_id?.toString() ?? null,
+              structure.employees.employment_category_id?.toString() ?? null,
           }
         : undefined,
     };
@@ -322,6 +335,7 @@ export class PaymentStructuresService {
           amount: dto.amount ?? '0',
           percentage_value: dto.percentage_value ?? '0',
           is_mandatory: dto.is_mandatory ?? false,
+          updated_at: new Date(),
         },
       });
 
@@ -362,7 +376,7 @@ export class PaymentStructuresService {
     const updated = await this.prisma.$transaction(async (tx) => {
       const deductionType = await tx.deduction_types.update({
         where: { id: existing.id },
-        data: dto,
+        data: { ...dto, updated_at: new Date() },
       });
 
       if (dto.is_mandatory === true && !existing.is_mandatory) {
@@ -429,7 +443,8 @@ export class PaymentStructuresService {
       'deduction_type_id',
     );
 
-    await this.ensureEmployee(employeeId);
+    const employee = await this.ensureEmployee(employeeId);
+    this.ensureActorCanManageEmployee(actor, employee);
 
     const deductionType = await this.prisma.deduction_types.findFirst({
       where: { id: deductionTypeId },
@@ -448,7 +463,7 @@ export class PaymentStructuresService {
         end_date: dto.end_date ? new Date(dto.end_date) : null,
         is_active: dto.is_active ?? true,
       },
-      include: { deduction_type: true },
+      include: { deduction_types: true },
     });
 
     return this.serializeEmployeeDeduction(created);
@@ -460,7 +475,8 @@ export class PaymentStructuresService {
 
   async createAllowance(dto: CreateAllowanceDto, actor: CurrentUserType) {
     const employeeId = this.toBigInt(dto.employee_id, 'employee_id');
-    await this.ensureEmployee(employeeId);
+    const employee = await this.ensureEmployee(employeeId);
+    this.ensureActorCanManageEmployee(actor, employee);
     await this.ensureEmployeeCanReceiveAllowance(employeeId);
 
     const created = await this.prisma.allowances.create({
@@ -470,6 +486,7 @@ export class PaymentStructuresService {
         title: dto.title,
         amount: dto.amount,
         description: dto.description,
+        updated_at: new Date(),
       },
     });
 
@@ -480,17 +497,19 @@ export class PaymentStructuresService {
         entity_table: 'allowances',
         entity_id: created.id,
         module_name: 'PAYMENT_STRUCTURES',
-        activity_type: ACTIVITY_TYPE.CREATE,
+        activity_type: audit_logs_activity_type.CREATE,
         activity_description: 'Created employee allowance.',
-        action: AUDIT_ACTION.CREATED,
+        action: audit_logs_action.CREATED,
       },
     });
 
     return this.serializeAllowance(created);
   }
 
-  async findAllowances(employeeIdInput: string) {
+  async findAllowances(employeeIdInput: string, actor: CurrentUserType) {
     const employeeId = this.toBigInt(employeeIdInput, 'employee_id');
+    const employee = await this.ensureEmployee(employeeId);
+    this.ensureActorCanReadEmployee(actor, employee);
 
     const allowances = await this.prisma.allowances.findMany({
       where: { employee_id: employeeId },
@@ -508,10 +527,12 @@ export class PaymentStructuresService {
     if (!existing) {
       throw new NotFoundException('Allowance not found.');
     }
+    const employee = await this.ensureEmployee(existing.employee_id);
+    this.ensureActorCanManageEmployee(actor, employee);
 
     const updated = await this.prisma.allowances.update({
       where: { id: existing.id },
-      data: { is_active: false },
+      data: { is_active: false, updated_at: new Date() },
     });
 
     await this.prisma.audit_logs.create({
@@ -521,9 +542,9 @@ export class PaymentStructuresService {
         entity_table: 'allowances',
         entity_id: existing.id,
         module_name: 'PAYMENT_STRUCTURES',
-        activity_type: ACTIVITY_TYPE.UPDATE,
+        activity_type: audit_logs_activity_type.UPDATE,
         activity_description: 'Deactivated employee allowance.',
-        action: AUDIT_ACTION.UPDATED,
+        action: audit_logs_action.UPDATED,
       },
     });
 
@@ -542,6 +563,8 @@ export class PaymentStructuresService {
     if (!existing) {
       throw new NotFoundException('Allowance not found.');
     }
+    const employee = await this.ensureEmployee(existing.employee_id);
+    this.ensureActorCanManageEmployee(actor, employee);
 
     const updated = await this.prisma.allowances.update({
       where: { id: existing.id },
@@ -549,6 +572,7 @@ export class PaymentStructuresService {
         title: dto.title,
         amount: dto.amount,
         description: dto.description,
+        updated_at: new Date(),
       },
     });
 
@@ -559,21 +583,23 @@ export class PaymentStructuresService {
         entity_table: 'allowances',
         entity_id: existing.id,
         module_name: 'PAYMENT_STRUCTURES',
-        activity_type: ACTIVITY_TYPE.UPDATE,
+        activity_type: audit_logs_activity_type.UPDATE,
         activity_description: 'Updated employee allowance.',
-        action: AUDIT_ACTION.UPDATED,
+        action: audit_logs_action.UPDATED,
       },
     });
 
     return this.serializeAllowance(updated);
   }
 
-  async findEmployeeDeductions(employeeIdInput: string) {
+  async findEmployeeDeductions(employeeIdInput: string, actor: CurrentUserType) {
     const employeeId = this.toBigInt(employeeIdInput, 'employee_id');
+    const employee = await this.ensureEmployee(employeeId);
+    this.ensureActorCanReadEmployee(actor, employee);
 
     const deductions = await this.prisma.employee_deductions.findMany({
       where: { employee_id: employeeId },
-      include: { deduction_type: true },
+      include: { deduction_types: true },
       orderBy: { created_at: 'desc' },
     });
 
@@ -592,6 +618,8 @@ export class PaymentStructuresService {
     if (!existing) {
       throw new NotFoundException('Employee deduction not found.');
     }
+    const employee = await this.ensureEmployee(existing.employee_id);
+    this.ensureActorCanManageEmployee(actor, employee);
 
     const updated = await this.prisma.employee_deductions.update({
       where: { id: existing.id },
@@ -600,7 +628,7 @@ export class PaymentStructuresService {
         end_date: dto.end_date ? new Date(dto.end_date) : undefined,
         is_active: dto.is_active,
       },
-      include: { deduction_type: true },
+      include: { deduction_types: true },
     });
 
     await this.prisma.audit_logs.create({
@@ -610,9 +638,9 @@ export class PaymentStructuresService {
         entity_table: 'employee_deductions',
         entity_id: existing.id,
         module_name: 'PAYMENT_STRUCTURES',
-        activity_type: ACTIVITY_TYPE.UPDATE,
+        activity_type: audit_logs_activity_type.UPDATE,
         activity_description: 'Updated employee deduction.',
-        action: AUDIT_ACTION.UPDATED,
+        action: audit_logs_action.UPDATED,
       },
     });
 
@@ -627,6 +655,8 @@ export class PaymentStructuresService {
     if (!existing) {
       throw new NotFoundException('Employee deduction not found.');
     }
+    const employee = await this.ensureEmployee(existing.employee_id);
+    this.ensureActorCanManageEmployee(actor, employee);
 
     await this.prisma.employee_deductions.update({
       where: { id: existing.id },
@@ -643,9 +673,9 @@ export class PaymentStructuresService {
         entity_table: 'employee_deductions',
         entity_id: existing.id,
         module_name: 'PAYMENT_STRUCTURES',
-        activity_type: ACTIVITY_TYPE.DELETE,
+        activity_type: audit_logs_activity_type.DELETE,
         activity_description: 'Deactivated employee deduction.',
-        action: AUDIT_ACTION.DELETED,
+        action: audit_logs_action.DELETED,
       },
     });
 
@@ -673,8 +703,8 @@ export class PaymentStructuresService {
       id: deduction.id.toString(),
       employee_id: deduction.employee_id.toString(),
       deduction_type_id: deduction.deduction_type_id.toString(),
-      deduction_type: deduction.deduction_type
-        ? this.serializeDeductionType(deduction.deduction_type)
+      deduction_type: deduction.deduction_types
+        ? this.serializeDeductionType(deduction.deduction_types)
         : undefined,
     };
   }
@@ -708,9 +738,9 @@ export class PaymentStructuresService {
         : 0;
 
     const canReceive =
-      structure.payroll_frequency === EMPLOYMENT_TYPE.MONTHLY ||
-      ((structure.payroll_frequency === EMPLOYMENT_TYPE.CUSTOM ||
-        structure.payroll_frequency === EMPLOYMENT_TYPE.DAILY) &&
+      structure.payroll_frequency === payment_structures_payroll_frequency.MONTHLY ||
+      ((structure.payroll_frequency === payment_structures_payroll_frequency.CUSTOM ||
+        structure.payroll_frequency === payment_structures_payroll_frequency.DAILY) &&
         contractDays > 21);
 
     if (!canReceive) {
@@ -727,5 +757,42 @@ export class PaymentStructuresService {
       employee_id: allowance.employee_id.toString(),
       amount: allowance.amount.toString(),
     };
+  }
+
+  private isSystemAdmin(actor?: CurrentUserType) {
+    return !!actor?.roles?.some((role) => ['SUPER_ADMIN'].includes(role));
+  }
+
+  private ensureActorCanReadEmployee(
+    actor: CurrentUserType,
+    employee: {
+      working_location_id?: bigint | null;
+      department_id?: bigint | null;
+    },
+  ) {
+    if (this.isSystemAdmin(actor)) return;
+    if (hasEffectivePermission(actor, 'payment-structures.read_all')) return;
+    this.ensureActorCanManageEmployee(actor, employee);
+  }
+
+  private ensureActorCanManageEmployee(
+    actor: CurrentUserType,
+    employee: {
+      working_location_id?: bigint | null;
+      department_id?: bigint | null;
+    },
+  ) {
+    if (this.isSystemAdmin(actor)) return;
+
+    if (
+      actor.working_location_id &&
+      employee.working_location_id?.toString() === actor.working_location_id
+    ) {
+      return;
+    }
+
+    throw new ForbiddenException(
+      'You can only manage payment structures in your working location.',
+    );
   }
 }

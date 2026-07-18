@@ -7,15 +7,15 @@ import {
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import * as cacheManager from 'cache-manager';
 import {
-  ACTIVITY_TYPE,
-  AUDIT_ACTION,
-  APPROVAL_ACTION,
-  EMPLOYMENT_TYPE,
-  PAYMENT_BATCH_STATUS,
-  STATUS_USER,
-  TRANSACTION_STATUS,
+  audit_logs_activity_type as ACTIVITY_TYPE,
+  audit_logs_action as AUDIT_ACTION,
+  payroll_batch_approval_actions_action as APPROVAL_ACTION,
+  payment_batches_status as PAYMENT_BATCH_STATUS,
+  employees_status as STATUS_USER,
+  transactions_transaction_status as TRANSACTION_STATUS,
 } from '@prisma/client';
 import type { CurrentUserType } from '../auth/types/current-user.type';
+import { hasEffectivePermission } from '../common/utils/effective-permissions.util';
 import {
   isNumericId,
   normalizeSearch,
@@ -31,7 +31,7 @@ import { ApprovePayrollItemDto } from './dto/approve-payroll-item.dto';
 import { CreatePayrollBatchDto } from './dto/create-payroll-batch.dto';
 import { RejectPayrollItemDto } from './dto/reject-payroll-item.dto';
 import {
-  calculateOvertimePay,
+  calculateOvertimeBonus,
   getContractDays,
 } from '../common/utils/payroll-calc.util';
 import dayjs from 'dayjs';
@@ -45,6 +45,7 @@ const RWANDA_TIMEZONE = 'Africa/Kigali';
 
 type PayrollCalculation = {
   employeeId: bigint;
+  departmentId: bigint | null;
   paymentStructureId: bigint;
   baseAmount: number;
   allowanceAmount: number;
@@ -84,11 +85,11 @@ export class PayrollService {
     const employees = await this.prisma.employees.findMany({
       where: {
         working_location_id: workingLocationId,
-        status: STATUS_USER.ACTIVE,
+        status: STATUS_USER.ACTIVE as any,
         deleted_at: null,
         ...(dto.categories && dto.categories.length > 0
           ? {
-              employment_category: {
+              employment_categories: {
                 name: { in: dto.categories },
               },
             }
@@ -107,7 +108,7 @@ export class PayrollService {
     const alreadyProcessedItems =
       await this.prisma.payment_batch_items.findMany({
         where: {
-          batch: {
+          payment_batches: {
             payroll_month: dto.payroll_month,
             payroll_year: dto.payroll_year,
             status: {
@@ -237,6 +238,7 @@ export class PayrollService {
             status: (PAYMENT_BATCH_STATUS as any).DRAFT,
             submitted_by: BigInt(actor.userId),
             submitted_at: new Date(),
+            updated_at: new Date(),
           },
         });
       }
@@ -269,7 +271,15 @@ export class PayrollService {
             net_amount: calculation.netAmount,
             payment_date: new Date(dto.payment_date),
             payment_method: dto.payment_method,
-            transaction_status: TRANSACTION_STATUS.PENDING,
+            transaction_status: TRANSACTION_STATUS.PENDING as any,
+            // Denormalized so permission-driven query scoping
+            // (MODULE_SCOPE_CONFIG) can filter transactions directly.
+            // The whole batch is single-location by construction
+            // (workingLocationId resolved once above), department comes
+            // from the employee snapshot taken at calculation time.
+            working_location_id: workingLocationId,
+            department_id: calculation.departmentId,
+            updated_at: new Date(),
           },
         });
 
@@ -312,7 +322,7 @@ export class PayrollService {
 
             await tx.transactions.updateMany({
               where: {
-                batch_items: {
+                payment_batch_items: {
                   some: {
                     payment_batch_id: targetBatch.id,
                     employee_id: deduction.employeeId,
@@ -431,7 +441,7 @@ export class PayrollService {
   async submitBatch(uuid: string, actor: CurrentUserType) {
     const batch = await this.prisma.payment_batches.findUnique({
       where: { uuid },
-      include: { working_location: true },
+      include: { working_locations: true },
     });
 
     if (!batch) throw new NotFoundException('Payroll batch not found.');
@@ -491,7 +501,7 @@ export class PayrollService {
     });
 
     if (!batch) throw new NotFoundException('Payroll batch not found.');
-    this.ensureActorCanUseWorkingLocation(actor, batch.working_location_id);
+    this.ensureActorCanViewWorkingLocation(actor, batch.working_location_id);
 
     return this.serializeBatch(batch);
   }
@@ -503,7 +513,7 @@ export class PayrollService {
     });
 
     if (!batch) throw new NotFoundException('Payroll batch not found.');
-    this.ensureActorCanUseWorkingLocation(actor, batch.working_location_id);
+    this.ensureActorCanViewWorkingLocation(actor, batch.working_location_id);
 
     const headers = [
       'Batch Code',
@@ -524,28 +534,28 @@ export class PayrollService {
       'Transaction Status',
     ];
 
-    const rows = batch.items.map((item) => {
+    const rows = batch.payment_batch_items.map((item) => {
       const employeeName =
-        `${item.employee?.first_name ?? ''} ${item.employee?.last_name ?? ''}`.trim();
+        `${item.employees?.first_name ?? ''} ${item.employees?.last_name ?? ''}`.trim();
       return [
         batch.batch_code,
         `${batch.payroll_month}/${batch.payroll_year}`,
-        batch.working_location?.name ?? batch.working_location_id.toString(),
+        batch.working_locations?.name ?? batch.working_location_id.toString(),
         employeeName,
-        item.employee?.phone_number ?? '',
-        item.employee?.department?.name ??
-          item.employee?.department_id?.toString() ??
+        item.employees?.phone_number ?? '',
+        (item.employees as any)?.departments?.name ??
+          item.employees?.department_id?.toString() ??
           '',
         item.status,
-        item.transaction?.gross_amount?.toString() ?? '0',
-        item.transaction?.base_amount?.toString() ?? '0',
-        item.transaction?.allowance_amount?.toString() ?? '0',
-        item.transaction?.tax_amount?.toString() ?? '0',
-        item.transaction?.total_deductions?.toString() ?? '0',
-        item.transaction?.net_amount?.toString() ?? '0',
-        item.transaction?.attendance_days?.toString() ?? '0',
-        item.transaction?.payment_method ?? '',
-        item.transaction?.transaction_status ?? '',
+        item.transactions?.gross_amount?.toString() ?? '0',
+        item.transactions?.base_amount?.toString() ?? '0',
+        item.transactions?.allowance_amount?.toString() ?? '0',
+        item.transactions?.tax_amount?.toString() ?? '0',
+        item.transactions?.total_deductions?.toString() ?? '0',
+        item.transactions?.net_amount?.toString() ?? '0',
+        item.transactions?.attendance_days?.toString() ?? '0',
+        item.transactions?.payment_method ?? '',
+        item.transactions?.transaction_status ?? '',
       ];
     });
 
@@ -566,17 +576,18 @@ export class PayrollService {
     actor: CurrentUserType,
   ) {
     const item = await this.findItemByUuidOrThrow(uuid);
+    await this.ensureActorCanApproveBatch(actor, item.payment_batches);
 
     const approved = await this.prisma.$transaction(async (tx) => {
       const saved = await tx.payment_batch_items.update({
         where: { id: item.id },
         data: {
-          status: PAYMENT_BATCH_STATUS.APPROVED,
+          status: PAYMENT_BATCH_STATUS.APPROVED as any,
           approved_by: BigInt(actor.userId),
           approved_at: new Date(),
           rejection_reason: null,
         },
-        include: this.itemIncludes(),
+        include: { employees: true, transactions: true, users: true },
       });
 
       await tx.audit_logs.create({
@@ -615,22 +626,23 @@ export class PayrollService {
     actor: CurrentUserType,
   ) {
     const item = await this.findItemByUuidOrThrow(uuid);
+    await this.ensureActorCanApproveBatch(actor, item.payment_batches);
 
     const rejected = await this.prisma.$transaction(async (tx) => {
       const saved = await tx.payment_batch_items.update({
         where: { id: item.id },
         data: {
-          status: PAYMENT_BATCH_STATUS.REJECTED,
+          status: PAYMENT_BATCH_STATUS.REJECTED as any,
           approved_by: BigInt(actor.userId),
           approved_at: new Date(),
           rejection_reason: dto.rejection_reason,
         },
-        include: this.itemIncludes(),
+        include: { employees: true, transactions: true, users: true },
       });
 
       await tx.transactions.update({
         where: { id: item.transaction_id },
-        data: { transaction_status: TRANSACTION_STATUS.REJECTED },
+        data: { transaction_status: TRANSACTION_STATUS.REJECTED as any },
       });
 
       await tx.audit_logs.create({
@@ -709,7 +721,7 @@ export class PayrollService {
   ) {
     const batch = await this.prisma.payment_batches.findUnique({
       where: { uuid },
-      include: { working_location: true },
+      include: { working_locations: true },
     });
 
     if (!batch) throw new NotFoundException('Payroll batch not found.');
@@ -860,7 +872,7 @@ export class PayrollService {
       },
       include: {
         transaction: true,
-        employee: { include: { working_location: true } },
+        employee: { include: { working_locations: true } },
       },
     });
 
@@ -868,10 +880,10 @@ export class PayrollService {
 
     const batch = await tx.payment_batches.findUnique({
       where: { id: batchId },
-      include: { working_location: true },
+      include: { working_locations: true },
     });
 
-    const branchName = batch.working_location.name;
+    const branchName = batch.working_locations?.name || 'Unknown';
     const month = batch.payroll_month;
     const year = batch.payroll_year;
     const newBatchCode = `Rejected-${branchName}-${month}/${year}-${Date.now()}`;
@@ -904,9 +916,10 @@ export class PayrollService {
           (sum, item) => sum + Number(item.transaction.tax_amount),
           0,
         ),
-        status: PAYMENT_BATCH_STATUS.DRAFT,
+        status: PAYMENT_BATCH_STATUS.DRAFT as any,
         submitted_by: batch.submitted_by,
         submitted_at: new Date(),
+        updated_at: new Date(),
       },
     });
 
@@ -980,7 +993,7 @@ export class PayrollService {
   ) {
     const batch = await this.prisma.payment_batches.findUnique({
       where: { uuid },
-      include: { working_location: true },
+      include: { working_locations: true },
     });
 
     if (!batch) throw new NotFoundException('Payroll batch not found.');
@@ -991,6 +1004,8 @@ export class PayrollService {
     ) {
       throw new BadRequestException('Terminal batches cannot be modified.');
     }
+
+    await this.ensureActorCanApproveBatch(actor, batch);
 
     const isSuperAdmin = actor.roles.includes('SUPER_ADMIN');
 
@@ -1147,6 +1162,7 @@ export class PayrollService {
   private async calculateEmployeePayroll(
     employee: {
       id: bigint;
+      department_id?: bigint | null;
       hire_date?: Date | null;
       contract_start_date?: Date | null;
       contract_end_date?: Date | null;
@@ -1210,17 +1226,22 @@ export class PayrollService {
     const presentDays = attendance.filter(
       (record) => record.attendance_status === 'PRESENT',
     ).length;
-    const overtimeHours = attendance.reduce(
-      (sum, record) => sum + Number(record.overtime_hours),
-      0,
-    );
+
+    // Overtime is no longer a manually entered value. A day counts as an
+    // overtime day whenever hours_worked exceeds the configured default
+    // work hours (8/day unless changed in System Config), and each
+    // overtime day earns one flat bonus — not a per-hour multiple.
+    const defaultWorkHours = await this.systemConfigService.getDefaultWorkHours();
+    const overtimeDays = attendance.filter(
+      (record) => Number(record.hours_worked) > defaultWorkHours,
+    ).length;
 
     const frequency = paymentStructure.payroll_frequency;
 
-    // Flat-rate overtime bonus (default 2,500 RWF/hr, configurable via
+    // Flat-rate overtime bonus (default 2,500 RWF/day, configurable via
     // system_config) replaces the old per-employee overtime_rate multiplier
     // for every payroll frequency.
-    const overtimeRatePerHour = await this.systemConfigService.getOvertimeRatePerHour();
+    const overtimeBonusPerDay = await this.systemConfigService.getOvertimeBonusPerDay();
 
     // CUSTOM (fixed-term) employees are anchored to their contract's own day
     // count rather than the calendar month, so daily_rate x contract days
@@ -1235,7 +1256,7 @@ export class PayrollService {
     let expectedWorkDays = periodCalendarDays;
     if (dto.work_days !== undefined && dto.work_days !== null) {
       expectedWorkDays = dto.work_days;
-    } else if ((frequency === EMPLOYMENT_TYPE.CUSTOM || frequency === EMPLOYMENT_TYPE.DAILY) && contractDays) {
+    } else if ((frequency === 'CUSTOM' || frequency === 'DAILY') && contractDays) {
       expectedWorkDays = contractDays;
     }
     if (expectedWorkDays < 1) {
@@ -1252,7 +1273,7 @@ export class PayrollService {
     let baseAmount = 0;
     let phoneNumber: string | undefined = undefined;
 
-    if (frequency === EMPLOYMENT_TYPE.MONTHLY) {
+    if (frequency === 'MONTHLY') {
       baseAmount = Number(paymentStructure.basic_salary);
     } else {
       // DAILY and CUSTOM: attendance drives what actually gets paid out.
@@ -1288,10 +1309,16 @@ export class PayrollService {
     let monthlyNetBeforeProration = 0;
     let dailyNetRate: number | null = null;
     let allowances: any[] = [];
+    let taxBreakdown: Array<{
+      name: string;
+      rate: number;
+      full_amount: number;
+      prorated_amount: number;
+    }> = [];
 
-    if (frequency === EMPLOYMENT_TYPE.MONTHLY) {
+    if (frequency === 'MONTHLY') {
       const basicSalary = baseAmount;
-      const fullOvertime = calculateOvertimePay(overtimeHours, overtimeRatePerHour);
+      const fullOvertime = calculateOvertimeBonus(overtimeDays, overtimeBonusPerDay);
       allowanceEligible = true;
 
       allowances = await this.prisma.allowances.findMany({
@@ -1307,9 +1334,15 @@ export class PayrollService {
 
       // Full Tax
       const monthlyTaxes = await this.systemConfigService.findMonthlyTaxesAtDate(periodEnd);
-      const fullTax = monthlyTaxes.reduce((sum, tax) => {
-        return sum + fullMonthlyGross * (Number(tax.rate) / 100);
-      }, 0);
+      const fullTaxBreakdown = monthlyTaxes.map((tax) => ({
+        name: tax.name,
+        rate: Number(tax.rate),
+        full_amount: fullMonthlyGross * (Number(tax.rate) / 100),
+      }));
+      const fullTax = fullTaxBreakdown.reduce(
+        (sum, tax) => sum + tax.full_amount,
+        0,
+      );
 
       // Full Configured Deductions
       const employeeDeductions = await this.prisma.employee_deductions.findMany({
@@ -1319,17 +1352,17 @@ export class PayrollService {
           start_date: { lte: periodEnd },
           OR: [{ end_date: null }, { end_date: { gte: periodStart } }],
         },
-        include: { deduction_type: true },
+        include: { deduction_types: true },
       });
       const fullConfiguredDeductions = employeeDeductions.reduce((sum, deduction) => {
-        if (deduction.deduction_type.deduction_mode === 'PERCENTAGE') {
+        if (deduction.deduction_types.deduction_mode === 'PERCENTAGE') {
           return (
             sum +
             fullMonthlyGross *
-              (Number(deduction.deduction_type.percentage_value) / 100)
+              (Number(deduction.deduction_types.percentage_value) / 100)
           );
         }
-        return sum + Number(deduction.deduction_type.amount);
+        return sum + Number(deduction.deduction_types.amount);
       }, 0);
 
       const fullTaxAndDeductions = fullTax + fullConfiguredDeductions;
@@ -1344,6 +1377,10 @@ export class PayrollService {
       overtimeAmount = fullOvertime * prorationRatio;
       grossAmount = fullMonthlyGross * prorationRatio;
       taxAmount = fullTax * prorationRatio;
+      taxBreakdown = fullTaxBreakdown.map((tax) => ({
+        ...tax,
+        prorated_amount: tax.full_amount * prorationRatio,
+      }));
       totalDeductions = fullTaxAndDeductions * prorationRatio;
       netAmount = dailyNetRate * presentDays;
     } else if (isOver21Days) {
@@ -1355,7 +1392,7 @@ export class PayrollService {
       allowanceEligible = true;
 
       const fullBase = Number(paymentStructure.daily_rate) * expectedWorkDays;
-      const fullOvertime = calculateOvertimePay(overtimeHours, overtimeRatePerHour);
+      const fullOvertime = calculateOvertimeBonus(overtimeDays, overtimeBonusPerDay);
 
       allowances = await this.prisma.allowances.findMany({
         where: { employee_id: employee.id, is_active: true },
@@ -1369,9 +1406,15 @@ export class PayrollService {
       monthlyGrossBeforeProration = fullGross;
 
       const monthlyTaxes = await this.systemConfigService.findMonthlyTaxesAtDate(periodEnd);
-      const fullTax = monthlyTaxes.reduce((sum, tax) => {
-        return sum + fullGross * (Number(tax.rate) / 100);
-      }, 0);
+      const fullTaxBreakdown = monthlyTaxes.map((tax) => ({
+        name: tax.name,
+        rate: Number(tax.rate),
+        full_amount: fullGross * (Number(tax.rate) / 100),
+      }));
+      const fullTax = fullTaxBreakdown.reduce(
+        (sum, tax) => sum + tax.full_amount,
+        0,
+      );
 
       const employeeDeductions = await this.prisma.employee_deductions.findMany({
         where: {
@@ -1380,17 +1423,17 @@ export class PayrollService {
           start_date: { lte: periodEnd },
           OR: [{ end_date: null }, { end_date: { gte: periodStart } }],
         },
-        include: { deduction_type: true },
+        include: { deduction_types: true },
       });
       const fullConfiguredDeductions = employeeDeductions.reduce((sum, deduction) => {
-        if (deduction.deduction_type.deduction_mode === 'PERCENTAGE') {
+        if (deduction.deduction_types.deduction_mode === 'PERCENTAGE') {
           return (
             sum +
             fullGross *
-              (Number(deduction.deduction_type.percentage_value) / 100)
+              (Number(deduction.deduction_types.percentage_value) / 100)
           );
         }
-        return sum + Number(deduction.deduction_type.amount);
+        return sum + Number(deduction.deduction_types.amount);
       }, 0);
 
       const fullTaxAndDeductions = fullTax + fullConfiguredDeductions;
@@ -1404,13 +1447,17 @@ export class PayrollService {
       allowanceAmount = fullAllowance * prorationRatio;
       grossAmount = fullGross * prorationRatio;
       taxAmount = fullTax * prorationRatio;
+      taxBreakdown = fullTaxBreakdown.map((tax) => ({
+        ...tax,
+        prorated_amount: tax.full_amount * prorationRatio,
+      }));
       totalDeductions = fullTaxAndDeductions * prorationRatio;
       netAmount = dailyNetRate * presentDays;
     } else {
       // DAILY & CUSTOM, 21 days or fewer worked: no tax, no allowances -
       // straightforward attendance-driven pay plus the flat overtime bonus.
       allowanceEligible = false;
-      overtimeAmount = calculateOvertimePay(overtimeHours, overtimeRatePerHour);
+      overtimeAmount = calculateOvertimeBonus(overtimeDays, overtimeBonusPerDay);
       allowanceAmount = 0;
       grossAmount = baseAmount + overtimeAmount + allowanceAmount;
       taxAmount = 0;
@@ -1420,13 +1467,14 @@ export class PayrollService {
 
     return {
       employeeId: employee.id,
+      departmentId: employee.department_id ?? null,
       paymentStructureId: paymentStructure.id,
       baseAmount,
       allowanceAmount,
       taxAmount,
       attendanceDays: presentDays,
       payrollWorkDays:
-        frequency === EMPLOYMENT_TYPE.CUSTOM || frequency === EMPLOYMENT_TYPE.DAILY
+        frequency === 'CUSTOM' || frequency === 'DAILY'
           ? presentDays
           : expectedWorkDays,
       payrollStartDate: periodStart,
@@ -1436,13 +1484,15 @@ export class PayrollService {
         present_days: presentDays,
         expected_work_days: expectedWorkDays,
         contract_days: contractDays,
-        overtime_rate_per_hour: overtimeRatePerHour,
+        overtime_bonus_per_day: overtimeBonusPerDay,
+        default_work_hours: defaultWorkHours,
         daily_net_rate: dailyNetRate,
         monthly_gross_before_proration: monthlyGrossBeforeProration || null,
         monthly_net_before_proration: monthlyNetBeforeProration || null,
         proration_ratio: prorationRatio,
-        overtime_hours: overtimeHours,
+        overtime_days: overtimeDays,
         allowance_eligible: allowanceEligible,
+        tax_breakdown: taxBreakdown,
         // original metadata fields
         days_worked: daysWorked,
         is_over_21_days: isOver21Days,
@@ -1497,6 +1547,7 @@ export class PayrollService {
 
   private batchScopeWhere(actor: CurrentUserType) {
     if (this.isSystemAdmin(actor)) return {};
+    if (hasEffectivePermission(actor, 'payroll.read_all')) return {};
     if (actor.working_location_id) {
       return { working_location_id: BigInt(actor.working_location_id) };
     }
@@ -1512,6 +1563,15 @@ export class PayrollService {
     throw new BadRequestException(
       'You can only access payroll in your working location.',
     );
+  }
+
+  private ensureActorCanViewWorkingLocation(
+    actor: CurrentUserType,
+    workingLocationId: bigint,
+  ) {
+    if (this.isSystemAdmin(actor)) return;
+    if (hasEffectivePermission(actor, 'payroll.read_all')) return;
+    this.ensureActorCanUseWorkingLocation(actor, workingLocationId);
   }
 
   private async ensureActorCanApproveBatch(
@@ -1557,6 +1617,14 @@ export class PayrollService {
   private async findItemByUuidOrThrow(uuid: string) {
     const item = await this.prisma.payment_batch_items.findUnique({
       where: { uuid },
+      include: {
+        payment_batches: {
+          select: {
+            working_location_id: true,
+            current_approval_step: true,
+          },
+        },
+      },
     });
 
     if (!item) throw new NotFoundException('Payroll item not found.');
@@ -1566,15 +1634,25 @@ export class PayrollService {
 
   private batchIncludes() {
     return {
-      working_location: true,
-      submittedBy: true,
-      approvedBy: true,
-      items: {
-        include: this.itemIncludes(),
+      working_locations: true,
+      users_payment_batches_submitted_byTousers: true,
+      users_payment_batches_approved_byTousers: true,
+      payment_batch_items: {
+        include: {
+          employees: {
+            include: {
+              departments: {
+                select: { name: true },
+              },
+            },
+          },
+          transactions: true,
+          users: true,
+        },
         orderBy: { created_at: 'asc' as const },
       },
-      approval_actions: {
-        include: { actionBy: true },
+      payroll_batch_approval_actions: {
+        include: { users: true },
         orderBy: { action_at: 'asc' as const },
       },
       ikimina_contributions: true,
@@ -1583,14 +1661,16 @@ export class PayrollService {
 
   private itemIncludes() {
     return {
-      employee: {
+      employees: {
         include: {
-          department: true,
-          ikimina_membership: true,
+          departments: {
+            select: { name: true },
+          },
+          ikimina_memberships: true,
         },
       },
-      transaction: true,
-      approvedBy: true,
+      transactions: true,
+      users: true,
     };
   }
 
@@ -1606,17 +1686,17 @@ export class PayrollService {
       total_allowances: batch.total_allowances?.toString?.() ?? '0',
       total_deductions: batch.total_deductions?.toString?.() ?? '0',
       total_tax: batch.total_tax?.toString?.() ?? '0',
-      working_location: batch.working_location
+      working_location: batch.working_locations
         ? {
-            ...batch.working_location,
-            id: batch.working_location.id.toString(),
-            created_by: batch.working_location.created_by?.toString() ?? null,
-            updated_by: batch.working_location.updated_by?.toString() ?? null,
-            deleted_by: batch.working_location.deleted_by?.toString() ?? null,
+            ...batch.working_locations,
+            id: batch.working_locations.id.toString(),
+            created_by: batch.working_locations.created_by?.toString() ?? null,
+            updated_by: batch.working_locations.updated_by?.toString() ?? null,
+            deleted_by: batch.working_locations.deleted_by?.toString() ?? null,
           }
         : undefined,
-      items: batch.items?.map((item) => this.serializeItem(item)),
-      approval_actions: batch.approval_actions?.map((action) => ({
+      items: batch.payment_batch_items?.map((item) => this.serializeItem(item)),
+      approval_actions: batch.payroll_batch_approval_actions?.map((action) => ({
         ...action,
         id: action.id.toString(),
         payment_batch_id: action.payment_batch_id.toString(),
@@ -1650,51 +1730,51 @@ export class PayrollService {
       employee_id: item.employee_id.toString(),
       transaction_id: item.transaction_id.toString(),
       approved_by: item.approved_by?.toString() ?? null,
-      employee: item.employee
+      employee: item.employees
         ? {
-            ...item.employee,
-            id: item.employee.id.toString(),
-            created_by: item.employee.created_by?.toString() ?? null,
-            department_id: item.employee.department_id?.toString() ?? null,
+            ...item.employees,
+            id: item.employees.id.toString(),
+            created_by: item.employees.created_by?.toString() ?? null,
+            department_id: item.employees.department_id?.toString() ?? null,
             working_location_id:
-              item.employee.working_location_id?.toString() ?? null,
+              item.employees.working_location_id?.toString() ?? null,
             employment_category_id:
-              item.employee.employment_category_id?.toString() ?? null,
-            department: item.employee.department
+              item.employees.employment_category_id?.toString() ?? null,
+            department: item.employees.departments
               ? {
-                  ...item.employee.department,
-                  id: item.employee.department.id.toString(),
+                  ...item.employees.departments,
+                  id: item.employees.departments.id.toString(),
                   working_location_id:
-                    item.employee.department.working_location_id.toString(),
+                    item.employees.departments.working_location_id.toString(),
                 }
               : null,
-            ikimina_membership: item.employee.ikimina_membership
+            ikimina_membership: item.employees.ikimina_memberships
               ? {
-                  ...item.employee.ikimina_membership,
-                  id: item.employee.ikimina_membership.id.toString(),
-                  employee_id: item.employee.ikimina_membership.employee_id.toString(),
-                  created_by: item.employee.ikimina_membership.created_by?.toString() ?? null,
-                  monthly_amount: Number(item.employee.ikimina_membership.monthly_amount),
-                  is_active: item.employee.ikimina_membership.is_active,
+                  ...item.employees.ikimina_memberships,
+                  id: item.employees.ikimina_memberships.id.toString(),
+                  employee_id: item.employees.ikimina_memberships.employee_id.toString(),
+                  created_by: item.employees.ikimina_memberships.created_by?.toString() ?? null,
+                  monthly_amount: Number(item.employees.ikimina_memberships.monthly_amount),
+                  is_active: item.employees.ikimina_memberships.is_active,
                 }
               : null,
           }
         : undefined,
-      transaction: item.transaction
+      transaction: item.transactions
         ? {
-            ...item.transaction,
-            id: item.transaction.id.toString(),
-            employee_id: item.transaction.employee_id.toString(),
+            ...item.transactions,
+            id: item.transactions.id.toString(),
+            employee_id: item.transactions.employee_id.toString(),
             payment_structure_id:
-              item.transaction.payment_structure_id.toString(),
-            approved_by: item.transaction.approved_by?.toString() ?? null,
-            gross_amount: item.transaction.gross_amount.toString(),
-            base_amount: item.transaction.base_amount?.toString?.() ?? '0',
+              item.transactions.payment_structure_id.toString(),
+            approved_by: item.transactions.approved_by?.toString() ?? null,
+            gross_amount: item.transactions.gross_amount.toString(),
+            base_amount: item.transactions.base_amount?.toString?.() ?? '0',
             allowance_amount:
-              item.transaction.allowance_amount?.toString?.() ?? '0',
-            tax_amount: item.transaction.tax_amount?.toString?.() ?? '0',
-            total_deductions: item.transaction.total_deductions.toString(),
-            net_amount: item.transaction.net_amount.toString(),
+              item.transactions.allowance_amount?.toString?.() ?? '0',
+            tax_amount: item.transactions.tax_amount?.toString?.() ?? '0',
+            total_deductions: item.transactions.total_deductions.toString(),
+            net_amount: item.transactions.net_amount.toString(),
           }
         : undefined,
     };

@@ -1,5 +1,5 @@
 import { JwtService } from '@nestjs/jwt';
-import type { Users } from '@prisma/client';
+import type { users } from '@prisma/client';
 
 import {
   ACCESS_TOKEN_EXPIRES_IN,
@@ -11,7 +11,7 @@ import {
 import type { JwtPayload } from '../interfaces/jwt-payload.interface';
 
 export type UserForToken = Pick<
-  Users,
+  users,
   | 'id'
   | 'uuid'
   | 'email'

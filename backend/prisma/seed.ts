@@ -36,16 +36,29 @@
  *    20. System-wide admin notification
  *
  * ═══════════════════════════════════════════════════════════════════
+ *
+ *  FIX NOTES (vs previous version):
+ *  - The schema does NOT export generic enum names like
+ *    WORKING_LOCATION_TYPE / EMPLOYMENT_TYPE / TAX_BEHAVIOUR /
+ *    STATUS_USER. Shared concepts use shared enums (person_gender),
+ *    while table-specific behavior keeps table-specific enum types
+ *    (e.g. employment_categories_payroll_frequency vs
+ *    payment_structures_payroll_frequency).
+ *  - `updated_at` has no @default/@updatedAt in the schema, so it is
+ *    now passed explicitly on every create() AND update() call.
+ * ═══════════════════════════════════════════════════════════════════
  */
 
 
 import {
   PrismaClient,
-  WORKING_LOCATION_TYPE, // enum: 'HQ' | 'BRANCH'
-  EMPLOYMENT_TYPE,       // enum: 'DAILY', | 'MONTHLY' | 'CUSTOM'
-  TAX_BEHAVIOUR,        // enum: 'STANDARD' | 'PERIODIC' | 'EXEMPT'
-  GENDER,
-  STATUS_USER,
+  working_locations_type,
+  employment_categories_payroll_frequency,
+  payment_structures_payroll_frequency,
+  employment_categories_tax_behavior,
+  person_gender,
+  employees_status,
+  users_status,
 } from '@prisma/client';
 import { generateUUID } from '../src/common/utils/uuid.util';
 import { hashPassword } from '../src/auth/utils/password.util';
@@ -66,61 +79,61 @@ const prisma = new PrismaClient();
 const WORKING_LOCATIONS = [
   {
     name:      'REG Headquarters',
-    type:       WORKING_LOCATION_TYPE.HQ,
+    type:       working_locations_type.HQ,
     address:    'KG 7 Ave, Kigali, Rwanda',
     isHQ:       true,
   },
   {
     name:       'REG Kicukiro Branch',
-    type:        WORKING_LOCATION_TYPE.BRANCH,
+    type:        working_locations_type.BRANCH,
     address:     'KK 5 Rd, Kicukiro, Kigali',
     isHQ:        false,
   },
   {
     name:        'REG Musanze Branch',
-    type:        WORKING_LOCATION_TYPE.BRANCH,
+    type:        working_locations_type.BRANCH,
     address:     'Musanze District, Northern Province',
     isHQ:         false,
   },
   {
     name:    'REG Rubavu Branch',
-    type:    WORKING_LOCATION_TYPE.BRANCH,
+    type:    working_locations_type.BRANCH,
     address: 'Rubavu District, Western Province',
     isHQ:    false,
   },
   {
     name:    'REG Huye Branch',
-    type:    WORKING_LOCATION_TYPE.BRANCH,
+    type:    working_locations_type.BRANCH,
     address: 'Huye District, Southern Province',
     isHQ:    false,
   },
   {
     name:    'REG Muhanga Branch',
-    type:    WORKING_LOCATION_TYPE.BRANCH,
+    type:    working_locations_type.BRANCH,
     address: 'Muhanga District, Southern Province',
     isHQ:    false,
   },
   {
     name:    'REG Rusizi Branch',
-    type:    WORKING_LOCATION_TYPE.BRANCH,
+    type:    working_locations_type.BRANCH,
     address: 'Rusizi District, Western Province',
     isHQ:    false,
   },
   {
     name:    'REG Nyagatare Branch',
-    type:    WORKING_LOCATION_TYPE.BRANCH,
+    type:    working_locations_type.BRANCH,
     address: 'Nyagatare District, Eastern Province',
     isHQ:    false,
   },
   {
     name:    'REG Rwamagana Branch',
-    type:    WORKING_LOCATION_TYPE.BRANCH,
+    type:    working_locations_type.BRANCH,
     address: 'Rwamagana District, Eastern Province',
     isHQ:    false,
   },
   {
     name:    'REG Karongi Branch',
-    type:    WORKING_LOCATION_TYPE.BRANCH,
+    type:    working_locations_type.BRANCH,
     address: 'Karongi District, Western Province',
     isHQ:    false,
   },
@@ -313,12 +326,13 @@ async function main() {
   for (const loc of WORKING_LOCATIONS) {
     const record = await prisma.working_locations.upsert({
       where: { name: loc.name },
-      update: { address: loc.address, type: loc.type },
+      update: { address: loc.address, type: loc.type, updated_at: new Date() },
       create: {
         uuid:    generateUUID(),
         name:    loc.name,
         type:    loc.type,
         address: loc.address,
+        updated_at: new Date(),
       },
     });
     locationRecords.set(loc.name, { id: record.id, isHQ: loc.isHQ });
@@ -387,15 +401,15 @@ async function main() {
   const catIdMap = new Map<string, bigint>();
   
   const categories = [
-    { name: 'Monthly', freq: EMPLOYMENT_TYPE.MONTHLY, tax: TAX_BEHAVIOUR.STANDARD, desc: 'Salaried employees on monthly payroll with standard income tax.' },
-    { name: 'Daily',   freq: EMPLOYMENT_TYPE.DAILY,   tax: TAX_BEHAVIOUR.EXEMPT,   desc: 'Attendance-based workers paid per day, tax-exempt.' },
-    { name: 'Custom',  freq: EMPLOYMENT_TYPE.CUSTOM,  tax: TAX_BEHAVIOUR.PERIODIC,  desc: 'Contract workers with custom schedules and periodic tax treatment.' },
+    { name: 'Monthly', freq: employment_categories_payroll_frequency.MONTHLY, tax: employment_categories_tax_behavior.STANDARD, desc: 'Salaried employees on monthly payroll with standard income tax.' },
+    { name: 'Daily',   freq: employment_categories_payroll_frequency.DAILY,   tax: employment_categories_tax_behavior.EXEMPT,   desc: 'Attendance-based workers paid per day, tax-exempt.' },
+    { name: 'Custom',  freq: employment_categories_payroll_frequency.CUSTOM,  tax: employment_categories_tax_behavior.PERIODIC,  desc: 'Contract workers with custom schedules and periodic tax treatment.' },
   ];
   
   for (const cat of categories) {
     const record = await prisma.employment_categories.upsert({
       where:  { name: cat.name },
-      update: { status: 'ACTIVE' },
+      update: { status: 'ACTIVE', updated_at: new Date() },
       create: {
         uuid:              generateUUID(),
         name:              cat.name,
@@ -403,6 +417,7 @@ async function main() {
         tax_behavior:      cat.tax,
         description:       cat.desc,
         status:            'ACTIVE',
+        updated_at:        new Date(),
       },
     });
     catIdMap.set(cat.name, record.id);
@@ -419,13 +434,15 @@ async function main() {
   const systemConfigs = [
     { key: 'GLOBAL_TAX_RATE',        value: '15',                 desc: 'Global tax rate (%) for employees working > 21 days/month.' },
     { key: 'GLOBAL_TAX_DESCRIPTION', value: 'Standard Income Tax', desc: 'Tax label shown on payslips and payroll reports.' },
+    { key: 'DEFAULT_WORK_HOURS',     value: '8',                  desc: 'Default working hours per day. Hours worked beyond this on a given day trigger the flat overtime bonus (OVERTIME_RATE_PER_HOUR).' },
+    { key: 'OVERTIME_RATE_PER_HOUR', value: '2500',                desc: 'Flat overtime bonus (RWF) paid for any day worked beyond DEFAULT_WORK_HOURS.' },
   ];
   
   for (const cfg of systemConfigs) {
     await prisma.system_config.upsert({
       where:  { key: cfg.key },
-      update: {},
-      create: { uuid: generateUUID(), key: cfg.key, value: cfg.value, description: cfg.desc },
+      update: { updated_at: new Date() },
+      create: { uuid: generateUUID(), key: cfg.key, value: cfg.value, description: cfg.desc, updated_at: new Date() },
     });
     console.log(`    Config: ${cfg.key} = ${cfg.value}`);
   }
@@ -447,7 +464,7 @@ async function main() {
     if (existingTax) {
       await prisma.monthly_taxes.update({
         where: { id: existingTax.id },
-        data: { rate: tax.rate, is_active: true },
+        data: { rate: tax.rate, is_active: true, updated_at: new Date() },
       });
     } else {
       await prisma.monthly_taxes.create({
@@ -457,6 +474,7 @@ async function main() {
           rate: tax.rate,
           effective_from: new Date(Date.UTC(2024, 0, 1)), // Jan 1st 2024
           is_active: true,
+          updated_at: new Date(),
         },
       });
     }
@@ -471,7 +489,7 @@ async function main() {
 
   const hqDept = await prisma.departments.upsert({
     where: { working_location_id_code: { working_location_id: hqId, code: 'HQ-ADMIN' } },
-    update: { status: 'ACTIVE' },
+    update: { status: 'ACTIVE', updated_at: new Date() },
     create: {
       uuid:       generateUUID(),
       working_location_id: hqId,
@@ -479,6 +497,7 @@ async function main() {
       name:    'Administration',
       description:  'HQ administration and system management department.',
       status:              'ACTIVE',
+      updated_at: new Date(),
     },
   });
 
@@ -492,9 +511,10 @@ async function main() {
   const superAdmin = await prisma.users.upsert({
     where: { email: adminEmail },
     update: {
-      status:    STATUS_USER.ACTIVE,
+      status:    users_status.ACTIVE,
       working_location_id: hqId,
       department_id:   hqDept.id,
+      updated_at: new Date(),
     },
     create: {
       uuid:                generateUUID(),
@@ -503,11 +523,12 @@ async function main() {
       email:               adminEmail,
       phone_number:        adminPhone,
       password_hash:       await hashPassword(adminPassword),
-      gender:              GENDER.MALE,
-      status:              STATUS_USER.ACTIVE,
+      gender:              person_gender.MALE,
+      status:              users_status.ACTIVE,
       working_location_id: hqId,
       department_id:       hqDept.id,
       avatar_url:          'https://randomuser.me/api/portraits/men/0.jpg',
+      updated_at:          new Date(),
     },
   });
 
@@ -529,7 +550,7 @@ async function main() {
 
   await prisma.working_locations.updateMany({
     where: { created_by: null },
-    data:  { created_by: superAdmin.id },
+    data:  { created_by: superAdmin.id, updated_at: new Date() },
   });
   
   console.log(`    working_locations.created_by patched → super admin`);
@@ -579,7 +600,7 @@ async function main() {
       const code = `${locCode}-${tmpl.suffix}`;
       const dept = await prisma.departments.upsert({
         where: { working_location_id_code: { working_location_id: locData.id, code } },
-        update: { status: 'ACTIVE' },
+        update: { status: 'ACTIVE', updated_at: new Date() },
         create: {
           uuid:                generateUUID(),
           working_location_id: locData.id,
@@ -587,6 +608,7 @@ async function main() {
           name:                tmpl.name,
           description:         `${tmpl.description} — ${locName}`,
           status:              'ACTIVE',
+          updated_at:          new Date(),
         },
       });
   
@@ -599,14 +621,14 @@ async function main() {
     // ── Create Branch Manager user ────────────────────────────────
     // Gender alternates per branch for variety
     const bmIndex = branchLocations.indexOf(branchLocations.find(([n]) => n === locName)!);
-    const bmGender = bmIndex % 2 === 0 ? GENDER.MALE : GENDER.FEMALE;
+    const bmGender = bmIndex % 2 === 0 ? person_gender.MALE : person_gender.FEMALE;
     const bmGenderIndex = Math.floor(bmIndex / 2);
-    const [bmFirstName, bmLastName] = bmGender === GENDER.MALE
+    const [bmFirstName, bmLastName] = bmGender === person_gender.MALE
       ? bmMaleNamePairs[bmGenderIndex]
       : bmFemaleNamePairs[bmGenderIndex];
     const bmEmail     = `bm.${locCode.toLowerCase()}@reg.rw`;
     const bmPhone     = generatePhone(9000 + bmIndex); // offset to avoid employee conflicts
-    const bmAvatar    = bmGender === GENDER.MALE
+    const bmAvatar    = bmGender === person_gender.MALE
       ? maleAvatarUrl(bmAvatarIndex)
       : femaleAvatarUrl(bmAvatarIndex);
     bmAvatarIndex++;
@@ -614,9 +636,10 @@ async function main() {
     const bmUser = await prisma.users.upsert({
       where:  { email: bmEmail },
       update: {
-        status:              STATUS_USER.ACTIVE,
+        status:              users_status.ACTIVE,
         working_location_id: locData.id,
         department_id:       adminDeptId,
+        updated_at:          new Date(),
       },
       create: {
         uuid:                generateUUID(),
@@ -626,10 +649,11 @@ async function main() {
         phone_number:        bmPhone,
         password_hash:       bmPasswordHash,
         gender:              bmGender,
-        status:              STATUS_USER.ACTIVE,   // ACTIVE = approved, can login immediately
+        status:              users_status.ACTIVE,   // ACTIVE = approved, can login immediately
         working_location_id: locData.id,
         department_id:       adminDeptId,
         avatar_url:          bmAvatar,
+        updated_at:          new Date(),
       },
     });
   
@@ -702,6 +726,7 @@ async function main() {
         message:   `Hello ${bmFirstName}, you have been assigned as Branch Manager for ${locName}. Your account is active and ready.`,
         type:      'SYSTEM_ALERT',
         is_read:   false,
+        updated_at: new Date(),
       },
     });
   
@@ -746,12 +771,12 @@ async function main() {
   const employeeFemaleNamePairs = buildUniqueNamePairs(FEMALE_FIRST_NAMES, LAST_NAMES, Math.floor(TOTAL_EMPLOYEES / 2));
 
   for (let i = 0; i < TOTAL_EMPLOYEES; i++) {
-    const gender = i % 2 === 0 ? GENDER.FEMALE : GENDER.MALE;
+    const gender = i % 2 === 0 ? person_gender.FEMALE : person_gender.MALE;
     const genderIndex = Math.floor(i / 2);
-    const [firstName, lastName] = gender === GENDER.FEMALE
+    const [firstName, lastName] = gender === person_gender.FEMALE
       ? employeeFemaleNamePairs[genderIndex]
       : employeeMaleNamePairs[genderIndex];
-    const avatar = gender === GENDER.FEMALE ? femaleAvatarUrl(i): maleAvatarUrl(i);
+    const avatar = gender === person_gender.FEMALE ? femaleAvatarUrl(i): maleAvatarUrl(i);
 
     // spread employees across locations
     const locEntry = allLocations[i % allLocations.length];
@@ -807,10 +832,11 @@ async function main() {
         department_id:          deptId,
         working_location_id:    locId,
         employment_category_id: categoryId,
-        status:                 STATUS_USER.ACTIVE,
+        status:                 employees_status.ACTIVE,
         avatar_url:             avatar,
         created_by:             superAdmin.id,
         deleted_at:             null,
+        updated_at:             new Date(),
       },
       create: {
         uuid:                   generateUUID(),
@@ -826,9 +852,10 @@ async function main() {
         department_id:          deptId,
         working_location_id:    locId,
         employment_category_id: categoryId,
-        status:                 STATUS_USER.ACTIVE,
+        status:                 employees_status.ACTIVE,
         avatar_url:             avatar,
         created_by:             superAdmin.id,
+        updated_at:             new Date(),
       },
     });
 
@@ -838,10 +865,10 @@ async function main() {
     // tax_percentage matches GLOBAL_TAX_RATE for STANDARD, 0 for EXEMPT.
 
     const freq = i % 3 === 0
-      ? EMPLOYMENT_TYPE.MONTHLY
+      ? payment_structures_payroll_frequency.MONTHLY
       : i % 3 === 1
-        ? EMPLOYMENT_TYPE.DAILY
-        : EMPLOYMENT_TYPE.CUSTOM;
+        ? payment_structures_payroll_frequency.DAILY
+        : payment_structures_payroll_frequency.CUSTOM;
 
     const taxPct = categoryNames[i % 3] === 'Daily' ? 0 : 15;
     const effectiveFrom = new Date(hireDate);
@@ -856,13 +883,14 @@ async function main() {
           uuid:        generateUUID(),
           employee_id:       employee.id,
           payroll_frequency: freq,
-          basic_salary:      freq === EMPLOYMENT_TYPE.MONTHLY ? 150000 : 0,
-          daily_rate:        freq === EMPLOYMENT_TYPE.MONTHLY ? 5000 : 3000,
+          basic_salary:      freq === payment_structures_payroll_frequency.MONTHLY ? 150000 : 0,
+          daily_rate:        freq === payment_structures_payroll_frequency.MONTHLY ? 5000 : 3000,
           overtime_rate:     2000,
           custom_work_days:  null,
           tax_percentage:    taxPct,
           effective_from:    effectiveFrom,
           effective_to:      null,                 // currently active
+          updated_at:        new Date(),
         },
       });
     }
@@ -892,6 +920,7 @@ async function main() {
       message:     `REG Pay has been seeded with ${TOTAL_EMPLOYEES} employees across ${allLocations.length} working locations and ${branchLocations.length} branch managers.`,
       type:        'SYSTEM_ALERT',
       is_read:     false,
+      updated_at:  new Date(),
     },
   });
 
@@ -906,6 +935,7 @@ async function main() {
       message:     'Please review and process the monthly payroll figures for the current period.',
       type:        'PAYROLL_ALERT',
       is_read:     false,
+      updated_at:  new Date(),
     },
   });
 

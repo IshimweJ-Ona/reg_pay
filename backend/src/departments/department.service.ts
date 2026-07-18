@@ -6,7 +6,11 @@ import {
 } from '@nestjs/common';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import * as cacheManager from 'cache-manager';
-import { ACTIVITY_TYPE, AUDIT_ACTION, Prisma } from '@prisma/client';
+import {
+  audit_logs_activity_type as ACTIVITY_TYPE,
+  audit_logs_action as AUDIT_ACTION,
+  Prisma,
+} from '@prisma/client';
 
 import type { CurrentUserType } from '../auth/types/current-user.type';
 import { isNumericId, normalizeSearch, requireUuidOrNumeric } from '../common/utils/lookup.util';
@@ -79,13 +83,14 @@ export class DepartmentsService {
                     code: departmentCode,
                     name: departmentName,
                     description: dto.description,
+                    updated_at: new Date(),
                 })),
                 skipDuplicates: true,
             });
             
             const created = await tx.departments.findMany({
                 where: { code: departmentCode, working_location_id: { in: targetLocations } },
-                include: { working_location: true },
+                include: { working_locations: true },
                 orderBy: { working_location_id: 'asc' },
             });
             
@@ -161,7 +166,7 @@ export class DepartmentsService {
                     : {}),
                 },
                 include: {
-                    working_location: true,
+                    working_locations: true,
                     _count: { select: { users: true, employees: true } },
                 },
                 orderBy: { name: 'asc' },
@@ -205,7 +210,7 @@ export class DepartmentsService {
                 
                 const saved = await tx.departments.findUniqueOrThrow({
                     where: { id: current.id },
-                    include: { working_location: true },
+                    include: { working_locations: true },
                 });
                 
                 await tx.audit_logs.create({

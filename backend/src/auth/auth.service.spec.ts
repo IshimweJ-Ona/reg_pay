@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { AuthService } from './auth.service';
 
 describe('AuthService', () => {
@@ -23,6 +24,15 @@ describe('AuthService', () => {
           useValue: {
             sign: jest.fn(),
             verify: jest.fn(),
+          },
+        },
+        {
+          provide: NotificationsService,
+          useValue: {
+            create: jest.fn(),
+            notifyAdmins: jest.fn(),
+            notifyBranchManager: jest.fn(),
+            broadcast: jest.fn(),
           },
         },
       ],

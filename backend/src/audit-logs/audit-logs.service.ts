@@ -15,38 +15,38 @@ export class AuditLogsService {
       take,
       orderBy: { created_at: 'desc' },
       include: {
-        user: {
+        users: {
           select: {
             id: true,
             uuid: true,
             first_name: true,
             last_name: true,
             email: true,
-            working_location: { select: { id: true, name: true } },
-            department: { select: { id: true, name: true } },
-            roles: {
+            working_locations_users_working_location_idToworking_locations: { select: { id: true, name: true } },
+            departments: { select: { id: true, name: true } },
+            user_roles: {
               include: {
-                role: { select: { name: true } },
+                roles: { select: { name: true } },
               },
             },
           },
         },
-        employee: {
+        employees: {
           select: {
             id: true,
             uuid: true,
             first_name: true,
             last_name: true,
             national_id: true,
-            working_location: { select: { id: true, name: true } },
-            department: { select: { id: true, name: true } },
+            working_locations: { select: { id: true, name: true } },
+            departments: { select: { id: true, name: true } },
           },
         },
       },
     });
 
     return logs.map((log) => {
-      const userRoles = log.user.roles?.map((ur) => ur.role.name) ?? [];
+      const userRoles = (log as any).users?.user_roles?.map((ur: any) => ur.roles?.name) ?? [];
       return {
         id: log.id.toString(),
         user_id: log.user_id.toString(),
@@ -62,28 +62,30 @@ export class AuditLogsService {
         changed_fields: log.changed_fields,
         ip_address: log.ip_address,
         created_at: log.created_at,
-        user: {
-          ...log.user,
-          id: log.user.id.toString(),
-          name: `${log.user.first_name} ${log.user.last_name}`.trim(),
-          working_location: log.user.working_location
-            ? { id: log.user.working_location.id.toString(), name: log.user.working_location.name }
-            : null,
-          department: log.user.department
-            ? { id: log.user.department.id.toString(), name: log.user.department.name }
-            : null,
-          roles: userRoles,
-        },
-        employee: log.employee
+        user: (log as any).users
           ? {
-              ...log.employee,
-              id: log.employee.id.toString(),
-              name: `${log.employee.first_name} ${log.employee.last_name}`.trim(),
-              working_location: log.employee.working_location
-                ? { id: log.employee.working_location.id.toString(), name: log.employee.working_location.name }
+              ...(log as any).users,
+              id: (log as any).users.id.toString(),
+              name: `${(log as any).users.first_name} ${(log as any).users.last_name}`.trim(),
+              working_location: (log as any).users.working_locations_users_working_location_idToworking_locations
+                ? { id: (log as any).users.working_locations_users_working_location_idToworking_locations.id.toString(), name: (log as any).users.working_locations_users_working_location_idToworking_locations.name }
                 : null,
-              department: log.employee.department
-                ? { id: log.employee.department.id.toString(), name: log.employee.department.name }
+              department: (log as any).users.departments
+                ? { id: (log as any).users.departments.id.toString(), name: (log as any).users.departments.name }
+                : null,
+              roles: userRoles,
+            }
+          : null,
+        employee: (log as any).employees
+          ? {
+              ...(log as any).employees,
+              id: (log as any).employees.id.toString(),
+              name: `${(log as any).employees.first_name} ${(log as any).employees.last_name}`.trim(),
+              working_location: (log as any).employees.working_locations
+                ? { id: (log as any).employees.working_locations.id.toString(), name: (log as any).employees.working_locations.name }
+                : null,
+              department: (log as any).employees.departments
+                ? { id: (log as any).employees.departments.id.toString(), name: (log as any).employees.departments.name }
                 : null,
             }
           : null,

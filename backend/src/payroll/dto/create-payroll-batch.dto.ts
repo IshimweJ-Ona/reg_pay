@@ -1,4 +1,4 @@
-import { PAYMENT_METHOD } from '@prisma/client';
+import { transactions_payment_method } from '@prisma/client';
 import {
   IsDateString,
   IsEnum,
@@ -27,8 +27,8 @@ export class CreatePayrollBatchDto {
   @IsDateString()
   payment_date: string;
 
-  @IsEnum(PAYMENT_METHOD)
-  payment_method: PAYMENT_METHOD;
+  @IsEnum(transactions_payment_method)
+  payment_method: transactions_payment_method;
 
   @IsOptional()
   @IsDateString()

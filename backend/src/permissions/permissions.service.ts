@@ -7,7 +7,10 @@ import {
 } from '@nestjs/common';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import * as cacheManager from 'cache-manager';
-import { ACTIVITY_TYPE, AUDIT_ACTION } from '@prisma/client';
+import {
+  audit_logs_activity_type as ACTIVITY_TYPE,
+  audit_logs_action as AUDIT_ACTION,
+} from '@prisma/client';
 import type { CurrentUserType } from '../auth/types/current-user.type';
 import { PrismaService } from '../prisma/prisma.service';
 import { AssignPermissionDto } from './dto/assign-permission.dto';

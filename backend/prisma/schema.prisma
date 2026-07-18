@@ -163,6 +163,9 @@ model departments {
   employees                                                        employees[]
   user_departments                                                 user_departments[]
   users                                                            users[]
+  time_records                                                      time_records[]
+  transactions                                                      transactions[]
+  ikimina_memberships                                               ikimina_memberships[]
 
   @@unique([working_location_id, code], map: "Departments_working_location_id_code_key")
   @@unique([working_location_id, name], map: "Departments_working_location_id_name_key")
@@ -245,7 +248,7 @@ model employees {
   email                  String?                 @unique(map: "Employees_email_key") @db.VarChar(150)
   phone_number           String?                 @unique(map: "Employees_phone_number_key") @db.VarChar(15)
   national_id            String?                 @unique(map: "Employees_national_id_key") @db.VarChar(16)
-  gender                 employees_gender?
+  gender                 person_gender?
   hire_date              DateTime?               @db.Date
   contract_start_date    DateTime?               @db.Date
   contract_end_date      DateTime?               @db.Date
@@ -333,13 +336,19 @@ model ikimina_memberships {
   is_active             Boolean                 @default(true)
   joined_at             DateTime                @default(now())
   created_by            BigInt
+  working_location_id   BigInt?
+  department_id         BigInt?
   created_at            DateTime                @default(now())
   updated_at            DateTime
   ikimina_contributions ikimina_contributions[]
   employees             employees               @relation(fields: [employee_id], references: [id], map: "Ikimina_memberships_employee_id_fkey")
+  working_locations     working_locations?      @relation("ikimina_memberships_working_locationToworking_locations", fields: [working_location_id], references: [id], map: "Ikimina_memberships_working_location_id_fkey")
+  departments           departments?            @relation(fields: [department_id], references: [id], map: "Ikimina_memberships_department_id_fkey")
 
   @@index([is_active], map: "idx_ikimina_membership_active")
   @@index([employee_id], map: "idx_ikimina_membership_employee")
+  @@index([working_location_id], map: "idx_ikimina_membership_location")
+  @@index([department_id], map: "idx_ikimina_membership_department")
 }
 
 model monthly_taxes {
@@ -533,16 +542,21 @@ model time_records {
   employee_id       BigInt
   attendance_date   DateTime                       @db.Date
   hours_worked      Decimal                        @default(0.00) @db.Decimal(5, 2)
-  overtime_hours    Decimal                        @default(0.00) @db.Decimal(5, 2)
   attendance_status time_records_attendance_status
   approved_by       BigInt?
+  working_location_id BigInt?
+  department_id     BigInt?
   created_at        DateTime                       @default(now())
   updated_at        DateTime
   users             users?                         @relation(fields: [approved_by], references: [id], map: "Time_records_approved_by_fkey")
   employees         employees                      @relation(fields: [employee_id], references: [id], map: "Time_records_employee_id_fkey")
+  working_locations working_locations?              @relation("time_records_working_locationToworking_locations", fields: [working_location_id], references: [id], map: "Time_records_working_location_id_fkey")
+  departments       departments?                    @relation(fields: [department_id], references: [id], map: "Time_records_department_id_fkey")
 
   @@unique([employee_id, attendance_date], map: "Time_records_employee_id_attendance_date_key")
   @@index([approved_by], map: "Time_records_approved_by_fkey")
+  @@index([working_location_id], map: "idx_time_record_location")
+  @@index([department_id], map: "idx_time_record_department")
 }
 
 model transactions {
@@ -567,18 +581,24 @@ model transactions {
   payment_method       transactions_payment_method
   transaction_status   transactions_transaction_status
   approved_by          BigInt?
+  working_location_id  BigInt?
+  department_id        BigInt?
   created_at           DateTime                        @default(now())
   updated_at           DateTime
   payment_batch_items  payment_batch_items[]
   users                users?                          @relation(fields: [approved_by], references: [id], map: "Transactions_approved_by_fkey")
   employees            employees                       @relation(fields: [employee_id], references: [id], map: "Transactions_employee_id_fkey")
   payment_structures   payment_structures              @relation(fields: [payment_structure_id], references: [id], map: "Transactions_payment_structure_id_fkey")
+  working_locations    working_locations?              @relation("transactions_working_locationToworking_locations", fields: [working_location_id], references: [id], map: "Transactions_working_location_id_fkey")
+  departments          departments?                    @relation(fields: [department_id], references: [id], map: "Transactions_department_id_fkey")
 
   @@index([approved_by], map: "Transactions_approved_by_fkey")
   @@index([payment_structure_id], map: "Transactions_payment_structure_id_fkey")
   @@index([payment_date], map: "idx_transaction_date")
   @@index([employee_id], map: "idx_transaction_employee")
   @@index([transaction_status], map: "idx_transaction_status")
+  @@index([working_location_id], map: "idx_transaction_location")
+  @@index([department_id], map: "idx_transaction_department")
 }
 
 model transfer_requests {
@@ -701,7 +721,7 @@ model users {
   password_hash                                                         String                           @db.Text
   reset_password_token                                                  String?                          @unique(map: "Users_reset_password_token_key") @db.VarChar(255)
   reset_password_expires                                                DateTime?
-  gender                                                                users_gender
+  gender                                                                person_gender
   status                                                                users_status                     @default(ACTIVE)
   avatar_url                                                            String?                          @db.Text
   last_login_at                                                         DateTime?
@@ -729,10 +749,10 @@ model users {
   transfer_requests_transfer_requests_requested_byTousers               transfer_requests[]              @relation("transfer_requests_requested_byTousers")
   transfer_requests_transfer_requests_user_idTousers                    transfer_requests[]              @relation("transfer_requests_user_idTousers")
   user_departments                                                      user_departments[]
-  user_permission_overrides_user_permission_overrides_changed_byTousers user_permission_overrides[]      @relation("user_permission_overrides_changed_byTousers")
-  user_permission_overrides_user_permission_overrides_user_idTousers    user_permission_overrides[]      @relation("user_permission_overrides_user_idTousers")
-  user_permissions_user_permissions_granted_byTousers                   user_permissions[]               @relation("user_permissions_granted_byTousers")
-  user_permissions_user_permissions_user_idTousers                      user_permissions[]               @relation("user_permissions_user_idTousers")
+  user_permission_overrides_changed_by                                  user_permission_overrides[]      @relation("user_permission_overrides_changed_byTousers")
+  user_permission_overrides                                             user_permission_overrides[]      @relation("user_permission_overrides_user_idTousers")
+  user_permissions_granted                                              user_permissions[]               @relation("user_permissions_granted_byTousers")
+  user_permissions                                                      user_permissions[]               @relation("user_permissions_user_idTousers")
   user_roles                                                            user_roles[]
   user_sessions                                                         user_sessions[]
   departments                                                           departments?                     @relation(fields: [department_id], references: [id], map: "Users_department_id_fkey")
@@ -772,6 +792,9 @@ model working_locations {
   users_working_locations_created_byTousers                            users?                 @relation("working_locations_created_byTousers", fields: [created_by], references: [id], map: "Working_locations_created_by_fkey")
   users_working_locations_deleted_byTousers                            users?                 @relation("working_locations_deleted_byTousers", fields: [deleted_by], references: [id], map: "Working_locations_deleted_by_fkey")
   users_working_locations_updated_byTousers                            users?                 @relation("working_locations_updated_byTousers", fields: [updated_by], references: [id], map: "Working_locations_updated_by_fkey")
+  time_records_time_records_working_locationToworking_locations       time_records[]         @relation("time_records_working_locationToworking_locations")
+  transactions_transactions_working_locationToworking_locations        transactions[]         @relation("transactions_working_locationToworking_locations")
+  ikimina_memberships_ikimina_memberships_working_locationToworking_locations ikimina_memberships[] @relation("ikimina_memberships_working_locationToworking_locations")
 
   @@index([created_by], map: "Working_locations_created_by_fkey")
   @@index([deleted_by], map: "Working_locations_deleted_by_fkey")
@@ -877,7 +900,7 @@ enum time_records_attendance_status {
   ABSENT
 }
 
-enum employees_gender {
+enum person_gender {
   MALE
   FEMALE
 }
@@ -901,11 +924,6 @@ enum transfer_requests_status {
 enum employee_history_status {
   ACTIVE
   INACTIVE
-}
-
-enum users_gender {
-  MALE
-  FEMALE
 }
 
 enum payment_batches_status {

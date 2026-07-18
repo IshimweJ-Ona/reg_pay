@@ -1,5 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { EMPLOYMENT_TYPE } from '@prisma/client';
+import { payment_structures_payroll_frequency } from '@prisma/client';
 import {
   IsDateString,
   IsDecimal,
@@ -11,13 +11,13 @@ import {
 
 export class UpdatePaymentStructureDto {
   @ApiPropertyOptional({
-    enum: EMPLOYMENT_TYPE,
-    example: EMPLOYMENT_TYPE.DAILY,
+    enum: payment_structures_payroll_frequency,
+    example: payment_structures_payroll_frequency.DAILY,
     description: 'Updated payment frequency.',
   })
   @IsOptional()
-  @IsEnum(EMPLOYMENT_TYPE)
-  payroll_frequency?: EMPLOYMENT_TYPE;
+  @IsEnum(payment_structures_payroll_frequency)
+  payroll_frequency?: payment_structures_payroll_frequency;
 
   @ApiPropertyOptional({
     example: '850000.00',

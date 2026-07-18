@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { scopeStorage, UserScope } from '../scope/scope-storage';
+import { computeEffectivePermissions } from '../utils/effective-permissions.util';
 
 @Injectable()
 export class WorkingLocationScopeInterceptor implements NestInterceptor {
@@ -20,6 +21,10 @@ export class WorkingLocationScopeInterceptor implements NestInterceptor {
     const scope: UserScope = {
       userId: user.userId || user.sub,
       roles: user.roles || [],
+      // Same effective-permission computation used by PermissionsGuard,
+      // so "<module>.read_all" here means exactly what it means for route
+      // authorization — one source of truth, no drift between the two.
+      permissions: Array.from(computeEffectivePermissions(user)),
       working_location_id: user.working_location_id || null,
       department_id: user.department_id || null,
     };

@@ -1,6 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { IsEnum, IsNotEmpty, IsString, MaxLength } from 'class-validator';
-import { WORKING_LOCATION_TYPE } from '@prisma/client';
+import { working_locations_type } from '@prisma/client';
 
 export class CreateWorkingLocationDto {
   @ApiProperty({ example: 'Kigali HQ', maxLength: 150 })
@@ -9,9 +9,9 @@ export class CreateWorkingLocationDto {
   @MaxLength(150)
   name: string;
 
-  @ApiProperty({ enum: WORKING_LOCATION_TYPE })
-  @IsEnum(WORKING_LOCATION_TYPE)
-  type: WORKING_LOCATION_TYPE;
+  @ApiProperty({ enum: working_locations_type })
+  @IsEnum(working_locations_type)
+  type: working_locations_type;
 
   @ApiProperty({ example: 'KG 7 Ave, Kigali', maxLength: 255 })
   @IsString()

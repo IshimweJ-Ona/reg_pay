@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { PERMISSIONS_KEY } from '../decorators/permissions.decorator';
-import { IMPLIED_PERMISSIONS } from '../../common/constants/permissions.constants';
+import { computeEffectivePermissions } from '../../common/utils/effective-permissions.util';
 import type { CurrentUserType } from '../types/current-user.type';
 
 @Injectable()
@@ -28,24 +28,7 @@ export class PermissionsGuard implements CanActivate {
     // SUPER_ADMIN bypasses all permission checks
     if (user?.roles?.includes('SUPER_ADMIN')) return true;
 
-    // Build effective permission set from JWT payload
-    const effective = new Set<string>(user?.permissions ?? []);
-
-    // Expand implied permissions
-    for (const key of Array.from(effective)) {
-      for (const implied of IMPLIED_PERMISSIONS[key] ?? []) {
-        effective.add(implied);
-      }
-    }
-
-    // Apply overrides from JWT payload
-    for (const override of user?.permission_overrides ?? []) {
-      if (override.is_allowed) {
-        effective.add(override.permission_key);
-      } else {
-        effective.delete(override.permission_key);
-      }
-    }
+    const effective = computeEffectivePermissions(user);
 
     const hasPermission = required.some((p) => effective.has(p));
 

@@ -9,14 +9,9 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import type { Cache } from 'cache-manager';
 import {
-  ACTION_TYPE,
-  ACTIVITY_TYPE,
-  ATTENDANCE_STATUS,
-  AUDIT_ACTION,
-  APPROVAL_STATUS,
-  STATUS_ACTIVE_INACTIVE,
-  STATUS_USER,
-  TRANSFER_SUBJECT,
+  audit_logs_activity_type as ACTIVITY_TYPE,
+  audit_logs_action as AUDIT_ACTION,
+  Prisma,
 } from '@prisma/client';
 
 import type { CurrentUserType } from '../auth/types/current-user.type';
@@ -27,6 +22,7 @@ import {
   normalizeSearch,
   requireUuidOrNumeric,
 } from '../common/utils/lookup.util';
+import { hasEffectivePermission } from '../common/utils/effective-permissions.util';
 import { generateUUID } from '../common/utils/uuid.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
@@ -143,8 +139,9 @@ export class EmployeesService {
           department_id: departmentId,
           working_location_id: workingLocationId,
           employment_category_id: categoryId,
-          status: STATUS_USER.ACTIVE,
+          status: 'ACTIVE',
           created_by: actor ? BigInt(actor.userId) : null,
+          updated_at: new Date(),
         },
         include: this.employeeIncludes(),
       });
@@ -180,6 +177,7 @@ export class EmployeesService {
               tax_percentage: dto.tax_percentage ?? '0',
               custom_work_days: null,
               effective_from: new Date(),
+              updated_at: new Date(),
             },
           });
         }
@@ -193,6 +191,7 @@ export class EmployeesService {
             employee_id: created.id,
             title: dto.allowance_title,
             amount: dto.allowance_amount,
+            updated_at: new Date(),
           },
         });
       }
@@ -205,10 +204,10 @@ export class EmployeesService {
             entity_table: 'employees',
             entity_id: created.id,
             module_name: 'EMPLOYEES',
-            activity_type: ACTIVITY_TYPE.CREATE,
+            activity_type: 'CREATE' as any,
             activity_description:
               'Created employee profile with salary and benefits.',
-            action: AUDIT_ACTION.CREATED,
+            action: 'CREATED' as any,
             new_values: {
               working_location_id: workingLocationId?.toString() ?? null,
               department_id: departmentId?.toString() ?? null,
@@ -344,7 +343,7 @@ export class EmployeesService {
       throw new NotFoundException('Employee not found.');
     }
 
-    this.ensureActorCanAccessEmployee(actor, employee);
+    this.ensureActorCanReadEmployee(actor, employee);
 
     return this.serializeEmployee(employee);
   }
@@ -423,7 +422,7 @@ export class EmployeesService {
       }
 
       // 1. Update Profile (Only include provided fields)
-      const employeeUpdateData: any = {};
+      const employeeUpdateData: Record<string, any> = {};
       if (dto.first_name !== undefined)
         employeeUpdateData.first_name = dto.first_name;
       if (dto.last_name !== undefined)
@@ -450,6 +449,7 @@ export class EmployeesService {
         employeeUpdateData.working_location_id = workingLocationId;
       if (categoryId !== undefined)
         employeeUpdateData.employment_category_id = categoryId;
+      employeeUpdateData.updated_at = new Date();
 
       const saved = await tx.employees.update({
         where: { id: employee.id },
@@ -501,6 +501,7 @@ export class EmployeesService {
             tax_percentage:
               dto.tax_percentage ?? currentStructure?.tax_percentage ?? '0',
             custom_work_days: null,
+            updated_at: new Date(),
           };
 
           if (
@@ -546,6 +547,7 @@ export class EmployeesService {
             data: {
               title: dto.allowance_title ?? existingAllowance.title,
               amount: dto.allowance_amount ?? existingAllowance.amount,
+              updated_at: new Date(),
             },
           });
         } else if (dto.allowance_title && dto.allowance_amount) {
@@ -555,6 +557,7 @@ export class EmployeesService {
               employee_id: employee.id,
               title: dto.allowance_title,
               amount: dto.allowance_amount,
+              updated_at: new Date(),
             },
           });
         }
@@ -568,12 +571,12 @@ export class EmployeesService {
           entity_table: 'employees',
           entity_id: saved.id,
           module_name: 'EMPLOYEES',
-          activity_type: ACTIVITY_TYPE.UPDATE,
+          activity_type: 'UPDATE' as any,
           activity_description:
             'Updated employee profile, salary, and benefits in a unified operation.',
-          action: AUDIT_ACTION.UPDATED,
-          old_values: this.serializeEmployee(employee),
-          new_values: this.serializeEmployee(saved),
+          action: 'UPDATED' as any,
+          old_values: this.serializeEmployee(employee) as any,
+          new_values: this.serializeEmployee(saved) as any,
         },
       });
 
@@ -630,7 +633,7 @@ export class EmployeesService {
     const request = await this.prisma.transfer_requests.create({
       data: {
         uuid: generateUUID(),
-        subject_type: TRANSFER_SUBJECT.EMPLOYEE,
+        subject_type: 'EMPLOYEE',
         employee_id: employee.id,
         old_working_location_id: employee.working_location_id,
         new_working_location_id: workingLocationId,
@@ -735,6 +738,7 @@ export class EmployeesService {
           data: {
             working_location_id: request.new_working_location_id,
             department_id: request.new_department_id,
+            updated_at: new Date(),
           },
           include: this.employeeIncludes(),
         });
@@ -743,14 +747,14 @@ export class EmployeesService {
           data: {
             uuid: generateUUID(),
             employee_id: employee.id,
-            action_type: ACTION_TYPE.TRANSFER,
+            action_type: 'TRANSFER',
             old_department_id: employee.department_id,
             new_department_id: request.new_department_id,
             old_location_id: employee.working_location_id,
             new_location_id: request.new_working_location_id,
             old_employment_category_id: employee.employment_category_id,
             new_employment_category_id: employee.employment_category_id,
-            status: STATUS_ACTIVE_INACTIVE.ACTIVE,
+            status: 'ACTIVE',
             reason: request.reason,
             changed_by: BigInt(actor.userId),
             approved_by: BigInt(actor.userId),
@@ -760,7 +764,7 @@ export class EmployeesService {
         await tx.transfer_requests.update({
           where: { id: request.id },
           data: {
-            status: APPROVAL_STATUS.APPROVED,
+            status: 'APPROVED',
             approved_by: BigInt(actor.userId),
             approved_at: new Date(),
             current_level: 'FINALIZED',
@@ -809,7 +813,7 @@ export class EmployeesService {
         id: request.id,
       },
       data: {
-        status: APPROVAL_STATUS.REJECTED,
+        status: 'REJECTED',
         rejection_reason: dto.rejection_reason,
         approved_by: BigInt(actor.userId),
         approved_at: new Date(),
@@ -842,8 +846,8 @@ export class EmployeesService {
   async suspend(uuid: string, dto: SuspendEmployeeDto, actor: CurrentUserType) {
     return this.changeStatus(
       uuid,
-      STATUS_USER.SUSPENDED,
-      ACTION_TYPE.SUSPENDED,
+      'SUSPENDED',
+      'SUSPENDED' as any,
       dto.reason,
       actor,
     );
@@ -852,8 +856,8 @@ export class EmployeesService {
   async reactivate(uuid: string, actor: CurrentUserType) {
     return this.changeStatus(
       uuid,
-      STATUS_USER.ACTIVE,
-      ACTION_TYPE.UPDATE,
+      'ACTIVE',
+      'UPDATE' as any,
       'Employee reactivated.',
       actor,
     );
@@ -966,8 +970,9 @@ export class EmployeesService {
               department_id: departmentId,
               working_location_id: workingLocationId,
               employment_category_id: categoryId,
-              status: STATUS_USER.ACTIVE,
+              status: 'ACTIVE',
               created_by: BigInt(actor.userId),
+              updated_at: new Date(),
             },
             include: this.employeeIncludes(),
           });
@@ -1002,6 +1007,7 @@ export class EmployeesService {
                   overtime_rate: '0',
                   tax_percentage: item.tax_percentage ?? '0',
                   effective_from: new Date(),
+                  updated_at: new Date(),
                 },
               });
             }
@@ -1014,9 +1020,9 @@ export class EmployeesService {
               entity_table: 'employees',
               entity_id: created.id,
               module_name: 'EMPLOYEES',
-              activity_type: ACTIVITY_TYPE.CREATE,
+              activity_type: 'CREATE' as any,
               activity_description: 'Bulk imported employee profile.',
-              action: AUDIT_ACTION.CREATED,
+              action: 'CREATED' as any,
               new_values: {
                 working_location_id: workingLocationId?.toString() ?? null,
                 department_id: departmentId?.toString() ?? null,
@@ -1080,11 +1086,11 @@ export class EmployeesService {
     // Find daily/custom employees with expired contracts
     const expiredEmployees = await this.prisma.employees.findMany({
       where: {
-        status: STATUS_USER.ACTIVE,
+        status: 'ACTIVE',
         contract_end_date: {
           lt: today,
         },
-        employment_category: {
+        employment_categories: {
           name: {
             in: ['DAILY', 'CUSTOM'],
           },
@@ -1107,7 +1113,7 @@ export class EmployeesService {
           : 'Contract working days have ended.';
         await tx.employees.update({
           where: { id: employee.id },
-          data: { status: STATUS_USER.PAUSED, pause_reason: reason },
+          data: { status: 'PAUSED' as any, pause_reason: reason, updated_at: new Date() },
         });
 
         // Log the pause action
@@ -1115,14 +1121,14 @@ export class EmployeesService {
           data: {
             uuid: generateUUID(),
             employee_id: employee.id,
-            action_type: ACTION_TYPE.SUSPENDED,
+            action_type: 'SUSPENDED',
             old_department_id: employee.department_id,
             new_department_id: employee.department_id,
             old_location_id: employee.working_location_id,
             new_location_id: employee.working_location_id,
             old_employment_category_id: employee.employment_category_id,
             new_employment_category_id: employee.employment_category_id,
-            status: STATUS_ACTIVE_INACTIVE.INACTIVE,
+            status: 'INACTIVE',
             reason: `Contract ended on ${employee.contract_end_date?.toISOString().split('T')[0]}. Employee paused automatically.`,
             changed_by: BigInt(1), // System user
             approved_by: BigInt(1),
@@ -1137,16 +1143,16 @@ export class EmployeesService {
             entity_table: 'employees',
             entity_id: employee.id,
             module_name: 'EMPLOYEES',
-            activity_type: ACTIVITY_TYPE.UPDATE,
+            activity_type: 'UPDATE' as any,
             activity_description: 'Employee auto-paused: contract end date expired.',
-            action: AUDIT_ACTION.UPDATED,
+            action: 'UPDATED' as any,
             old_values: {
               status: employee.status,
-            },
+            } as any,
             new_values: {
-              status: STATUS_USER.PAUSED,
+              status: 'PAUSED',
               contract_end_date: employee.contract_end_date?.toISOString(),
-            },
+            } as any,
             changed_fields: ['status'],
           },
         });
@@ -1161,8 +1167,8 @@ export class EmployeesService {
 
   private async changeStatus(
     uuid: string,
-    status: STATUS_USER,
-    actionType: ACTION_TYPE,
+    status: string,
+    actionType: any,
     reason: string | undefined,
     actor: CurrentUserType,
   ) {
@@ -1184,7 +1190,8 @@ export class EmployeesService {
           id: employee.id,
         },
         data: {
-          status,
+          status: status as any,
+          updated_at: new Date(),
         },
         include: this.employeeIncludes(),
       });
@@ -1201,9 +1208,9 @@ export class EmployeesService {
           old_employment_category_id: employee.employment_category_id,
           new_employment_category_id: employee.employment_category_id,
           status:
-            status === STATUS_USER.ACTIVE
-              ? STATUS_ACTIVE_INACTIVE.ACTIVE
-              : STATUS_ACTIVE_INACTIVE.INACTIVE,
+            status === 'ACTIVE'
+              ? 'ACTIVE'
+              : 'INACTIVE',
           reason,
           changed_by: BigInt(actor.userId),
           approved_by: BigInt(actor.userId),
@@ -1217,16 +1224,16 @@ export class EmployeesService {
           entity_table: 'employees',
           entity_id: employee.id,
           module_name: 'EMPLOYEES',
-          activity_type: ACTIVITY_TYPE.UPDATE,
+          activity_type: 'UPDATE' as any,
           activity_description: `Employee status changed to ${status}.`,
-          action: AUDIT_ACTION.UPDATED,
+          action: 'UPDATED' as any,
           old_values: {
             status: employee.status,
-          },
+          } as any,
           new_values: {
             status,
             reason,
-          },
+          } as any,
           changed_fields: ['status'],
         },
       });
@@ -1279,7 +1286,7 @@ export class EmployeesService {
               working_location_id: workingLocationId,
             }
           : {}),
-        status: STATUS_ACTIVE_INACTIVE.ACTIVE,
+        status: 'ACTIVE',
       },
       select: {
         id: true,
@@ -1311,8 +1318,8 @@ export class EmployeesService {
     const request = await this.prisma.transfer_requests.findFirst({
       where: {
         uuid,
-        subject_type: TRANSFER_SUBJECT.EMPLOYEE,
-        status: APPROVAL_STATUS.PENDING,
+        subject_type: 'EMPLOYEE',
+        status: 'PENDING',
       },
     });
 
@@ -1333,7 +1340,7 @@ export class EmployeesService {
       where: {
         id: departmentId,
         working_location_id: workingLocationId,
-        status: STATUS_ACTIVE_INACTIVE.ACTIVE,
+        status: 'ACTIVE',
       },
       select: {
         id: true,
@@ -1351,7 +1358,7 @@ export class EmployeesService {
     const category = await this.prisma.employment_categories.findFirst({
       where: {
         id: categoryId,
-        status: STATUS_ACTIVE_INACTIVE.ACTIVE,
+        status: 'ACTIVE',
       },
       select: {
         id: true,
@@ -1367,10 +1374,33 @@ export class EmployeesService {
 
   private employeeIncludes() {
     return {
-      createdBy: true,
-      department: true,
-      working_location: true,
-      employment_category: true,
+      users: {
+        select: {
+          uuid: true,
+          first_name: true,
+          last_name: true,
+        },
+      },
+      departments: {
+        select: {
+          uuid: true,
+          name: true,
+        },
+      },
+      working_locations: {
+        select: {
+          uuid: true,
+          name: true,
+        },
+      },
+      employment_categories: {
+        select: {
+          uuid: true,
+          name: true,
+          payroll_frequency: true,
+          tax_behavior: true,
+        },
+      },
       // Include the most recent active payment structure
       payment_structures: {
         orderBy: { effective_from: 'desc' as const },
@@ -1391,7 +1421,7 @@ export class EmployeesService {
     // 2. If we have records, calculate present percentage.
 
     const presentCount = timeRecords.filter(
-      (r) => r.attendance_status === ATTENDANCE_STATUS.PRESENT,
+      (r: any) => r.attendance_status === 'PRESENT',
     ).length;
 
     const attendanceRate = timeRecords.length
@@ -1408,6 +1438,9 @@ export class EmployeesService {
       working_location_id: employee.working_location_id?.toString() ?? null,
       employment_category_id:
         employee.employment_category_id?.toString() ?? null,
+      department: employee.departments ?? null,
+      working_location: employee.working_locations ?? null,
+      employment_category: employee.employment_categories ?? null,
       attendance_stats: {
         rate: attendanceRate,
         last_status: latestRecord?.attendance_status ?? null,
@@ -1439,6 +1472,10 @@ export class EmployeesService {
 
   private employeeScopeWhere(actor: CurrentUserType) {
     if (this.isSystemAdmin(actor)) {
+      return {};
+    }
+
+    if (hasEffectivePermission(actor, 'employees.read_all')) {
       return {};
     }
 
@@ -1505,6 +1542,24 @@ export class EmployeesService {
         'Attendance users can only access employees in their department.',
       );
     }
+  }
+
+  private ensureActorCanReadEmployee(
+    actor: CurrentUserType,
+    employee: {
+      working_location_id?: bigint | null;
+      department_id?: bigint | null;
+    },
+  ) {
+    if (this.isSystemAdmin(actor)) {
+      return;
+    }
+
+    if (hasEffectivePermission(actor, 'employees.read_all')) {
+      return;
+    }
+
+    this.ensureActorCanAccessEmployee(actor, employee);
   }
 
   private ensureActorCanUseScope(
