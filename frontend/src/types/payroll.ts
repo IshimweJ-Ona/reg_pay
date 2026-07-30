@@ -38,6 +38,7 @@ export interface PayrollItem {
   employeeName: string;
   department: string;
   baseSalary: number;
+  overtimeHours: number;
   overtime: number;
   bonus: number;
   allowances: number;

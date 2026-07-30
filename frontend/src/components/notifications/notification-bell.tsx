@@ -1,39 +1,29 @@
 
 "use client";
 
-import React, { useEffect, useMemo, useState } from 'react';
-import { Bell, Check, Clock, AlertCircle } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Bell, Check, AlertCircle } from 'lucide-react';
 import { useRouter, useParams } from 'next/navigation';
-import { 
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, 
-  DropdownMenuTrigger, DropdownMenuLabel, DropdownMenuSeparator 
+import {
+  DropdownMenu, DropdownMenuContent,
+  DropdownMenuTrigger, DropdownMenuLabel, DropdownMenuSeparator
 } from "@/components/ui/dropdown-menu";
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { rejectUser, approveUserTransfer, rejectUserTransfer } from '@/api/users';
 import { approveEmployeeTransfer, rejectEmployeeTransfer } from '@/api/employees';
-import { getNotifications, getUnreadCount, markAsRead, markAllAsRead, Notification } from '@/api/notifications';
-import { approvePayrollBatch, rejectPayrollBatch } from '@/api/payroll';
+import { getNotifications, getUnreadCount, markAsRead, markAllAsRead, clearNotification, clearAllNotifications, Notification } from '@/api/notifications';
+import { approvePayrollBatch } from '@/api/payroll';
 import { useToast } from '@/hooks/use-toast';
-import { Badge } from '../ui/badge';
 import { userFriendlyError } from '@/lib/error-message';
-import { useNotifications, Notification as SSENotification } from '@/hooks/use-notifications';
+import { useNotifications } from '@/hooks/use-notifications';
 import { useAuth } from '@/context/auth-context';
-
-function renderNotificationText(value: unknown): string {
-  if (typeof value === 'string') return value;
-  if (value && typeof value === 'object') {
-    const v = value as { key?: string; name?: string };
-    return v.name ?? v.key ?? JSON.stringify(value);
-  }
-  return String(value ?? '');
-}
 
 export function NotificationBell({ type }: { type: 'admin' | 'user' }) {
   const { accessToken } = useAuth();
-  const { notifications: sseNotifications, unreadCount: sseUnreadCount, setUnreadCount: setSSEUnreadCount } = useNotifications(accessToken || '');
+  const { notifications: sseNotifications, unreadCount: sseUnreadCount, setUnreadCount: setSSEUnreadCount, removeNotifications } = useNotifications(accessToken || '');
   const [initialNotifications, setInitialNotifications] = useState<Notification[]>([]);
-  const [initialUnreadCount, setInitialUnreadCount] = useState(0);
+  const [, setInitialUnreadCount] = useState(0);
   const { toast } = useToast();
   const router = useRouter();
   const params = useParams();
@@ -75,7 +65,7 @@ export function NotificationBell({ type }: { type: 'admin' | 'user' }) {
   }, [sseNotifications, initialNotifications]);
 
   const unreadCount = sseUnreadCount;
-  const handleApproveRegistration = async (notificationUuid: string, userUuid: string) => {
+  const handleApproveRegistration = async (userUuid: string) => {
     try {
       router.push(`${basePath}/users?edit=${userUuid}&needsRole=1`);
       toast({ title: "Choose a role", description: "Select a role for this user before approving the account." });
@@ -185,6 +175,28 @@ export function NotificationBell({ type }: { type: 'admin' | 'user' }) {
     }
   };
 
+  const handleClear = async (uuid: string) => {
+    try {
+      await clearNotification(uuid);
+      setInitialNotifications((prev) => prev.filter((n) => n.uuid !== uuid));
+      removeNotifications([uuid]);
+    } catch (error) {
+      console.error('Failed to clear notification:', error);
+    }
+  };
+
+  const handleClearAll = async () => {
+    try {
+      await clearAllNotifications();
+      const clearedUuids = allNotifications.map((n) => n.uuid);
+      setInitialNotifications([]);
+      removeNotifications(clearedUuids);
+      setSSEUnreadCount(0);
+    } catch (error) {
+      console.error('Failed to clear notifications:', error);
+    }
+  };
+
   const handleNotificationOpen = async (notification: Notification) => {
     const redirect = (notification.metadata as any)?.redirect;
     if (redirect) {
@@ -214,11 +226,18 @@ export function NotificationBell({ type }: { type: 'admin' | 'user' }) {
           <span className="text-sm font-headline font-bold uppercase tracking-wider text-muted-foreground">
             {type === 'admin' ? 'System Notifications' : 'My Notifications'}
           </span>
-          {unreadCount > 0 && (
-            <Button variant="ghost" size="sm" className="text-[10px] h-6 px-2 text-primary hover:text-primary/80" onClick={handleMarkAllRead}>
-              Mark all read
-            </Button>
-          )}
+          <div className="flex items-center gap-1">
+            {unreadCount > 0 && (
+              <Button variant="ghost" size="sm" className="text-[10px] h-6 px-2 text-primary hover:text-primary/80" onClick={handleMarkAllRead}>
+                Mark all read
+              </Button>
+            )}
+            {allNotifications.length > 0 && (
+              <Button variant="ghost" size="sm" className="text-[10px] h-6 px-2 text-muted-foreground hover:text-destructive" onClick={handleClearAll}>
+                Clear all
+              </Button>
+            )}
+          </div>
         </DropdownMenuLabel>
         <DropdownMenuSeparator className="m-0" />
         <ScrollArea className="h-[400px]">
@@ -267,7 +286,7 @@ export function NotificationBell({ type }: { type: 'admin' | 'user' }) {
                         
                         {!n.is_read && n.reference_id && (
                           <div className="mt-3 flex gap-2 pt-2 border-t border-slate-100">
-                            <Button size="sm" className="h-7 flex-1 px-2 text-[10px] bg-emerald-600 hover:bg-emerald-700" onClick={() => handleApproveRegistration(n.uuid, n.reference_id!)}>
+                            <Button size="sm" className="h-7 flex-1 px-2 text-[10px] bg-emerald-600 hover:bg-emerald-700" onClick={() => handleApproveRegistration(n.reference_id!)}>
                               <Check className="h-3 w-3 mr-1" /> Approve
                             </Button>
                             <Button size="sm" variant="outline" className="h-7 flex-1 px-2 text-[10px] text-destructive hover:bg-destructive/5" onClick={() => handleDenyRegistration(n.uuid, n.reference_id!)}>
@@ -304,16 +323,21 @@ export function NotificationBell({ type }: { type: 'admin' | 'user' }) {
                       <span className="text-[9px] font-bold text-muted-foreground/60 uppercase tracking-widest">
                         {new Date(n.created_at).toLocaleString()}
                       </span>
-                      {!n.is_read && (
-                        <button onClick={() => handleMarkRead(n.uuid)} className="text-[9px] text-primary hover:underline font-bold">
-                          Mark read
+                      <div className="flex items-center gap-2">
+                        {!n.is_read && (
+                          <button onClick={() => handleMarkRead(n.uuid)} className="text-[9px] text-primary hover:underline font-bold">
+                            Mark read
+                          </button>
+                        )}
+                        {(n.metadata as any)?.redirect && (
+                          <button onClick={() => handleNotificationOpen(n)} className="text-[9px] text-primary hover:underline font-bold">
+                            Open
+                          </button>
+                        )}
+                        <button onClick={() => handleClear(n.uuid)} className="text-[9px] text-muted-foreground hover:text-destructive hover:underline font-bold">
+                          Clear
                         </button>
-                      )}
-                      {(n.metadata as any)?.redirect && (
-                        <button onClick={() => handleNotificationOpen(n)} className="text-[9px] text-primary hover:underline font-bold">
-                          Open
-                        </button>
-                      )}
+                      </div>
                     </div>
                   </div>
                 </div>

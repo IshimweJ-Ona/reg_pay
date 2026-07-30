@@ -1,12 +1,12 @@
 "use client";
 
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Activity, Clock, Loader2, RotateCw, User, MapPin, Building2, Shield, Fingerprint } from 'lucide-react';
+import { Activity, Clock, Loader2, RotateCw, User, MapPin, Building2, Fingerprint, ArrowRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { getAuditLogs, type AuditLogEntry } from '@/api/audit-logs';
 import { useToast } from '@/hooks/use-toast';
@@ -24,7 +24,7 @@ export default function AuditLogsPage() {
   const router = useRouter();
   const canViewAudit = hasPermission('audit.view');
 
-  const selectedAudit = auditLogs.find((log) => log.id === selectedAuditId) ?? auditLogs[0];
+  const selectedAudit = auditLogs.find((log) => log.id === selectedAuditId) ?? null;
 
   useEffect(() => {
     if (user && !canViewAudit) {
@@ -47,9 +47,6 @@ export default function AuditLogsPage() {
     try {
       const logs = await getAuditLogs(100);
       setAuditLogs(logs);
-      if (logs.length > 0) {
-        setSelectedAuditId(logs[0].id);
-      }
     } catch (error: any) {
       toast({
         variant: 'destructive',
@@ -66,8 +63,8 @@ export default function AuditLogsPage() {
     try {
       const logs = await getAuditLogs(100);
       setAuditLogs(logs);
-      setSelectedAuditId((current) => current || logs[0]?.id || '');
-    } catch (error: any) {
+      setSelectedAuditId((current) => current);
+    } catch {
       // Don't toast on auto-refresh failures
     } finally {
       setAuditRefreshing(false);
@@ -80,6 +77,38 @@ export default function AuditLogsPage() {
   const renderAuditJson = (value: any) => {
     if (!value || (Array.isArray(value) && value.length === 0)) return 'None';
     return JSON.stringify(value, null, 2);
+  };
+
+  const humanizeAuditKey = (value: string) =>
+    value
+      .replace(/_/g, ' ')
+      .replace(/\b\w/g, (letter) => letter.toUpperCase());
+
+  const formatAuditValue = (value: any) => {
+    if (value === null || value === undefined || value === '') return 'None';
+    if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+    if (typeof value === 'number') return value.toLocaleString();
+    if (typeof value === 'string') return value;
+    return renderAuditJson(value);
+  };
+
+  const getChangedFieldList = (log: AuditLogEntry) => {
+    if (Array.isArray(log.changed_fields)) return log.changed_fields.map(String);
+    if (log.changed_fields && typeof log.changed_fields === 'object') return Object.keys(log.changed_fields);
+    const fields = new Set<string>();
+    Object.keys(log.old_values ?? {}).forEach((key) => fields.add(key));
+    Object.keys(log.new_values ?? {}).forEach((key) => fields.add(key));
+    return Array.from(fields);
+  };
+
+  const renderAuditValue = (value: any) => {
+    const formatted = formatAuditValue(value);
+    const isComplex = typeof value === 'object' && value !== null;
+    return isComplex ? (
+      <pre className="max-h-28 overflow-auto rounded-md bg-slate-50 p-2 text-[10px] font-mono border">{formatted}</pre>
+    ) : (
+      <span className="text-xs font-semibold text-slate-700">{formatted}</span>
+    );
   };
 
   const getActionVariant = (action: string) => {
@@ -101,6 +130,8 @@ export default function AuditLogsPage() {
       default: return <Activity className="h-3.5 w-3.5" />;
     }
   };
+
+  const selectedChangedFields = selectedAudit ? getChangedFieldList(selectedAudit) : [];
 
   if (!user || loading) {
     return (
@@ -145,7 +176,7 @@ export default function AuditLogsPage() {
                     <TableHead className="w-[130px]">Timestamp</TableHead>
                     <TableHead className="w-[90px]">Module</TableHead>
                     <TableHead className="w-[80px]">Action</TableHead>
-                    <TableHead>Description</TableHead>
+                    <TableHead>Target</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -189,8 +220,11 @@ export default function AuditLogsPage() {
                           {log.action}
                         </Badge>
                       </TableCell>
-                      <TableCell className="max-w-[240px] truncate text-xs" title={log.activity_description}>
-                        {log.activity_description}
+                      <TableCell className="text-xs">
+                        <div className="flex flex-col">
+                          <span className="font-semibold">{humanizeAuditKey(log.entity_table)}</span>
+                          <span className="text-[10px] text-muted-foreground">Record #{log.entity_id}</span>
+                        </div>
                       </TableCell>
                     </TableRow>
                   )) : (
@@ -306,27 +340,47 @@ export default function AuditLogsPage() {
                     </div>
                   )}
 
-                  {/* Changed Fields */}
-                  {selectedAudit.changed_fields && (
-                    <div className="space-y-1">
-                      <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Changed Fields</p>
-                      <pre className="max-h-32 overflow-auto rounded-md bg-white p-2 text-[10px] font-mono border">{renderAuditJson(selectedAudit.changed_fields)}</pre>
+                  {selectedChangedFields.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">What Changed</p>
+                      <div className="overflow-hidden rounded-lg border bg-white">
+                        {selectedChangedFields.map((field) => (
+                          <div key={field} className="grid grid-cols-1 gap-2 border-b p-3 last:border-b-0">
+                            <p className="text-xs font-bold text-slate-800">{humanizeAuditKey(field)}</p>
+                            <div className="grid grid-cols-[1fr_auto_1fr] items-start gap-2">
+                              <div>
+                                <p className="mb-1 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Old</p>
+                                {renderAuditValue(selectedAudit.old_values?.[field])}
+                              </div>
+                              <ArrowRight className="mt-5 h-4 w-4 text-muted-foreground" />
+                              <div>
+                                <p className="mb-1 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">New</p>
+                                {renderAuditValue(selectedAudit.new_values?.[field])}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   )}
 
-                  {/* New Values */}
-                  {selectedAudit.new_values && (
-                    <div className="space-y-1">
-                      <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">New Values</p>
-                      <pre className="max-h-32 overflow-auto rounded-md bg-white p-2 text-[10px] font-mono border">{renderAuditJson(selectedAudit.new_values)}</pre>
-                    </div>
-                  )}
-
-                  {/* Old Values */}
-                  {selectedAudit.old_values && (
-                    <div className="space-y-1">
-                      <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Old Values</p>
-                      <pre className="max-h-32 overflow-auto rounded-md bg-white p-2 text-[10px] font-mono border">{renderAuditJson(selectedAudit.old_values)}</pre>
+                  {selectedChangedFields.length === 0 && (selectedAudit.old_values || selectedAudit.new_values) && (
+                    <div className="space-y-2">
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Recorded Data</p>
+                      <div className="grid grid-cols-1 gap-3">
+                        {selectedAudit.old_values && (
+                          <div className="rounded-md bg-white p-2.5 border">
+                            <p className="mb-1 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Old Version</p>
+                            {renderAuditValue(selectedAudit.old_values)}
+                          </div>
+                        )}
+                        {selectedAudit.new_values && (
+                          <div className="rounded-md bg-white p-2.5 border">
+                            <p className="mb-1 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">New Version</p>
+                            {renderAuditValue(selectedAudit.new_values)}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>

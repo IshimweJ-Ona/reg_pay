@@ -24,4 +24,10 @@ export interface Employee {
   contract_start_date?: string;
   contract_end_date?: string;
   pause_reason?: string;
+  activeTaxIds?: string[];
+  activeTaxes?: {
+    deduction_type_id: string;
+    name: string;
+    rate?: number;
+  }[];
 }

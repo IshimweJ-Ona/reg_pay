@@ -28,8 +28,13 @@ export const createEmployee = async (payload: CreateEmployeePayload) => {
     return response.data;
 };
 
-export const getEmployees = async () => {
-    const response = await api.get("/employees");
+export interface GetEmployeesFilters {
+    q?: string;
+    department_id?: string;
+}
+
+export const getEmployees = async (filters?: GetEmployeesFilters) => {
+    const response = await api.get("/employees", { params: filters });
     return response.data;
 };
 

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -10,10 +10,10 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Loader2, Plus, RotateCw, Save, ShieldCheck } from 'lucide-react';
 import { createRole, getRoles, updateRole, type Role } from '@/api/roles';
-import { PERMISSION_MODULES, ALL_PERMISSION_KEYS } from '@/lib/permissions';
+import { getSystemConfigs, updateSystemConfig } from '@/api/system-config';
+import { PERMISSION_MODULES, ALL_PERMISSION_KEYS, expandPermissionKeys } from '@/lib/permissions';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/auth-context';
 
@@ -22,22 +22,32 @@ const emptyRoleForm = {
   description: '',
   permission_keys: [] as string[],
 };
+const OVERTIME_RATE_KEY = 'OVERTIME_RATE_PER_HOUR';
+const DEFAULT_OVERTIME_RATE = '2500';
 
 export default function SystemSettingsPage() {
   const [loading, setLoading] = useState(true);
   const [savingRole, setSavingRole] = useState(false);
+  const [savingOvertime, setSavingOvertime] = useState(false);
   const [roles, setRoles] = useState<Role[]>([]);
   const [selectedRoleId, setSelectedRoleId] = useState<string>('');
   const [roleForm, setRoleForm] = useState(emptyRoleForm);
+  const [overtimeRate, setOvertimeRate] = useState(DEFAULT_OVERTIME_RATE);
   const { toast } = useToast();
   const { user, refreshSession, hasPermission } = useAuth();
   const router = useRouter();
-  const canManageRoles = hasPermission('roles.manage');
+  const canManageRoles = hasPermission('roles.manage') || hasPermission('roles.manage_own_location');
+  const canManageSystemConfig = hasPermission('system-config.manage');
+  const canAccessSettings = canManageRoles || canManageSystemConfig;
+  // A "manage_own_location" holder without the global "manage" permission
+  // only ever sees/edits global roles plus their own branch's roles - the
+  // server already enforces this (RolesService); this just labels it in the UI.
+  const isBranchScopedRoleManager = !hasPermission('roles.manage') && hasPermission('roles.manage_own_location');
 
   const selectedRole = roles.find((role) => role.id === selectedRoleId);
 
   const permissionsByModule = useMemo(() => {
-    return PERMISSION_MODULES.reduce<Record<string, Array<{ key: string; name: string }>>>(
+    return PERMISSION_MODULES.reduce<Record<string, Array<{ key: string; name: string; description?: string }>>>(
       (acc, mod) => {
         acc[mod.module] = mod.permissions;
         return acc;
@@ -46,18 +56,30 @@ export default function SystemSettingsPage() {
     );
   }, []);
 
+  // A permission can be granted two ways: explicitly checked, or implied by
+  // another checked permission (e.g. "payroll.approve_final" always implies
+  // "payroll.read"). Showing implied permissions as unchecked would be
+  // misleading — the role effectively has them the moment it's saved, even
+  // though the raw permission_keys array doesn't literally list them. This
+  // set lets the checklist reflect what a role can ACTUALLY do, not just
+  // what was manually ticked.
+  const effectivePermissionKeys = useMemo(
+    () => new Set(expandPermissionKeys(roleForm.permission_keys)),
+    [roleForm.permission_keys],
+  );
+
   useEffect(() => {
-    if (user && !canManageRoles) {
+    if (user && !canAccessSettings) {
       router.replace('/unauthorized');
       return;
     }
-  }, [canManageRoles, user, router]);
+  }, [canAccessSettings, user, router]);
 
   useEffect(() => {
-    if (canManageRoles) {
+    if (canAccessSettings) {
       loadData();
     }
-  }, [canManageRoles]);
+  }, [canAccessSettings]);
 
   useEffect(() => {
     if (!selectedRole) return;
@@ -71,20 +93,62 @@ export default function SystemSettingsPage() {
   const loadData = async () => {
     setLoading(true);
     try {
-      const rolesData = await getRoles();
-      setRoles(rolesData);
-      const firstRole = rolesData[0];
-      if (firstRole && !selectedRoleId) {
-        setSelectedRoleId(firstRole.id);
+      if (canManageRoles) {
+        const rolesData = await getRoles();
+        setRoles(rolesData);
+        const firstRole = rolesData[0];
+        if (firstRole && !selectedRoleId) {
+          setSelectedRoleId(firstRole.id);
+        }
+      }
+
+      if (canManageSystemConfig) {
+        const configs = await getSystemConfigs();
+        const overtimeConfig = configs.find((config) => config.key === OVERTIME_RATE_KEY);
+        setOvertimeRate(overtimeConfig?.value ?? DEFAULT_OVERTIME_RATE);
       }
     } catch (error: any) {
       toast({
         variant: 'destructive',
         title: 'Settings failed to load',
-        description: error?.response?.data?.message ?? 'Could not load roles.',
+        description: error?.response?.data?.message ?? 'Could not load settings.',
       });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSaveOvertimeRate = async () => {
+    const normalizedRate = Number(overtimeRate);
+    if (!Number.isFinite(normalizedRate) || normalizedRate < 0) {
+      toast({
+        variant: 'destructive',
+        title: 'Invalid overtime rate',
+        description: 'Enter a non-negative RWF amount.',
+      });
+      return;
+    }
+
+    setSavingOvertime(true);
+    try {
+      const saved = await updateSystemConfig(
+        OVERTIME_RATE_KEY,
+        normalizedRate.toString(),
+        'RWF amount paid per overtime hour across all working locations.',
+      );
+      setOvertimeRate(saved.value);
+      toast({
+        title: 'Overtime rate updated',
+        description: `Payroll will use RWF ${Number(saved.value).toLocaleString()} per overtime hour.`,
+      });
+    } catch (error: any) {
+      toast({
+        variant: 'destructive',
+        title: 'Overtime save failed',
+        description: error?.response?.data?.message ?? 'Could not update overtime settings.',
+      });
+    } finally {
+      setSavingOvertime(false);
     }
   };
 
@@ -125,11 +189,11 @@ export default function SystemSettingsPage() {
       await loadData();
       setSelectedRoleId(saved.id);
       const userHasThisRole = user?.roles?.includes(roleForm.name) || (selectedRole && user?.roles?.includes(selectedRole.name));
-      await refreshSession({ reload: !!userHasThisRole });
+      await refreshSession();
       toast({
         title: selectedRoleId ? 'Role updated' : 'Role created',
         description: userHasThisRole
-          ? 'Permissions changed immediately. The page is reloading with fresh access.'
+          ? 'Permissions changed immediately. Your access was refreshed.'
           : 'Permissions updated successfully.',
       });
     } catch (error: any) {
@@ -151,15 +215,54 @@ export default function SystemSettingsPage() {
     );
   }
 
-  if (!canManageRoles) return null;
+  if (!canAccessSettings) return null;
 
   return (
     <div className="max-w-[1800px] space-y-8">
       <div>
         <h1 className="text-3xl font-headline font-bold">Settings</h1>
-        <p className="text-muted-foreground">Create roles and control the permissions each role grants across the system.</p>
+        <p className="text-muted-foreground">
+          {isBranchScopedRoleManager
+            ? 'Manage roles and permissions for your own branch.'
+            : 'Manage system-wide payroll settings and access controls.'}
+        </p>
       </div>
 
+      {canManageSystemConfig && (
+        <Card className="border-none shadow-sm">
+          <CardHeader>
+            <CardTitle>Overtime Settings</CardTitle>
+            <CardDescription>Set the RWF amount paid for each overtime hour across all working locations.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-[1fr_auto] md:items-end">
+              <div className="space-y-2">
+                <Label>Overtime Rate Per Hour (RWF)</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  value={overtimeRate}
+                  onChange={(event) => setOvertimeRate(event.target.value)}
+                  placeholder={DEFAULT_OVERTIME_RATE}
+                />
+              </div>
+              <Button className="h-10 gap-2" onClick={handleSaveOvertimeRate} disabled={savingOvertime}>
+                {savingOvertime ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                Save
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {canManageRoles && (
+      <div className="space-y-4">
+        {isBranchScopedRoleManager && (
+          <div className="rounded-lg border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-primary">
+            You can manage roles for <span className="font-bold">{user?.location ?? 'your branch'}</span> only.
+            Global roles are visible here but can't be edited from your account.
+          </div>
+        )}
       <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-6">
         <Card className="border-none shadow-sm">
           <CardHeader>
@@ -178,6 +281,7 @@ export default function SystemSettingsPage() {
                 {roles.map((role) => {
                   const permissionCount = role.permission_keys?.length ?? 0;
                   const active = role.id === selectedRoleId;
+                  const isGlobalRole = !role.working_location_id;
                   return (
                     <button
                       key={role.id}
@@ -192,6 +296,12 @@ export default function SystemSettingsPage() {
                         {role.is_system_role && <Badge variant="outline">System</Badge>}
                       </div>
                       <p className="text-xs text-muted-foreground mt-1">{permissionCount} permissions</p>
+                      <Badge
+                        variant="secondary"
+                        className={`mt-2 text-[10px] font-medium ${isGlobalRole ? '' : 'bg-primary/10 text-primary'}`}
+                      >
+                        {isGlobalRole ? 'Global' : role.working_locations?.name ?? 'Branch-scoped'}
+                      </Badge>
                     </button>
                   );
                 })}
@@ -206,7 +316,7 @@ export default function SystemSettingsPage() {
               <div>
                 <CardTitle>{selectedRoleId ? 'Update Role Permissions' : 'Create Role'}</CardTitle>
                 <CardDescription>
-                  Users assigned to this role receive these permissions on their next request and after the frontend reloads.
+                  Users assigned to this role receive these permissions immediately through live access refresh.
                 </CardDescription>
               </div>
               <Button variant="outline" className="gap-2" onClick={loadData}>
@@ -299,20 +409,35 @@ export default function SystemSettingsPage() {
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                       {modulePermissions.map((permission) => {
-                        const checked = roleForm.permission_keys.includes(permission.key);
+                        const explicitlyChecked = roleForm.permission_keys.includes(permission.key);
+                        const impliedOnly = !explicitlyChecked && effectivePermissionKeys.has(permission.key);
+                        const checked = explicitlyChecked || impliedOnly;
                         return (
                           <label
                             key={permission.key}
-                            className="flex min-h-16 cursor-pointer items-start gap-3 rounded-lg border bg-white p-3 hover:bg-secondary/30"
+                            className={`flex min-h-16 items-start gap-3 rounded-lg border p-3 ${
+                              impliedOnly ? 'bg-secondary/20 cursor-default' : 'cursor-pointer bg-white hover:bg-secondary/30'
+                            }`}
                           >
                             <Checkbox
                               checked={checked}
+                              disabled={impliedOnly}
                               onCheckedChange={(value) => togglePermission(permission.key, Boolean(value))}
                               className="mt-1"
                             />
                             <span className="min-w-0">
-                              <span className="block text-sm font-semibold">{permission.name}</span>
-                              <span className="block truncate text-xs text-muted-foreground">{permission.key}</span>
+                              <span className="flex flex-wrap items-center gap-1.5">
+                                <span className="text-sm font-semibold">{permission.name}</span>
+                                {impliedOnly && (
+                                  <Badge variant="secondary" className="text-[10px] font-normal">
+                                    Included automatically
+                                  </Badge>
+                                )}
+                              </span>
+                              {permission.description && (
+                                <span className="block text-xs text-muted-foreground mt-0.5">{permission.description}</span>
+                              )}
+                              <span className="block truncate text-[10px] text-muted-foreground/70 mt-0.5">{permission.key}</span>
                             </span>
                           </label>
                         );
@@ -332,6 +457,8 @@ export default function SystemSettingsPage() {
           </CardContent>
         </Card>
       </div>
+      </div>
+      )}
     </div>
   );
 }

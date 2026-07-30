@@ -3,7 +3,7 @@
 
 import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
-import { ShieldCheck } from "lucide-react";
+import Image from "next/image";
 import { cn } from "@/lib/utils";
 
 export function PageLoader() {
@@ -72,8 +72,8 @@ export function PageLoader() {
       )}
     >
       <div className="flex flex-col items-center mb-8 animate-in fade-in zoom-in duration-500">
-        <div className="bg-primary p-4 rounded-2xl shadow-2xl shadow-primary/20 mb-6">
-          <ShieldCheck className="h-12 w-12 text-white" />
+        <div className="bg-white p-3 rounded-2xl shadow-2xl shadow-primary/20 mb-6">
+          <Image src="/pics/reg-logo.png" alt="REG Logo" width={48} height={48} className="h-12 w-12 object-contain" />
         </div>
         <div className="text-center">
           <h1 className="text-4xl font-headline font-bold tracking-[0.2em] text-white">

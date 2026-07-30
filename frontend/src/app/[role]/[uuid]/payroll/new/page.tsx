@@ -1,24 +1,25 @@
 
 "use client";
 
-import React, { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Badge } from '@/components/ui/badge';
 import { 
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue 
 } from "@/components/ui/select";
 import { 
   ArrowLeft, Save, Calculator, Users, 
-  Search, Filter, ShieldCheck 
+  Search, Filter, ShieldCheck, Paperclip, X
 } from 'lucide-react';
 import { useRouter, useParams } from 'next/navigation';
 import { useToast } from '@/hooks/use-toast';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { getEmployees } from '@/api/employees';
-import { createPayrollBatch } from '@/api/payroll';
+import { createPayrollBatch, uploadPayrollBatchAttachments } from '@/api/payroll';
 import { getDepartments, getWorkingLocations } from '@/api/working_locations';
 import { useAuth } from '@/context/auth-context';
 import { userFriendlyError } from '@/lib/error-message';
@@ -86,6 +87,8 @@ export default function NewPayrollBatchPage() {
   const [endDate, setEndDate] = useState('');
   const [workDays, setWorkDays] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
+  const [batchDescription, setBatchDescription] = useState('');
+  const [batchAttachments, setBatchAttachments] = useState<File[]>([]);
 
   const role = params.role as string;
   const uuid = params.uuid as string;
@@ -196,6 +199,19 @@ export default function NewPayrollBatchPage() {
     }));
   };
 
+  const handleAttachmentChange = (files: FileList | null) => {
+    if (!files) return;
+    setBatchAttachments((current) => {
+      const existingKeys = new Set(current.map((file) => `${file.name}-${file.size}`));
+      const additions = Array.from(files).filter((file) => !existingKeys.has(`${file.name}-${file.size}`));
+      return [...current, ...additions].slice(0, 10);
+    });
+  };
+
+  const removeAttachment = (index: number) => {
+    setBatchAttachments((current) => current.filter((_, itemIndex) => itemIndex !== index));
+  };
+
   const handleSubmit = async () => {
     if (missingPaymentSetupCount > 0) {
       toast({
@@ -207,12 +223,13 @@ export default function NewPayrollBatchPage() {
     }
 
     try {
-      await createPayrollBatch({
+      const createdBatch = await createPayrollBatch({
         working_location_id: workingLocationId,
         payroll_month: payrollMonth,
         payroll_year: payrollYear,
         payment_date: paymentDate,
         payment_method: 'BANK',
+        description: batchDescription.trim() || undefined,
         categories: selectedCategories.includes('ALL') ? undefined : selectedCategories,
         ...(startDate ? { start_date: startDate } : {}),
         ...(endDate ? { end_date: endDate } : {}),
@@ -223,7 +240,17 @@ export default function NewPayrollBatchPage() {
           phone_number: data.phone
         }))
       });
-      toast({ title: "Payroll Batch Created", description: "The batch has been saved as DRAFT." });
+
+      if (batchAttachments.length > 0 && createdBatch?.uuid) {
+        await uploadPayrollBatchAttachments(createdBatch.uuid, batchAttachments);
+      }
+
+      toast({
+        title: "Payroll Batch Created",
+        description: batchAttachments.length > 0
+          ? "The batch has been saved as DRAFT with its attachments."
+          : "The batch has been saved as DRAFT.",
+      });
       router.push(`${basePath}/payroll`);
     } catch (error: any) {
       toast({
@@ -350,6 +377,59 @@ export default function NewPayrollBatchPage() {
               <div className="space-y-2">
                 <Label>Custom Work Days</Label>
                 <Input type="number" min="1" value={workDays} onChange={(event) => setWorkDays(event.target.value)} placeholder="Only for custom contracts" />
+              </div>
+              <div className="space-y-2 md:col-span-2">
+                <Label>Batch Description</Label>
+                <Textarea
+                  value={batchDescription}
+                  onChange={(event) => setBatchDescription(event.target.value)}
+                  placeholder="Add context for reviewers, payment notes, or any correction reason."
+                  className="min-h-[88px]"
+                />
+              </div>
+              <div className="space-y-3 md:col-span-2">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <Label>Attachments</Label>
+                    <p className="text-[10px] text-muted-foreground">Upload payroll evidence or supporting documents for reviewers.</p>
+                  </div>
+                  <label className="inline-flex h-9 cursor-pointer items-center gap-2 rounded-md border bg-white px-3 text-xs font-semibold shadow-sm hover:bg-secondary/60">
+                    <Paperclip className="h-3.5 w-3.5" />
+                    Add Files
+                    <input
+                      type="file"
+                      multiple
+                      className="hidden"
+                      onChange={(event) => handleAttachmentChange(event.target.files)}
+                    />
+                  </label>
+                </div>
+                {batchAttachments.length > 0 ? (
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {batchAttachments.map((file, index) => (
+                      <div key={`${file.name}-${file.size}-${index}`} className="flex items-center gap-2 rounded-lg border bg-slate-50 px-3 py-2 text-xs">
+                        <Paperclip className="h-3.5 w-3.5 text-muted-foreground" />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate font-semibold">{file.name}</p>
+                          <p className="text-[10px] text-muted-foreground">{(file.size / 1024).toFixed(1)} KB</p>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7"
+                          onClick={() => removeAttachment(index)}
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-dashed bg-slate-50 px-3 py-4 text-center text-xs text-muted-foreground">
+                    No attachments selected.
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>

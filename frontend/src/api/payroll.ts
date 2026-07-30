@@ -6,6 +6,7 @@ export interface CreatePayrollBatchPayload {
     payroll_year: number;
     payment_date: string;
     payment_method: "BANK" | "CASH" | "MOMO";
+    description?: string;
     start_date?: string;
     end_date?: string;
     work_days?: number;
@@ -22,13 +23,28 @@ export const createPayrollBatch = async (payload: Partial<CreatePayrollBatchPayl
     return response.data;
 };
 
+export const uploadPayrollBatchAttachments = async (uuid: string, files: File[]) => {
+    const formData = new FormData();
+    files.forEach((file) => formData.append("attachments", file));
+    const response = await api.post(`/payroll/batches/${uuid}/attachments`, formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+    });
+    return response.data;
+};
+
 export const submitPayrollBatch = async (uuid: string) => {
     const response = await api.post(`/payroll/batches/${uuid}/submit`);
     return response.data;
 };
 
-export const getPayrollBatches = async () => {
-    const response = await api.get("/payroll/batches");
+export interface GetPayrollBatchesFilters {
+    q?: string;
+    /** Comma-separated statuses, e.g. "PENDING,IN_REVIEW,MANAGER_APPROVED". */
+    status?: string;
+}
+
+export const getPayrollBatches = async (filters?: GetPayrollBatchesFilters) => {
+    const response = await api.get("/payroll/batches", { params: filters });
     return response.data;
 };
 

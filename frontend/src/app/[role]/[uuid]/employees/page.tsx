@@ -2,14 +2,15 @@
 "use client";
 
 import React, { useEffect, useState } from 'react';
-import { 
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow 
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow
 } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { 
-  Search, Filter, UserPlus, Eye, 
+import { Card, CardContent } from "@/components/ui/card";
+import {
+  Search, Filter, UserPlus, Eye, Users,
   MapPin, Building2, CreditCard, Activity, Edit, Trash2, MoreVertical,
   Loader2
 } from 'lucide-react';
@@ -40,11 +41,12 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
+import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/hooks/use-toast';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Employee } from '@/types/employee';
 import { getEmployees, suspendEmployee, createEmployee, updateEmployee, transferEmployee } from '@/api/employees';
-import { getTimeRecords, getTimeRecordsByEmployee } from '@/api/attendance';
+import { getTimeRecordsByEmployee } from '@/api/attendance';
 import { getWorkingLocations, getDepartments } from '@/api/working_locations';
 import { getAvatarUrl, formatDisplayName } from '@/lib/utils';
 import {
@@ -59,18 +61,20 @@ import {
   createAllowance, 
   updateAllowance,
   getAllowances,
+  createEmployeeDeduction,
+  getDeductionTypes,
   getEmployeeDeductions,
   createPaymentStructure, 
   getPaymentCategories,
   getActivePaymentStructureByEmployee,
-  updateDeductionType,
-  updateEmployeeDeduction
+  updateEmployeeDeduction,
 } from '@/api/payment-structures';
 import { useAuth } from '@/context/auth-context';
 import { userFriendlyError } from '@/lib/error-message';
 import { exportToCSV, exportToExcel } from '@/lib/export-utils';
 import { Download, Upload } from 'lucide-react';
 import { bulkImportEmployees } from '@/api/employees';
+import { getMonthlyTaxes, MonthlyTax } from '@/api/system-config';
 import * as XLSX from 'xlsx';
 
 const formatRwf = (value: number) => `RWF ${value.toLocaleString()}`;
@@ -82,13 +86,24 @@ function mapApiEmployee(item: any, attendanceByEmployee = new Map<string, any[]>
     payrollFrequency === 'MONTHLY'
       ? Number(structure.basic_salary ?? 0)
       : Number(structure.daily_rate ?? structure.basic_salary ?? 0);
-  const timeRecords = attendanceByEmployee.get(String(item.id)) ?? [];
-  const presentCount = timeRecords.filter((record) => record.attendance_status === 'PRESENT').length;
+  const timeRecords = attendanceByEmployee.get(String(item.id)) ?? item.time_records ?? [];
+  const presentCount = timeRecords.filter((record: any) => record.attendance_status === 'PRESENT').length;
   const latestRecord = [...timeRecords].sort(
     (a, b) =>
       new Date(b.attendance_date ?? b.created_at).getTime() -
       new Date(a.attendance_date ?? a.created_at).getTime(),
   )[0];
+  const activeTaxes = (item.employee_deductions ?? [])
+    .filter((deduction: any) => deduction.is_active)
+    .map((deduction: any) => {
+      const type = deduction.deduction_type ?? deduction.deduction_types;
+      return {
+        deduction_type_id: String(deduction.deduction_type_id ?? type?.id ?? ''),
+        name: type?.name ?? 'Tax',
+        rate: type?.percentage_value != null ? Number(type.percentage_value) : undefined,
+      };
+    })
+    .filter((tax: any) => tax.deduction_type_id);
 
   return {
     id: item.uuid || '',
@@ -100,9 +115,9 @@ function mapApiEmployee(item: any, attendanceByEmployee = new Map<string, any[]>
     location: formatDisplayName(item.working_location?.name),
     salary,
     status: item.status || 'ACTIVE',
-    attendanceRate: timeRecords.length ? Math.round((presentCount / timeRecords.length) * 100) : 0,
-    lastAttendanceDate: latestRecord?.attendance_date,
-    lastAttendanceStatus: latestRecord?.attendance_status,
+    attendanceRate: Number(item.attendance_stats?.rate ?? (timeRecords.length ? Math.round((presentCount / timeRecords.length) * 100) : 0)),
+    lastAttendanceDate: item.attendance_stats?.last_date ?? latestRecord?.attendance_date,
+    lastAttendanceStatus: item.attendance_stats?.last_status ?? latestRecord?.attendance_status,
     employmentCategory: item.employment_category?.name ?? 'Unassigned',
     email: item.email ?? '',
     avatar_url: item.avatar_url,
@@ -115,6 +130,8 @@ function mapApiEmployee(item: any, attendanceByEmployee = new Map<string, any[]>
     contract_start_date: item.contract_start_date ? new Date(item.contract_start_date).toISOString().split('T')[0] : '',
     contract_end_date: item.contract_end_date ? new Date(item.contract_end_date).toISOString().split('T')[0] : '',
     pause_reason: item.pause_reason ?? '',
+    activeTaxIds: activeTaxes.map((tax: any) => tax.deduction_type_id),
+    activeTaxes,
   };
 }
 
@@ -129,6 +146,16 @@ const getDaysBetween = (startStr?: string, endStr?: string) => {
   return days > 0 ? days : 0;
 };
 
+const todayInputValue = () => new Date().toISOString().slice(0, 10);
+
+const normalizeTaxName = (name?: string) =>
+  String(name ?? '').toLowerCase().replace(/[^a-z]/g, '');
+
+const isPitTaxName = (name?: string) => {
+  const normalized = normalizeTaxName(name);
+  return normalized === 'pit' || normalized.includes('personalincometax') || normalized.includes('paye');
+};
+
 export default function EmployeeDirectoryPage() {
   const { user, hasPermission } = useAuth();
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -138,7 +165,6 @@ export default function EmployeeDirectoryPage() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailStructure, setDetailStructure] = useState<any | null>(null);
   const [detailAllowances, setDetailAllowances] = useState<any[]>([]);
-  const [detailDeductions, setDetailDeductions] = useState<any[]>([]);
   const [detailAttendance, setDetailAttendance] = useState<any[]>([]);
   const [isAddingEmployee, setIsAddingEmployee] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
@@ -158,10 +184,16 @@ export default function EmployeeDirectoryPage() {
   const [departments, setDepartments] = useState<any[]>([]);
   const [filteredDepartments, setFilteredDepartments] = useState<any[]>([]);
   const [paymentCategories, setPaymentCategories] = useState<any[]>([]);
+  const [monthlyTaxes, setMonthlyTaxes] = useState<MonthlyTax[]>([]);
+  const [deductionTypes, setDeductionTypes] = useState<any[]>([]);
+  const [editDeductions, setEditDeductions] = useState<any[]>([]);
+  const [detailDeductions, setDetailDeductions] = useState<any[]>([]);
+  const [selectedTaxDeductionTypeIds, setSelectedTaxDeductionTypeIds] = useState<string[]>([]);
   const [filters, setFilters] = useState({
     location: 'ALL',
     department: 'ALL',
     category: 'ALL',
+    tax: 'ALL',
     status: 'ALL',
   });
   
@@ -196,19 +228,14 @@ export default function EmployeeDirectoryPage() {
     user && user.role !== 'SUPER_ADMIN' &&
     ((user.roles && user.roles.includes('BRANCH_MANAGER')) || user.role === 'BRANCH_MANAGER'),
   );
-
+  const canManageDeductions = hasPermission('deductions.manage');
+  const canReadPaymentStructures = hasPermission('payment-structures.read') || canManageDeductions;
   const handleDownloadTemplate = () => {
-    // Branch managers only ever create employees inside their own branch —
-    // the backend auto-assigns working_location_id from the actor's own
-    // account for them (see employees.service.ts bulkImport), so we don't
-    // ask them to fill it in at all, and we only list departments that
-    // belong to their branch on the reference sheet. Everyone else
-    // (SUPER_ADMIN, HR, etc.) gets a working_location column plus every
-    // branch on the reference sheet.
-    // /departments already scopes results to the actor's own branch
-    // server-side for non-super-admin actors (see department.service.ts
-    // findDepartments), so `departments` here is already correctly
-    // restricted for a branch manager — no extra frontend filtering needed.
+    // Branch managers create employees only in their own branch (the backend
+    // auto-assigns working_location_id, see employees.service.ts bulkImport),
+    // so no working_location column is needed for them. `/departments` is
+    // already branch-scoped server-side for non-super-admins, so no extra
+    // filtering is needed here either.
     const relevantDepartments = departments;
 
     const headers = [
@@ -566,20 +593,9 @@ export default function EmployeeDirectoryPage() {
   const loadEmployees = async () => {
     setIsLoading(true);
     try {
-      const [response, timeRecords] = await Promise.all([
-        getEmployees(),
-        getTimeRecords().catch(() => []),
-      ]);
+      const response = await getEmployees();
       const employeeList = response.employees || (Array.isArray(response) ? response : []);
       const attendanceByEmployee = new Map<string, any[]>();
-
-      (Array.isArray(timeRecords) ? timeRecords : []).forEach((record: any) => {
-        const employeeId = String(record.employee_id ?? record.employee?.id ?? '');
-        if (!employeeId) return;
-        const existing = attendanceByEmployee.get(employeeId) ?? [];
-        existing.push(record);
-        attendanceByEmployee.set(employeeId, existing);
-      });
 
       const uniqueEmployees = new Map<string, Employee>();
       employeeList.forEach((item: any) => {
@@ -591,8 +607,8 @@ export default function EmployeeDirectoryPage() {
     } catch (error: any) {
       toast({
         variant: "destructive",
-        title: "Network Connectivity Issue",
-        description: "Failed to retrieve employee assets. Retrying in background.",
+        title: error?.code === 'ECONNABORTED' ? "Employee List Timeout" : "Employee List Failed",
+        description: userFriendlyError(error, "Could not retrieve employees. Please refresh or try again."),
       });
     } finally {
       setIsLoading(false);
@@ -607,6 +623,20 @@ export default function EmployeeDirectoryPage() {
       setFilteredDepartments(deps);
     }).catch(() => { setDepartments([]); setFilteredDepartments([]); });
     getPaymentCategories().then(res => setPaymentCategories(Array.isArray(res) ? res : [])).catch(() => setPaymentCategories([]));
+    getMonthlyTaxes()
+      .then((res) => {
+        setMonthlyTaxes(Array.isArray(res) ? res : []);
+        if (canReadPaymentStructures) {
+          return getDeductionTypes()
+            .then((types) => setDeductionTypes(Array.isArray(types) ? types : []))
+            .catch(() => setDeductionTypes([]));
+        }
+        setDeductionTypes([]);
+      })
+      .catch(() => {
+        setMonthlyTaxes([]);
+        setDeductionTypes([]);
+      });
   };
 
   useEffect(() => {
@@ -627,9 +657,16 @@ export default function EmployeeDirectoryPage() {
 
   const handleEditClick = async (emp: Employee) => {
     setEditingEmployee(emp);
+    setEditDeductions([]);
+    setSelectedTaxDeductionTypeIds([]);
     try {
-      const structure = await getActivePaymentStructureByEmployee(emp.bigIntId!);
-      const allowances = await getAllowances(emp.bigIntId!);
+      const [structure, allowances, deductions] = await Promise.all([
+        getActivePaymentStructureByEmployee(emp.bigIntId!),
+        getAllowances(emp.bigIntId!),
+        canManageDeductions
+          ? getEmployeeDeductions(emp.bigIntId!).catch(() => [])
+          : Promise.resolve([]),
+      ]);
       
       const data = {
         first_name: emp.fullName.split(' ')[0],
@@ -654,6 +691,15 @@ export default function EmployeeDirectoryPage() {
       
       setNewEmployee(data);
       setInitialEmployeeData(data);
+      setEditDeductions(Array.isArray(deductions) ? deductions : []);
+      setSelectedTaxDeductionTypeIds(
+        (Array.isArray(deductions) ? deductions : [])
+          .filter((deduction: any) => deduction.is_active)
+          .map((deduction: any) =>
+            String(deduction.deduction_type_id ?? deduction.deduction_type?.id ?? ''),
+          )
+          .filter(Boolean),
+      );
       
       if (emp.working_location_id) {
         const data = await getDepartments(emp.working_location_id);
@@ -689,50 +735,30 @@ export default function EmployeeDirectoryPage() {
     }
   };
 
-  const refreshEmployeeDetails = async () => {
-    if (!detailEmployee?.bigIntId) return;
-    const [structure, allowances, deductions, attendance] = await Promise.all([
-      getActivePaymentStructureByEmployee(detailEmployee.bigIntId).catch(() => null),
-      getAllowances(detailEmployee.bigIntId).catch(() => []),
-      getEmployeeDeductions(detailEmployee.bigIntId).catch(() => []),
-      getTimeRecordsByEmployee(detailEmployee.bigIntId).catch(() => []),
-    ]);
-
-    setDetailStructure(structure);
-    setDetailAllowances(Array.isArray(allowances) ? allowances : []);
-    setDetailDeductions(Array.isArray(deductions) ? deductions : []);
-    setDetailAttendance(Array.isArray(attendance) ? attendance : []);
+  const refreshEditDeductions = async (employeeId: string) => {
+    if (!canManageDeductions) return;
+    const deductions = await getEmployeeDeductions(employeeId).catch(() => []);
+    setEditDeductions(Array.isArray(deductions) ? deductions : []);
   };
 
-  const handleDeductionRateUpdate = async (
-    deduction: any,
-    value: string,
-  ) => {
-    try {
-      const type = deduction.deduction_type;
-      await updateDeductionType(type.uuid, {
-        deduction_mode: type.deduction_mode,
-        amount: type.deduction_mode === 'FIXED' ? value : '0',
-        percentage_value: type.deduction_mode === 'PERCENTAGE' ? value : '0',
-      });
-      await refreshEmployeeDetails();
-      toast({ title: 'Deduction updated', description: `${type.name} rate has been updated.` });
-    } catch (error: any) {
-      toast({
-        variant: 'destructive',
-        title: 'Deduction update failed',
-        description: userFriendlyError(error, 'Please check the value and try again.'),
-      });
-    }
-  };
-
-  const handleEmployeeDeductionToggle = async (
+  const handleEditDeductionToggle = async (
     deduction: any,
     isActive: boolean,
   ) => {
+    if (!editingEmployee?.bigIntId) return;
     try {
       await updateEmployeeDeduction(deduction.uuid, { is_active: isActive });
-      await refreshEmployeeDetails();
+      const deductionTypeId = String(
+        deduction.deduction_type_id ?? deduction.deduction_type?.id ?? '',
+      );
+      if (deductionTypeId) {
+        setSelectedTaxDeductionTypeIds((current) =>
+          isActive
+            ? Array.from(new Set([...current, deductionTypeId]))
+            : current.filter((id) => id !== deductionTypeId),
+        );
+      }
+      await refreshEditDeductions(editingEmployee.bigIntId);
     } catch (error: any) {
       toast({
         variant: 'destructive',
@@ -891,9 +917,46 @@ export default function EmployeeDirectoryPage() {
         }
       }
 
+      if (canManageDeductions && editingEmployee.bigIntId && selectedFrequency === 'MONTHLY') {
+        for (const option of assignableTaxOptions) {
+          const deductionTypeId = String(option.deductionType.id);
+          const shouldBeActive = selectedTaxDeductionTypeIds.includes(deductionTypeId);
+          const existingDeduction = editDeductions.find((deduction) => {
+            const type = deduction.deduction_type;
+            return (
+              String(deduction.deduction_type_id) === deductionTypeId ||
+              String(type?.id) === deductionTypeId ||
+              normalizeTaxName(type?.name) === normalizeTaxName(option.tax.name)
+            );
+          });
+
+          if (existingDeduction) {
+            if (Boolean(existingDeduction.is_active) !== shouldBeActive) {
+              await updateEmployeeDeduction(existingDeduction.uuid, {
+                is_active: shouldBeActive,
+                start_date: shouldBeActive
+                  ? option.tax.effective_from || todayInputValue()
+                  : existingDeduction.start_date,
+              });
+            }
+          } else if (shouldBeActive) {
+            await createEmployeeDeduction({
+              employee_id: editingEmployee.bigIntId,
+              deduction_type_id: deductionTypeId,
+              start_date: option.tax.effective_from || todayInputValue(),
+              is_active: true,
+            });
+          }
+        }
+
+        await refreshEditDeductions(editingEmployee.bigIntId);
+      }
+
       await loadEmployees();
       toast({ title: "Employee Updated", description: changeDescription });
       setEditingEmployee(null);
+      setEditDeductions([]);
+      setSelectedTaxDeductionTypeIds([]);
     } catch (error: any) {
       toast({
         variant: "destructive",
@@ -1028,14 +1091,34 @@ export default function EmployeeDirectoryPage() {
       (filters.location === 'ALL' || e.working_location_id === filters.location) &&
       (filters.department === 'ALL' || e.department_id === filters.department) &&
       (filters.category === 'ALL' || e.employment_category_id === filters.category) &&
+      (filters.tax === 'ALL' || (e.activeTaxIds ?? []).includes(filters.tax)) &&
       (filters.status === 'ALL' || e.status === filters.status)
     );
   });
+  // SUPER_ADMIN sees every branch at once, so the flat list becomes hard to
+  // scan once there are more than a handful of employees. Arranging it by
+  // working location (with a header row per branch) gives them the same
+  // "which branch is this" context a branch-scoped user gets for free just
+  // by only ever seeing their own branch.
+  const isSuperAdminUser = !!user?.roles?.some((role) => ['SUPER_ADMIN'].includes(role));
+  const displayEmployees = isSuperAdminUser
+    ? [...filtered].sort(
+        (a, b) => a.location.localeCompare(b.location) || a.fullName.localeCompare(b.fullName),
+      )
+    : filtered;
+  const locationCounts = isSuperAdminUser
+    ? displayEmployees.reduce((acc: Record<string, number>, e) => {
+        acc[e.location] = (acc[e.location] ?? 0) + 1;
+        return acc;
+      }, {})
+    : {};
+
   const resetFilters = () =>
     setFilters({
       location: 'ALL',
       department: 'ALL',
       category: 'ALL',
+      tax: 'ALL',
       status: 'ALL',
     });
   const activeFilterCount = Object.values(filters).filter((value) => value !== 'ALL').length;
@@ -1045,6 +1128,15 @@ export default function EmployeeDirectoryPage() {
       category.uuid === newEmployee.employment_category_id,
   );
   const selectedFrequency = selectedCategory?.payroll_frequency;
+  const assignableTaxOptions = monthlyTaxes
+    .filter((tax) => tax.is_active && !isPitTaxName(tax.name))
+    .map((tax) => {
+      const deductionType = deductionTypes.find(
+        (type) => normalizeTaxName(type.name) === normalizeTaxName(tax.name),
+      );
+      return { tax, deductionType };
+    })
+    .filter((option) => option.deductionType);
   const canCreateEmployee = hasPermission('employees.create');
   const canUpdateEmployee = hasPermission('employees.update');
   const isLocationScopedManager =
@@ -1071,7 +1163,7 @@ export default function EmployeeDirectoryPage() {
       'Department': emp.department,
       'Basic Salary': emp.salary,
       'Allowance': 0, 
-      'Tax Deductions': 0, 
+      'Tax Deductions': emp.activeTaxes?.map((tax) => tax.name).join(', ') || '', 
       'Status': emp.status
     }));
 
@@ -1118,11 +1210,25 @@ export default function EmployeeDirectoryPage() {
         </div>
       </div>
 
+      <Card className="border-none shadow-sm w-fit">
+        <CardContent className="py-4 px-5 flex items-center gap-4">
+          <div className="h-11 w-11 rounded-xl bg-primary/10 flex items-center justify-center">
+            <Users className="h-5 w-5 text-primary" />
+          </div>
+          <div>
+            <p className="text-2xl font-bold leading-none">{filtered.length}</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              {activeFilterCount > 0 || searchTerm ? 'Matching employees' : 'Total employees'}
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="relative col-span-2">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input 
-            placeholder="Search by ID, Name, Department..." 
+          <Input
+            placeholder="Search by ID, Name, Department..."
             className="pl-10 h-11 border-none bg-white shadow-sm"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
@@ -1202,6 +1308,27 @@ export default function EmployeeDirectoryPage() {
               ))}
             </select>
 
+            {assignableTaxOptions.length > 0 && (
+              <>
+                <DropdownMenuLabel className="px-0">Tax Type</DropdownMenuLabel>
+                <select
+                  aria-label="Filter by tax type"
+                  className="mb-3 h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                  value={filters.tax}
+                  onChange={(event) =>
+                    setFilters((current) => ({ ...current, tax: event.target.value }))
+                  }
+                >
+                  <option value="ALL">All tax assignments</option>
+                  {assignableTaxOptions.map(({ tax, deductionType }) => (
+                    <option key={tax.uuid} value={String(deductionType.id)}>
+                      {tax.name}
+                    </option>
+                  ))}
+                </select>
+              </>
+            )}
+
             <DropdownMenuLabel className="px-0">Status</DropdownMenuLabel>
             <select
               aria-label="Filter by employee status"
@@ -1240,8 +1367,21 @@ export default function EmployeeDirectoryPage() {
               <TableRow>
                 <TableCell colSpan={6} className="text-center py-20 text-muted-foreground animate-pulse">Synchronizing Personnel Database...</TableCell>
               </TableRow>
-            ) : filtered.length > 0 ? filtered.map((emp) => (
-              <TableRow key={emp.id} className="hover:bg-secondary/10 transition-colors">
+            ) : displayEmployees.length > 0 ? displayEmployees.map((emp, idx) => (
+              <React.Fragment key={emp.id}>
+              {isSuperAdminUser && emp.location !== displayEmployees[idx - 1]?.location && (
+                <TableRow className="bg-secondary/40 hover:bg-secondary/40">
+                  <TableCell colSpan={6} className="py-2">
+                    <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-muted-foreground">
+                      <MapPin className="h-3.5 w-3.5" /> {emp.location || 'Unassigned location'}
+                      <span className="font-normal normal-case text-muted-foreground/80">
+                        · {locationCounts[emp.location] ?? 0} employee{(locationCounts[emp.location] ?? 0) === 1 ? '' : 's'}
+                      </span>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              )}
+              <TableRow className="hover:bg-secondary/10 transition-colors">
                 <TableCell>
                   <div className="flex items-center gap-3">
                     <Avatar className="h-10 w-10 border shadow-sm">
@@ -1309,7 +1449,7 @@ export default function EmployeeDirectoryPage() {
                             try {
                               const locData = await getWorkingLocations({ scope: 'transfer' });
                               setTransferLocations(locData.working_locations || (Array.isArray(locData) ? locData : []));
-                            } catch (e) {
+                            } catch {
                               // Fall back to the general (possibly single-branch) list rather
                               // than leaving the dropdown completely empty.
                               setTransferLocations(locations);
@@ -1319,7 +1459,7 @@ export default function EmployeeDirectoryPage() {
                             try {
                               const data = await getDepartments(emp.working_location_id);
                               setTransferDepartments(data.departments || (Array.isArray(data) ? data : []));
-                            } catch (e) {
+                            } catch {
                               setTransferDepartments([]);
                             }
                           } else {
@@ -1344,6 +1484,7 @@ export default function EmployeeDirectoryPage() {
                   </DropdownMenu>
                 </TableCell>
               </TableRow>
+              </React.Fragment>
             )) : (
               <TableRow>
                 <TableCell colSpan={6} className="text-center py-20 text-muted-foreground italic">No employee records found matching your criteria.</TableCell>
@@ -1378,6 +1519,8 @@ export default function EmployeeDirectoryPage() {
             allowance_amount: '',
             allowance_description: '',
           });
+          setEditDeductions([]);
+          setSelectedTaxDeductionTypeIds([]);
         }
       }}>
         <SheetContent className="sm:max-w-md overflow-y-auto">
@@ -1556,7 +1699,7 @@ export default function EmployeeDirectoryPage() {
                     onChange={e => setNewEmployee(p => ({ ...p, basic_salary: e.target.value }))}
                     placeholder="e.g. 500000"
                   />
-                  <p className="text-[10px] text-muted-foreground italic mt-1">* Fixed monthly payment. Taxes and benefits apply automatically.</p>
+                  <p className="text-[10px] text-muted-foreground italic mt-1">* PIT applies automatically. Other configured taxes can be assigned below.</p>
                 </div>
 
                 <div className="p-3 bg-emerald-50 border border-emerald-100 rounded-xl space-y-3">
@@ -1633,7 +1776,94 @@ export default function EmployeeDirectoryPage() {
                     </div>
                   </div>
                 ) : (
-                  <p className="text-[10px] text-amber-600 italic">* Benefits and taxes are only applied for contracts over 21 days.</p>
+                  <p className="text-[10px] text-amber-600 italic">* Benefits are only applied for contracts over 21 days.</p>
+                )}
+              </div>
+            )}
+
+            {editingEmployee && canManageDeductions && (
+              <div className="p-3 bg-slate-50 border rounded-xl space-y-4">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-[10px] font-bold text-slate-700 uppercase tracking-widest">Employee Deductions / Taxes</p>
+                  <Badge variant="outline">{editDeductions.filter((deduction) => deduction.is_active).length} Active</Badge>
+                </div>
+
+                {selectedFrequency === 'MONTHLY' ? (
+                  <>
+                    {editDeductions.length > 0 && (
+                      <div className="divide-y rounded-lg border bg-white">
+                        {editDeductions.map((deduction) => {
+                          const type = deduction.deduction_type;
+                          const matchingTax = monthlyTaxes.find(
+                            (tax) => normalizeTaxName(tax.name) === normalizeTaxName(type?.name),
+                          );
+                          const rate = matchingTax
+                            ? Number(matchingTax.rate)
+                            : Number(type?.percentage_value ?? 0);
+
+                          return (
+                            <div key={deduction.uuid} className="flex items-center justify-between gap-3 p-3">
+                              <div>
+                                <p className="text-sm font-semibold">{type?.name ?? 'Deduction'}</p>
+                                <p className="text-xs text-muted-foreground">
+                                  {rate.toLocaleString()}% · effective {new Date(matchingTax?.effective_from ?? deduction.start_date).toLocaleDateString()}
+                                </p>
+                              </div>
+                              <Switch
+                                checked={deduction.is_active}
+                                onCheckedChange={(checked) => handleEditDeductionToggle(deduction, checked)}
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    <div className="space-y-2">
+                      <Label>Tax Types</Label>
+                      <div className="space-y-2">
+                        {assignableTaxOptions.map(({ tax, deductionType }) => {
+                          const deductionTypeId = String(deductionType.id);
+                          const checked = selectedTaxDeductionTypeIds.includes(deductionTypeId);
+                          return (
+                            <label
+                              key={tax.uuid}
+                              className="flex cursor-pointer items-start gap-3 rounded-lg border bg-white p-3"
+                            >
+                              <Checkbox
+                                checked={checked}
+                                onCheckedChange={(value) =>
+                                  setSelectedTaxDeductionTypeIds((current) =>
+                                    value
+                                      ? Array.from(new Set([...current, deductionTypeId]))
+                                      : current.filter((id) => id !== deductionTypeId),
+                                  )
+                                }
+                                className="mt-0.5"
+                              />
+                              <span>
+                                <span className="block text-sm font-semibold">
+                                  {tax.name} ({Number(tax.rate).toLocaleString()}%)
+                                </span>
+                                <span className="block text-xs text-muted-foreground">
+                                  Effective {new Date(tax.effective_from).toLocaleDateString()}
+                                </span>
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                      {assignableTaxOptions.length === 0 && (
+                        <p className="text-xs text-muted-foreground">
+                          No non-PIT tax policies are available from Tax Setup.
+                        </p>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <p className="rounded-lg border bg-white p-3 text-xs text-muted-foreground">
+                    Additional tax deductions can only be assigned to employees in the Monthly payment category.
+                  </p>
                 )}
               </div>
             )}
@@ -1666,7 +1896,6 @@ export default function EmployeeDirectoryPage() {
           setDetailEmployee(null);
           setDetailStructure(null);
           setDetailAllowances([]);
-          setDetailDeductions([]);
           setDetailAttendance([]);
         }
       }}>
@@ -1730,46 +1959,38 @@ export default function EmployeeDirectoryPage() {
 
               <div className="rounded-lg border">
                 <div className="border-b p-3">
-                  <h3 className="font-semibold">Deduction Types</h3>
+                  <h3 className="font-semibold">Assigned Deductions / Taxes</h3>
                 </div>
                 <div className="divide-y">
-                  {detailDeductions.length > 0 ? detailDeductions.map((deduction) => {
-                    const type = deduction.deduction_type;
-                    const value = type.deduction_mode === 'FIXED'
-                      ? type.amount
-                      : type.percentage_value;
+                  {detailDeductions.length > 0 ? (
+                    detailDeductions.map((deduction) => {
+                      const type = deduction.deduction_type;
+                      const matchingTax = monthlyTaxes.find(
+                        (tax) => normalizeTaxName(tax.name) === normalizeTaxName(type?.name),
+                      );
+                      const isPercentage = type?.deduction_mode === 'PERCENTAGE' || matchingTax;
+                      const value = isPercentage
+                        ? `${Number(matchingTax?.rate ?? type?.percentage_value ?? 0).toLocaleString()}%`
+                        : formatRwf(Number(type?.amount ?? 0));
 
-                    return (
-                      <div key={deduction.uuid} className="grid grid-cols-[1fr_130px_90px] items-end gap-3 p-3">
+                      return (
+                      <div key={deduction.uuid} className="flex items-center justify-between gap-3 p-3">
                         <div>
-                          <p className="font-medium">{type.name}</p>
+                          <p className="font-medium">{type?.name ?? 'Deduction'}</p>
                           <p className="text-xs text-muted-foreground">
-                            {type.deduction_mode === 'FIXED' ? 'Fixed amount' : 'Percentage'} · starts {new Date(deduction.start_date).toLocaleDateString()}
+                            {deduction.is_active ? 'Active' : 'Inactive'} · effective {new Date(matchingTax?.effective_from ?? deduction.start_date).toLocaleDateString()}
                           </p>
                         </div>
-                        <div className="space-y-1">
-                          <Label className="text-xs">Rate</Label>
-                          <Input
-                            type="number"
-                            defaultValue={value}
-                            onBlur={(event) => {
-                              if (event.target.value !== value) {
-                                handleDeductionRateUpdate(deduction, event.target.value);
-                              }
-                            }}
-                          />
-                        </div>
-                        <div className="flex items-center gap-2 pb-2">
-                          <Switch
-                            checked={deduction.is_active}
-                            onCheckedChange={(checked) => handleEmployeeDeductionToggle(deduction, checked)}
-                          />
-                          <span className="text-xs">{deduction.is_active ? 'Active' : 'Off'}</span>
-                        </div>
+                        <Badge className="bg-emerald-500/10 text-emerald-700 border-emerald-500/20">
+                          {value}
+                        </Badge>
                       </div>
-                    );
-                  }) : (
-                    <p className="p-4 text-sm text-muted-foreground">No deductions assigned.</p>
+                      );
+                    })
+                  ) : (
+                    <p className="p-4 text-sm text-muted-foreground">
+                      No employee-specific deductions assigned. PIT is automatic for monthly employees.
+                    </p>
                   )}
                 </div>
               </div>
@@ -1800,14 +2021,14 @@ export default function EmployeeDirectoryPage() {
                 </div>
                 <div className="max-h-80 overflow-y-auto divide-y">
                   {detailAttendance.length > 0 ? detailAttendance.map((rec: any) => {
-                    const isOvertime = rec.attendance_status === 'PRESENT' && Number(rec.hours_worked ?? 0) > 8;
+                    const isOvertime = rec.attendance_status === 'PRESENT' && Number(rec.overtime_hours ?? 0) > 0;
                     return (
                       <div key={rec.uuid} className="flex items-center justify-between p-3 text-sm">
                         <div>
                           <p className="font-medium">{new Date(rec.attendance_date).toLocaleDateString()}</p>
                           <p className="text-xs text-muted-foreground">
-                            {rec.hours_worked ? `${rec.hours_worked} hrs worked` : 'No hours logged'}
-                            {isOvertime && ' · +2,500 RWF overtime'}
+                            {rec.overtime_hours ? `${rec.overtime_hours} overtime hrs` : 'No overtime logged'}
+                            {isOvertime && ' · overtime payable'}
                           </p>
                         </div>
                         <Badge className={rec.attendance_status === 'PRESENT' ? 'bg-emerald-500/10 text-emerald-600' : 'bg-rose-500/10 text-rose-600'}>

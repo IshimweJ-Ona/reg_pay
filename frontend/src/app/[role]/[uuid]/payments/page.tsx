@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { RotateCw } from "lucide-react";
 import { 
@@ -74,7 +74,7 @@ export default function TaxSetupPage() {
         title: 'Success',
         description: isPitTax(newTax.name)
           ? 'PIT rate saved. The effective-date rule will be applied by payroll.'
-          : 'Tax policy saved. Assign it to monthly employees before it affects payroll.',
+          : 'Tax policy saved. It is now available for assignment in the employee update form.',
       });
     } catch (error: any) {
       console.error('Failed to create tax:', error);
@@ -110,7 +110,7 @@ export default function TaxSetupPage() {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-headline font-bold">Tax Setup</h1>
-          <p className="text-muted-foreground">Manage PIT and assignable statutory tax policies.</p>
+          <p className="text-muted-foreground">Manage PIT and employee-assigned monthly tax policies.</p>
         </div>
       </div>
 
@@ -133,7 +133,7 @@ export default function TaxSetupPage() {
         </Card>
         <Card className="border-none shadow-sm">
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-bold uppercase tracking-wider text-muted-foreground">PIT Apply Rule</CardTitle>
+            <CardTitle className="text-sm font-bold uppercase tracking-wider text-muted-foreground">Effective Rule</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="flex items-center gap-4">
@@ -157,8 +157,8 @@ export default function TaxSetupPage() {
                 <ShieldCheck className="h-6 w-6 text-blue-600" />
               </div>
               <div>
-                <p className="text-2xl font-bold">PIT Only</p>
-                <p className="text-xs text-muted-foreground">Other taxes need employee assignment</p>
+                <p className="text-2xl font-bold">PIT Auto</p>
+                <p className="text-xs text-muted-foreground">Other taxes are assigned per employee</p>
               </div>
             </div>
           </CardContent>
@@ -170,7 +170,7 @@ export default function TaxSetupPage() {
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div>
               <CardTitle>Manage Group Taxes</CardTitle>
-              <CardDescription>Only Personal Income Tax (PIT/PAYE) applies automatically. Other taxes are policies for employee-level assignment.</CardDescription>
+              <CardDescription>PIT/PAYE applies automatically to monthly employees. Other taxes are available as employee-level deductions.</CardDescription>
             </div>
             <Button variant="outline" className="gap-2" onClick={loadTaxes} disabled={loading}>
               <RotateCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
@@ -183,7 +183,7 @@ export default function TaxSetupPage() {
             <div className="space-y-2">
               <Label>Tax Name</Label>
               <Input 
-                placeholder="e.g. Personal Income Tax (PIT)"
+                placeholder="e.g. PAYE (Income Tax), RSSB Pension, Maternity Leave Fund"
                 value={newTax.name}
                 onChange={(e) => setNewTax(prev => ({ ...prev, name: e.target.value }))}
               />
@@ -230,7 +230,7 @@ export default function TaxSetupPage() {
                       {tax.is_automatic ? (
                         <Badge className="bg-blue-500/10 text-blue-600 border-blue-500/20">Automatic PIT</Badge>
                       ) : (
-                        <Badge variant="outline">Assignable</Badge>
+                        <Badge variant="outline">Assign to Employee</Badge>
                       )}
                     </TableCell>
                     <TableCell>

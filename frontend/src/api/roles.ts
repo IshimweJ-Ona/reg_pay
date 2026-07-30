@@ -8,6 +8,9 @@ export interface Role {
   level_order?: number;
   is_system_role?: boolean;
   permission_keys: string[]; // ← keys from code constant, not DB IDs
+  // null = global role (every branch); set = scoped to one branch only.
+  working_location_id?: string | null;
+  working_locations?: { uuid: string; name: string } | null;
 }
 
 export const getRoles = async (): Promise<Role[]> => {

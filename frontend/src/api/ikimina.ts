@@ -62,3 +62,10 @@ export const getIkiminaMembershipByEmployee = async (
   const response = await api.get(`/ikimina/memberships/employee/${employeeId}`);
   return response.data;
 };
+
+export const removeIkiminaMembership = async (
+  uuid: string
+): Promise<{ message: string }> => {
+  const response = await api.delete(`/ikimina/memberships/${uuid}`);
+  return response.data;
+};

@@ -86,5 +86,10 @@ export function useNotifications(token: string) {
         };
     }, [token, retryTrigger]);
 
-    return { notifications, unreadCount, setUnreadCount };
+    const removeNotifications = (uuids: string[]) => {
+        const toRemove = new Set(uuids);
+        setNotifications((prev) => prev.filter((n) => !toRemove.has(n.uuid)));
+    };
+
+    return { notifications, unreadCount, setUnreadCount, removeNotifications };
 }

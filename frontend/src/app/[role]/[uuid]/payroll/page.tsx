@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Card, CardContent } from "@/components/ui/card";
 import { 
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow 
@@ -26,7 +26,7 @@ import { approvePayrollBatch, downloadPayrollBatchExport, getPayrollBatches, rej
 import { exportToCSV, exportToExcel } from '@/lib/export-utils';
 import { useToast } from '@/hooks/use-toast';
 import { userFriendlyError } from '@/lib/error-message';
-import { PendingBatchesModal } from '@/components/payroll/pending-batches-modal';
+import { PayrollBatchesModal } from '@/components/payroll/payroll-batches-modal';
 import { formatPayrollDate, formatPayrollPeriod, formatRwf } from '@/lib/payroll-display';
 import { useAuth } from '@/context/auth-context';
 
@@ -60,12 +60,12 @@ function mapApiBatch(batch: any): PayrollBatch {
 
 export default function PayrollAdminPage() {
   const params = useParams();
-  const { user } = useAuth();
+  const { user, hasPermission } = useAuth();
   const { toast } = useToast();
   const [searchTerm, setSearchTerm] = useState('');
   const [batches, setBatches] = useState<PayrollBatch[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [showReviewModal, setShowReviewModal] = useState(false);
+  const [openStatCard, setOpenStatCard] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'ACTIVE' | 'HISTORY'>('ACTIVE');
 
   const role = params.role as string;
@@ -73,7 +73,7 @@ export default function PayrollAdminPage() {
   const basePath = `/${role}/${uuid}`;
   const roles = user?.roles ?? [];
   const isSuperAdmin = roles.includes('SUPER_ADMIN');
-  const isBranchManager = roles.includes('BRANCH_MANAGER');
+  const canApprove = hasPermission('payroll.approve');
 
   useEffect(() => {
     setIsLoading(true);
@@ -84,11 +84,53 @@ export default function PayrollAdminPage() {
   }, []);
 
   const stats = [
-    { name: 'Total Batches', value: String(batches.length), icon: FileText, color: 'text-blue-600' },
-    { name: 'Active Batches', value: String(batches.filter(b => !['APPROVED', 'REJECTED'].includes(b.status)).length), icon: CheckCircle, color: 'text-emerald-600' },
-    { name: 'Pending Review', value: String(batches.filter(b => ['PENDING', 'IN_REVIEW', 'MANAGER_APPROVED'].includes(b.status)).length), icon: Clock, color: 'text-amber-600', action: 'review' },
-    { name: 'Total Disbursed', value: formatRwf(batches.filter(b => b.status === 'APPROVED').reduce((sum, batch) => sum + batch.totalAmount, 0)), icon: Wallet, color: 'text-primary' },
+    {
+      name: 'Total Batches',
+      value: String(batches.length),
+      icon: FileText,
+      color: 'text-blue-600',
+      key: 'total',
+      title: 'All Payroll Batches',
+      description: 'Every payroll batch across every status.',
+      statusFilter: undefined,
+      showActions: false,
+    },
+    {
+      name: 'Active Batches',
+      value: String(batches.filter(b => !['APPROVED', 'REJECTED'].includes(b.status)).length),
+      icon: CheckCircle,
+      color: 'text-emerald-600',
+      key: 'active',
+      title: 'Active Payroll Batches',
+      description: 'Batches still moving through the approval pipeline.',
+      statusFilter: 'DRAFT,PENDING,IN_REVIEW,MANAGER_APPROVED',
+      showActions: true,
+    },
+    {
+      name: 'Pending Review',
+      value: String(batches.filter(b => ['PENDING', 'IN_REVIEW', 'MANAGER_APPROVED'].includes(b.status)).length),
+      icon: Clock,
+      color: 'text-amber-600',
+      key: 'pending',
+      title: 'Pending Payroll Review',
+      description: 'Approve or decline batches awaiting disbursement.',
+      statusFilter: 'PENDING,IN_REVIEW,MANAGER_APPROVED',
+      showActions: true,
+    },
+    {
+      name: 'Total Disbursed',
+      value: formatRwf(batches.filter(b => b.status === 'APPROVED').reduce((sum, batch) => sum + batch.totalAmount, 0)),
+      icon: Wallet,
+      color: 'text-primary',
+      key: 'disbursed',
+      title: 'Disbursed Payroll Batches',
+      description: 'Batches that have been fully approved and paid out.',
+      statusFilter: 'APPROVED',
+      showActions: false,
+    },
   ];
+
+  const activeStat = stats.find((s) => s.key === openStatCard);
 
   const filteredBatches = batches.filter(b => {
     const matchesSearch = b.batchId.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -127,7 +169,7 @@ export default function PayrollAdminPage() {
     try {
       const items = await getPayrollBatches();
       setBatches(getBatchList(items).map(mapApiBatch));
-    } catch (error) {
+    } catch {
       setBatches([]);
     } finally {
       setIsLoading(false);
@@ -177,19 +219,22 @@ export default function PayrollAdminPage() {
 
   const canReviewBatch = (batch: PayrollBatch) => {
     if (['APPROVED', 'REJECTED'].includes(batch.status)) return false;
+    if (!canApprove) return false;
+    // If batch is already manager-approved, only SUPER_ADMIN can do the final approval
     if (batch.status === 'MANAGER_APPROVED') return isSuperAdmin;
-    if (batch.status === 'PENDING' || batch.status === 'IN_REVIEW') {
-      return isBranchManager || isSuperAdmin;
-    }
-    return false;
+    return true;
   };
 
   return (
     <div className="space-y-8">
-      <PendingBatchesModal 
-        isOpen={showReviewModal} 
-        onClose={() => setShowReviewModal(false)} 
-        onRefresh={refreshBatches} 
+      <PayrollBatchesModal
+        isOpen={!!activeStat}
+        onClose={() => setOpenStatCard(null)}
+        onRefresh={refreshBatches}
+        title={activeStat?.title ?? ''}
+        description={activeStat?.description ?? ''}
+        statusFilter={activeStat?.statusFilter}
+        showActions={activeStat?.showActions ?? false}
       />
 
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -208,7 +253,11 @@ export default function PayrollAdminPage() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {stats.map((stat) => (
-          <Card key={stat.name} className={`border-none shadow-sm ${stat.action ? 'cursor-pointer hover:ring-2 hover:ring-primary/20 transition-all' : ''}`} onClick={() => stat.action === 'review' && setShowReviewModal(true)}>
+          <Card
+            key={stat.name}
+            className="border-none shadow-sm cursor-pointer hover:ring-2 hover:ring-primary/20 transition-all"
+            onClick={() => setOpenStatCard(stat.key)}
+          >
             <CardContent className="pt-6">
               <div className="flex items-center justify-between">
                 <div>

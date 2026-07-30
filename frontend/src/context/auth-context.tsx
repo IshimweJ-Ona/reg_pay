@@ -13,6 +13,7 @@ import {
   saveTokens,
 } from '@/api/auth';
 import { User, UserRole } from '@/types/auth';
+import { expandPermissionKeys } from '@/lib/permissions';
 
 type RegisterInput = {
   first_name: string;
@@ -34,7 +35,7 @@ interface AuthContextType {
   hasPermission: (permission: string) => boolean;
   accessToken: string | null;
   refreshSession: (options?: { reload?: boolean }) => Promise<void>;
-  refreshPermissions: () => Promise<void>;
+  refreshPermissions: (options?: { refreshAccessToken?: boolean }) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -61,6 +62,42 @@ function normalizeRole(role: unknown): string {
   return 'USER';
 }
 
+function normalizePermissionKey(permission: unknown): string | null {
+  if (typeof permission === 'string') return permission;
+  if (permission && typeof permission === 'object') {
+    const p = permission as { key?: string; permission_key?: string; permissionKey?: string };
+    return p.key ?? p.permission_key ?? p.permissionKey ?? null;
+  }
+  return null;
+}
+
+function normalizePermissionList(rawPermissions: unknown, fallback: string[] = []) {
+  const permissions = Array.isArray(rawPermissions) ? rawPermissions : [];
+  const keys = permissions
+    .map(normalizePermissionKey)
+    .filter((key): key is string => Boolean(key));
+
+  return expandPermissionKeys(keys.length ? keys : fallback);
+}
+
+function sameStringSet(left: string[], right: string[]) {
+  if (left.length !== right.length) return false;
+  const rightSet = new Set(right);
+  return left.every((value) => rightSet.has(value));
+}
+
+function profileDiffersFromToken(profileUser: any, tokenUser: User | null) {
+  const profileRoles: string[] = Array.isArray(profileUser.roles)
+    ? profileUser.roles.map(normalizeRole)
+    : [];
+  const profilePermissions = normalizePermissionList(profileUser.permissions, []);
+
+  return (
+    !sameStringSet(profileRoles, tokenUser?.roles ?? []) ||
+    !sameStringSet(profilePermissions, tokenUser?.permissions ?? [])
+  );
+}
+
 function mapJwtUser(token: string): User | null {
   const payload = decodeJwt(token);
   if (!payload) return null;
@@ -76,7 +113,7 @@ function mapJwtUser(token: string): User | null {
     role: primaryRole,
     roles: normalizedRoles,
     status: (payload.status === 'ACTIVE' ? 'APPROVED' : payload.status) as any,
-    permissions: payload.permissions ?? [],
+    permissions: normalizePermissionList(payload.permissions ?? []),
     avatar_url: payload.avatar_url,
     department_id: payload.department_id ?? undefined,
     location_id: payload.working_location_id ?? undefined,
@@ -92,7 +129,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const applyProfile = (profileUser: any, fallback: User | null) => {
     const rawRoles: unknown[] = profileUser.roles ?? [];
-    const normalizedRoles = rawRoles.map(normalizeRole);
+    const normalizedRoles = rawRoles.length ? rawRoles.map(normalizeRole) : fallback?.roles ?? [];
     const primaryRole = (normalizedRoles[0] ?? fallback?.role ?? 'USER') as UserRole;
     setUser({
       id: fallback?.id ?? profileUser.id ?? profileUser.uuid,
@@ -107,15 +144,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // JWT-derived permissions instead of wiping them out. `[].map(...)` returns `[]`,
       // which is truthy, so a plain `??` fallback never fires for an empty array -
       // we need an explicit length check here.
-      permissions: profileUser.permissions?.length
-        ? profileUser.permissions.map((permission: any) => permission.key)
-        : fallback?.permissions ?? [],
+      permissions: normalizePermissionList(profileUser.permissions, fallback?.permissions ?? []),
       department: profileUser.department?.name,
       location: profileUser.working_location?.name,
       department_id: profileUser.department?.uuid ?? fallback?.department_id,
       location_id: profileUser.working_location?.uuid ?? fallback?.location_id,
       createdAt: fallback?.createdAt ?? new Date().toISOString(),
     });
+  };
+
+  const refreshAccessTokenFromSession = async () => {
+    const currentRefreshToken = sessionStorage.getItem('refreshToken');
+    if (!currentRefreshToken) return null;
+
+    const tokens = await refreshTokenRequest(currentRefreshToken);
+    saveTokens(tokens);
+    setAccessToken(tokens.access_token);
+    const tokenUser = mapJwtUser(tokens.access_token);
+    if (tokenUser) setUser(tokenUser);
+    return tokenUser;
   };
 
   useEffect(() => {
@@ -141,7 +188,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const profile = await getMyProfile();
         const profileUser = profile?.profile;
         if (profileUser) {
-          applyProfile(profileUser, tokenUser);
+          if (profileDiffersFromToken(profileUser, tokenUser)) {
+            const refreshedTokenUser = await refreshAccessTokenFromSession();
+            const refreshedProfile = await getMyProfile();
+            applyProfile(refreshedProfile?.profile ?? profileUser, refreshedTokenUser ?? tokenUser);
+          } else {
+            applyProfile(profileUser, tokenUser);
+          }
         }
       } catch {
         clearTokens();
@@ -155,17 +208,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     loadUser();
   }, []);
 
-  // Token refresh
-  // Uses the shared, mutex-guarded refreshTokenRequest() from api/auth.ts so
-  // this timer can never race against refreshSession() or an axios 401
-  // interceptor WITHIN THIS TAB - they all collapse into a single in-flight
-  // request. This is intentionally per-tab only: sessionStorage keeps each
-  // tab's session fully isolated (so different accounts/roles can be open
-  // side by side, like Instagram's multi-account tabs). If a tab was
-  // created by duplicating an already-open tab, it briefly shares the same
-  // refresh token as its source tab; whichever one refreshes first wins,
-  // and the duplicate correctly gets logged out on its next attempt rather
-  // than silently taking over another tab's session.
+  // Uses the shared, mutex-guarded refreshToken() from api/auth.ts so this
+  // timer can't race with refreshSession() or the axios 401 interceptor.
+  // Sessions are per-tab (sessionStorage) by design, so different accounts
+  // can be open side by side; a tab duplicated from an open one briefly
+  // shares its refresh token and gets logged out on the next refresh race.
   useEffect(() => {
     if (!user) return;
 
@@ -224,16 +271,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const refreshSession = async (options?: { reload?: boolean }) => {
-    const currentRefreshToken = sessionStorage.getItem('refreshToken');
-    if (currentRefreshToken) {
-      const tokens = await refreshTokenRequest(currentRefreshToken);
-      saveTokens(tokens);
-      setAccessToken(tokens.access_token);
-    }
+    let tokenUser = user;
+    tokenUser = await refreshAccessTokenFromSession() ?? user;
 
     const profile = await getMyProfile();
     if (profile?.profile) {
-      applyProfile(profile.profile, user);
+      applyProfile(profile.profile, tokenUser);
     }
 
     if (options?.reload) {
@@ -241,11 +284,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const refreshPermissions = async () => {
+  const refreshPermissions = async (options?: { refreshAccessToken?: boolean }) => {
     try {
+      const currentAccessToken = sessionStorage.getItem('accessToken');
+      let tokenUser = currentAccessToken ? mapJwtUser(currentAccessToken) ?? user : user;
+      if (options?.refreshAccessToken) {
+        tokenUser = await refreshAccessTokenFromSession() ?? tokenUser;
+      }
+
       const profile = await getMyProfile();
       if (profile?.profile) {
-        applyProfile(profile.profile, user);
+        if (!options?.refreshAccessToken && profileDiffersFromToken(profile.profile, tokenUser)) {
+          tokenUser = await refreshAccessTokenFromSession() ?? tokenUser;
+          const refreshedProfile = await getMyProfile();
+          applyProfile(refreshedProfile?.profile ?? profile.profile, tokenUser);
+          return;
+        }
+        applyProfile(profile.profile, tokenUser);
       }
     } catch (err) {
       console.error('Failed to refresh permissions:', err);
@@ -257,7 +312,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const detail = (e as CustomEvent).detail;
       if (detail && detail.type === 'permissions_updated') {
         console.log('Permissions updated event received. Refreshing permissions...');
-        refreshPermissions();
+        refreshPermissions({ refreshAccessToken: true });
       }
     };
     if (typeof window !== 'undefined') {

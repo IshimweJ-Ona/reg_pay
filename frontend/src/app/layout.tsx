@@ -11,6 +11,11 @@ import { SessionManager } from "@/components/auth/session-manager";
 export const metadata: Metadata = {
   title: "REG(Rwanda Energy Group) | Payment System",
   description: "Enterprise Payment and Payroll Management System",
+  icons: {
+    icon: "/pics/reg-logo.png",
+    shortcut: "/pics/reg-logo.png",
+    apple: "/pics/reg-logo.png",
+  },
 };
 
 export default function RootLayout({

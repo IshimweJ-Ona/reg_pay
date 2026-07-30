@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
@@ -112,6 +112,7 @@ export default function LoginPage() {
 
   const onRegisterSubmit = async (values: z.infer<typeof registerSchema>) => {
     try {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars -- destructured only to exclude it from the request payload
       const { confirmPassword, ...data } = values;
       const submissionData = {
         ...data,
@@ -144,7 +145,7 @@ export default function LoginPage() {
         <div className="flex flex-col items-center mb-8">
           <div className="bg-white p-2 rounded-2xl shadow-xl mb-4 border-2 border-primary/10 overflow-hidden">
             <Image 
-              src="/pics/Screenshot 2026-05-19 203312.png" 
+              src="/pics/reg-logo.png" 
               alt="REG Logo" 
               width={60} 
               height={60} 

@@ -2,11 +2,12 @@
 
 import React from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { usePathname, useParams } from 'next/navigation';
 import { cn } from '@/lib/utils';
-import { 
-  LayoutDashboard, Users, MapPin, Building2, UserCircle, 
-  Calendar, CreditCard, FileText, Settings, LogOut, ShieldCheck, Bell, Percent, Activity, Coins
+import {
+  LayoutDashboard, Users, MapPin, Building2, UserCircle,
+  Calendar, FileText, Settings, LogOut, Bell, Percent, Activity, Coins
 } from 'lucide-react';
 import { useAuth } from '@/context/auth-context';
 import { Button } from '@/components/ui/button';
@@ -25,10 +26,11 @@ interface SidebarMenuItem {
   href: string;
   icon: LucideIcon;
   permission?: string;
+  permissions?: string[];
 }
 
 export function Sidebar({ type }: SidebarProps) {
-  const [collapsed, setCollapsed] = React.useState(false);
+  const [collapsed] = React.useState(false);
   const pathname = usePathname();
   const params = useParams();
   const { user, logout, hasPermission } = useAuth();
@@ -55,7 +57,7 @@ export function Sidebar({ type }: SidebarProps) {
     { name: 'Audit Logs', href: `${basePath}/audit-logs`, icon: Activity, permission: 'audit.view' },
     { name: 'Notifications', href: `${basePath}/notifications`, icon: Bell },
     { name: 'Profile', href: `${basePath}/profile`, icon: UserCircle },
-    { name: 'Settings', href: `${basePath}/settings`, icon: Settings, permission: 'settings.manage_system' },
+    { name: 'Settings', href: `${basePath}/settings`, icon: Settings, permissions: ['roles.manage', 'roles.manage_own_location', 'system-config.manage'] },
   ];
 
   const userMenuItems: SidebarMenuItem[] = [
@@ -79,13 +81,17 @@ export function Sidebar({ type }: SidebarProps) {
       <div className="p-6 flex items-center justify-between">
         {!collapsed && (
           <div className="flex items-center gap-2">
-            <div className="bg-primary p-1.5 rounded-lg">
-              <ShieldCheck className="h-6 w-6 text-white" />
+            <div className="bg-white p-1 rounded-lg border shrink-0">
+              <Image src="/pics/reg-logo.png" alt="REG Logo" width={32} height={32} className="h-8 w-8 object-contain" />
             </div>
             <span className="font-headline font-bold text-xl tracking-tight">REG(Rwanda Energy Group)</span>
           </div>
         )}
-        {collapsed && <ShieldCheck className="h-8 w-8 text-primary mx-auto" />}
+        {collapsed && (
+          <div className="bg-white p-1 rounded-lg border mx-auto">
+            <Image src="/pics/reg-logo.png" alt="REG Logo" width={32} height={32} className="h-8 w-8 object-contain" />
+          </div>
+        )}
       </div>
 
       <div className={cn("px-6 mb-4 flex items-center gap-4", collapsed ? "justify-center" : "")}>
@@ -95,6 +101,7 @@ export function Sidebar({ type }: SidebarProps) {
       <ScrollArea className="flex-1 px-4">
         <nav className="space-y-1 py-4">
           {menuItems.map((item) => {
+            if (item.permissions?.length && !item.permissions.some((permission) => hasPermission(permission))) return null;
             if (item.permission && !hasPermission(item.permission)) return null;
 
             const isActive = pathname === item.href || pathname.startsWith(item.href + '/');

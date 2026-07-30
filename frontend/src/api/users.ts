@@ -3,7 +3,7 @@ import api from "./axios";
 
 export interface ApproveUserPayload {
     working_location_id?: string;
-    department_id?: string;
+    department_id?: string | null;
     role_ids?: string[];
     permission_ids?: string[];
 }
@@ -14,13 +14,27 @@ export interface RequestUserTransferPayload {
     reason?: string;
 }
 
+export interface UpdateUserPayload {
+    working_location_id?: string;
+    department_id?: string | null;
+}
+
 export const createUser = async (payload: Partial<RegisterUserPayload>) => {
     const response = await api.post("/users", payload);
     return response.data;
 };
 
-export const getUsers = async (q?: string) => {
-    const response = await api.get("/users", { params: { q } });
+export interface GetUsersFilters {
+    q?: string;
+    status?: string;
+    working_location_id?: string;
+    department_id?: string;
+}
+
+export const getUsers = async (filters?: string | GetUsersFilters) => {
+    const params: GetUsersFilters =
+        typeof filters === "string" ? { q: filters } : (filters ?? {});
+    const response = await api.get("/users", { params });
     return response.data;
 };
 
@@ -51,9 +65,9 @@ export const reactivateUser = async (uuid: string) => {
 
 export const updateUser = async (
     uuid: string,
-    payload: Partial<RegisterUserPayload & ApproveUserPayload>,
+    payload: UpdateUserPayload,
 ) => {
-    const response = await api.patch(`/users/${uuid}/approve`, payload);
+    const response = await api.patch(`/users/${uuid}`, payload);
     return response.data;
 };
 

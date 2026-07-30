@@ -1,6 +1,5 @@
 "use client";
 
-import React from 'react';
 import { useAttendanceSync } from '@/context/attendance-sync-context';
 import { Progress } from '@/components/ui/progress';
 import { Loader2, CheckCircle2 } from 'lucide-react';

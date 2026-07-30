@@ -49,14 +49,21 @@ export const getIkiminaAmount = (batch: any, item: any) => {
 
 export const getPayrollItemAmounts = (item: any, batch?: any) => {
   const transaction = getPayrollTransaction(item);
+  const metadata = getPayrollMetadata(item);
   const tax = asPayrollNumber(transaction.tax_amount);
   const ikimina = getIkiminaAmount(batch, item);
   const totalDeductions = asPayrollNumber(transaction.total_deductions);
   const otherDeductions = Math.max(0, totalDeductions - tax - ikimina);
+  const allowances = asPayrollNumber(transaction.allowance_amount);
+  const overtimeHours = asPayrollNumber(item?.overtime_hours ?? metadata.overtime_hours);
+  const overtimePay = asPayrollNumber(item?.overtime_amount ?? metadata.overtime_amount);
 
   return {
     basePay: asPayrollNumber(transaction.base_amount ?? transaction.gross_amount),
-    allowanceOt: asPayrollNumber(transaction.allowance_amount),
+    allowances,
+    overtimeHours,
+    overtimePay,
+    allowanceOt: allowances + overtimePay,
     grossPay: asPayrollNumber(transaction.gross_amount),
     tax,
     ikimina,
@@ -86,4 +93,3 @@ export const getPayrollTaxLabel = (item: any) => {
   const rate = asPayrollNumber(primaryTax.rate);
   return rate > 0 ? `${primaryTax.name} ${rate}%` : primaryTax.name;
 };
-

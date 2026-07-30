@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
@@ -87,7 +87,7 @@ export default function ForgotPasswordPage() {
         <div className="flex flex-col items-center mb-8">
           <div className="bg-white p-2 rounded-2xl shadow-xl mb-4 border-2 border-primary/10 overflow-hidden">
             <Image
-              src="/pics/Screenshot 2026-05-19 203312.png"
+              src="/pics/reg-logo.png"
               alt="REG Logo"
               width={60}
               height={60}

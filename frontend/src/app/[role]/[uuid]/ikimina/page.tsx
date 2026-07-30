@@ -9,8 +9,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { 
-  Coins, Search, UserPlus, Edit, PiggyBank, Users, Activity, Plus, TrendingUp, CheckCircle, XCircle
+import {
+  Coins, Search, UserPlus, Edit, PiggyBank, Users, Activity, TrendingUp, Trash2
 } from 'lucide-react';
 import {
   Dialog,
@@ -20,22 +20,33 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Label } from "@/components/ui/label";
 import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/hooks/use-toast';
 import { ProtectedRoute } from '@/components/auth/protected-route';
 import { getEmployees } from '@/api/employees';
-import { 
-  getIkiminaMemberships, 
-  createIkiminaMembership, 
-  updateIkiminaMembership 
+import {
+  getIkiminaMemberships,
+  createIkiminaMembership,
+  updateIkiminaMembership,
+  removeIkiminaMembership,
 } from '@/api/ikimina';
 import { userFriendlyError } from '@/lib/error-message';
 
 const formatRwf = (value: number) => `RWF ${value.toLocaleString()}`;
 
 function IkiminaManagementContent() {
-  const { user, hasPermission } = useAuth();
+  const { user, hasPermission, accessToken } = useAuth();
   const { toast } = useToast();
 
   const [memberships, setMemberships] = useState<any[]>([]);
@@ -50,6 +61,8 @@ function IkiminaManagementContent() {
   const [isRegisterOpen, setIsRegisterOpen] = useState(false);
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [selectedMembership, setSelectedMembership] = useState<any | null>(null);
+  const [removeTarget, setRemoveTarget] = useState<any | null>(null);
+  const [removing, setRemoving] = useState(false);
 
   // Form States
   const [newMemberEmployeeId, setNewMemberEmployeeId] = useState('');
@@ -59,6 +72,7 @@ function IkiminaManagementContent() {
   const [submitting, setSubmitting] = useState(false);
 
   const canManage = hasPermission('ikimina.manage');
+  const permissionSignature = (user?.permissions ?? []).join('|');
 
   const loadData = async () => {
     setLoading(true);
@@ -82,7 +96,7 @@ function IkiminaManagementContent() {
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [accessToken, user?.id, permissionSignature]);
 
   // Filtered lists
   const filteredMemberships = useMemo(() => {
@@ -189,6 +203,26 @@ function IkiminaManagementContent() {
       });
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleRemove = async () => {
+    if (!removeTarget) return;
+
+    setRemoving(true);
+    try {
+      await removeIkiminaMembership(removeTarget.uuid);
+      toast({ title: 'Success', description: 'Employee removed from Ikimina savings.' });
+      setRemoveTarget(null);
+      loadData();
+    } catch (error: any) {
+      toast({
+        variant: 'destructive',
+        title: 'Removal failed',
+        description: error?.response?.data?.message || 'Could not remove membership.',
+      });
+    } finally {
+      setRemoving(false);
     }
   };
 
@@ -390,14 +424,24 @@ function IkiminaManagementContent() {
                         <TableCell className="text-sm text-muted-foreground">{new Date(m.joined_at).toLocaleDateString()}</TableCell>
                         {canManage && (
                           <TableCell>
-                            <Button 
-                              variant="ghost" 
-                              size="icon" 
-                              onClick={() => handleOpenEdit(m)}
-                              className="h-8 w-8 text-muted-foreground hover:text-foreground"
-                            >
-                              <Edit className="h-4 w-4" />
-                            </Button>
+                            <div className="flex items-center gap-1">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => handleOpenEdit(m)}
+                                className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                              >
+                                <Edit className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => setRemoveTarget(m)}
+                                className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
                           </TableCell>
                         )}
                       </TableRow>
@@ -560,6 +604,28 @@ function IkiminaManagementContent() {
           </form>
         </DialogContent>
       </Dialog>
+
+      {/* Confirm: Remove Member */}
+      <AlertDialog open={!!removeTarget} onOpenChange={(open) => !open && setRemoveTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove from Ikimina Savings?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently removes {removeTarget?.employee?.first_name} {removeTarget?.employee?.last_name} from the savings program. This cannot be undone. If they have contributions already processed through payroll, removal will be blocked — deactivate the plan instead in that case.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={removing}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleRemove}
+              disabled={removing}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {removing ? 'Removing...' : 'Remove'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

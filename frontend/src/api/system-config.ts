@@ -29,6 +29,7 @@ export interface MonthlyTax {
   effective_from: string;
   is_active: boolean;
   is_automatic?: boolean;
+  applies_to?: string;
 }
 
 export const getMonthlyTaxes = async (): Promise<MonthlyTax[]> => {

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useRef, Suspense } from 'react';
+import { useEffect, useState, useRef, Suspense } from 'react';
 import { 
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow 
 } from "@/components/ui/table";
@@ -51,7 +51,7 @@ import { User } from '@/types/auth';
 import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/hooks/use-toast';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { getUsers, suspendUser, reactivateUser, updateUserPermissionOverride, bulkUploadProfileImages, assignUserRoles, approveUser, rejectUser } from '@/api/users';
+import { getUsers, suspendUser, reactivateUser, updateUserPermissionOverride, bulkUploadProfileImages, assignUserRoles, approveUser, rejectUser, updateUser } from '@/api/users';
 import { getRoles } from '@/api/roles';
 import { getPermissions } from '@/api/permissions';
 import { getWorkingLocations, getDepartments } from '@/api/working_locations';
@@ -100,16 +100,18 @@ function flattenPermissionModules(modules: any[]): any[] {
       key: p.key ?? p.permission_key,
       permission_key: p.key ?? p.permission_key,
       name: p.name,
+      description: p.description,
       module: m.module,
     })),
   );
 }
 
 function UsersManagementContent() {
-  const { user: currentUser, hasPermission } = useAuth();
+  const { user: currentUser, hasPermission, accessToken } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
   const canReadAllBranches = hasPermission('branches.read_all');
+  const canUpdateUsers = hasPermission('users.update');
   const [users, setUsers] = useState<User[]>([]);
   const [roles, setRoles] = useState<any[]>([]);
   const [allPermissions, setAllPermissions] = useState<any[]>([]);
@@ -124,6 +126,9 @@ function UsersManagementContent() {
   const [uploadingFiles, setUploadingFiles] = useState<File[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [, setIsSaving] = useState(false);
+  const [editWorkingLocationId, setEditWorkingLocationId] = useState('');
+  const [editDepartmentId, setEditDepartmentId] = useState('');
+  const [isUpdatingAssignment, setIsUpdatingAssignment] = useState(false);
 
   // Pending-user approval panel state
   const [approveWorkingLocationId, setApproveWorkingLocationId] = useState('');
@@ -137,18 +142,12 @@ function UsersManagementContent() {
   
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const permissionSignature = (currentUser?.permissions ?? []).join('|');
 
   const loadData = async () => {
-    // Users, roles, and permissions each require their own permission
-    // (users.read, roles.manage, permissions.read respectively). A
-    // BRANCH_MANAGER may legitimately have users.read but not
-    // roles.manage/permissions.read. Previously these three calls were
-    // combined in a single Promise.all, so a 403 on either of the
-    // roles/permissions calls rejected the whole batch and the page
-    // rendered as if the user had no access at all, even though they
-    // could see users just fine. Fetch independently instead, and only
-    // request roles/permissions when the current user actually has the
-    // permission to use them (avoids noisy 403s and wasted requests).
+    // Users, roles, and permissions each need their own permission. Fetch
+    // independently (not Promise.all) so a 403 on roles/permissions doesn't
+    // also blank out the users list for someone who only lacks those two.
     try {
       const usersData = await getUsers();
       const userList = usersData.users || usersData;
@@ -187,7 +186,7 @@ function UsersManagementContent() {
       }
     }
 
-    if (hasPermission('users.approve')) {
+    if (hasPermission('users.approve') || canUpdateUsers) {
       try {
         const [locRes, depRes] = await Promise.all([
           canReadAllBranches ? getWorkingLocations() : Promise.resolve({ working_locations: [] }),
@@ -208,7 +207,7 @@ function UsersManagementContent() {
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [accessToken, currentUser?.id, permissionSignature]);
 
   useEffect(() => {
     if (hasHandledDeepLink.current) return;
@@ -227,7 +226,7 @@ function UsersManagementContent() {
       await assignUserRoles(userId, roleIds);
       toast({ title: "Roles Updated", description: "The user's roles have been successfully updated." });
       loadData();
-    } catch (error) {
+    } catch {
       toast({ variant: "destructive", title: "Update Failed", description: "Could not update roles." });
     } finally {
       setIsSaving(false);
@@ -252,7 +251,7 @@ function UsersManagementContent() {
         }
         return u;
       }));
-    } catch (error) {
+    } catch {
       toast({ variant: "destructive", title: "Update Failed", description: "Could not update permission override." });
     }
   };
@@ -263,13 +262,48 @@ function UsersManagementContent() {
       toast({ title: "User Suspended", description: "Account access has been revoked." });
       loadData();
       setIsEditSheetOpen(false);
-    } catch (error) {
+    } catch {
       toast({ variant: "destructive", title: "Action Failed", description: "Could not suspend user." });
+    }
+  };
+
+  const departmentBelongsToLocation = (department: any, locationId: string) => {
+    if (!canReadAllBranches) return true;
+    if (!locationId) return true;
+    return String(department.working_location_id) === String(locationId)
+      || department.working_location?.uuid === locationId
+      || String(department.working_location?.id) === String(locationId);
+  };
+
+  const handleUpdateAssignment = async () => {
+    if (!selectedUser) return;
+    if (canReadAllBranches && !editWorkingLocationId) {
+      toast({ variant: "destructive", title: "Select a branch", description: "Choose a branch before saving this user." });
+      return;
+    }
+
+    setIsUpdatingAssignment(true);
+    try {
+      const response = await updateUser(selectedUser.id, {
+        ...(canReadAllBranches ? { working_location_id: editWorkingLocationId } : {}),
+        department_id: editDepartmentId || null,
+      });
+      const mappedUser = mapApiUser(response.user ?? response);
+      setSelectedUser(mappedUser);
+      setUsers((current) => current.map((item) => item.id === mappedUser.id ? mappedUser : item));
+      toast({ title: "User Updated", description: "Branch and department assignment saved." });
+      loadData();
+    } catch (error: any) {
+      toast({ variant: "destructive", title: "Update Failed", description: userFriendlyError(error, "Could not update this user.") });
+    } finally {
+      setIsUpdatingAssignment(false);
     }
   };
 
   const openUserSheet = (u: User) => {
     setSelectedUser(u);
+    setEditWorkingLocationId(u.location_id ?? currentUser?.location_id ?? '');
+    setEditDepartmentId(u.department_id ?? '');
     setApproveWorkingLocationId(currentUser?.location_id ?? '');
     setApproveDepartmentId('');
     setApproveRoleIds([]);
@@ -332,7 +366,7 @@ function UsersManagementContent() {
       setIsBulkUploadOpen(false);
       setUploadingFiles([]);
       loadData();
-    } catch (error) {
+    } catch {
       toast({ variant: "destructive", title: "Upload Failed", description: "Check file names and try again." });
     } finally {
       setIsUploading(false);
@@ -569,6 +603,68 @@ function UsersManagementContent() {
                 </PermissionGate>
               ) : (
               <>
+              <div className="space-y-4 rounded-xl border bg-slate-50 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <Label className="text-base font-bold">{canReadAllBranches ? 'Branch & Department' : 'Department'}</Label>
+                    {canReadAllBranches && (
+                      <p className="text-xs text-muted-foreground">Update where this user belongs for access and reporting.</p>
+                    )}
+                  </div>
+                  {canReadAllBranches && <Badge variant="outline">{selectedUser.location ?? 'No branch'}</Badge>}
+                </div>
+                {canUpdateUsers ? (
+                  <div className={cn("grid gap-3", canReadAllBranches ? "sm:grid-cols-2" : "sm:grid-cols-1")}>
+                    {canReadAllBranches ? (
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-bold">Branch</Label>
+                        <select
+                          className="w-full h-9 rounded-lg border bg-white px-2 text-sm"
+                          value={editWorkingLocationId}
+                          onChange={(e) => {
+                            setEditWorkingLocationId(e.target.value);
+                            setEditDepartmentId('');
+                          }}
+                        >
+                          <option value="">Select branch</option>
+                          {locations.map((location: any) => (
+                            <option key={location.uuid ?? location.id} value={location.uuid ?? location.id}>{location.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    ) : null}
+
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-bold">Department</Label>
+                      <select
+                        className="w-full h-9 rounded-lg border bg-white px-2 text-sm"
+                        value={editDepartmentId}
+                        onChange={(e) => setEditDepartmentId(e.target.value)}
+                      >
+                        <option value="">No department</option>
+                        {departments
+                          .filter((department: any) => departmentBelongsToLocation(department, editWorkingLocationId || selectedUser.location_id || ''))
+                          .map((department: any) => (
+                            <option key={department.uuid ?? department.id} value={department.uuid ?? department.id}>{department.name}</option>
+                          ))}
+                      </select>
+                    </div>
+                    <div className="sm:col-span-2 flex justify-end">
+                      <Button
+                        size="sm"
+                        className="min-w-32"
+                        onClick={handleUpdateAssignment}
+                        disabled={isUpdatingAssignment}
+                      >
+                        {isUpdatingAssignment ? 'Saving...' : 'Save Assignment'}
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground italic">You do not have permission to update user assignments.</p>
+                )}
+              </div>
+
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
                   <Label className="text-base font-bold">Primary Account Roles</Label>
@@ -625,8 +721,8 @@ function UsersManagementContent() {
               {hasPermission('permissions.assign') && (
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
-                    <Label className="text-base font-bold">Security Overrides</Label>
-                    <span className="text-[10px] text-muted-foreground uppercase tracking-widest font-bold">Direct Permission Injection</span>
+                    <Label className="text-base font-bold">Permission Overrides</Label>
+                    <span className="text-[10px] text-muted-foreground uppercase tracking-widest font-bold">Per-user exceptions to their role</span>
                   </div>
                   <ScrollArea className="h-[250px] border rounded-xl p-4 bg-slate-50">
                     <div className="space-y-4">
@@ -635,10 +731,13 @@ function UsersManagementContent() {
                         const isAllowed = override ? override.is_allowed : selectedUser.permissions.includes(perm.key);
                         
                         return (
-                          <div key={perm.key} className="flex items-center justify-between group">
-                            <div className="flex flex-col">
+                          <div key={perm.key} className="flex items-center justify-between gap-4 group">
+                            <div className="flex flex-col min-w-0">
                               <span className="text-xs font-bold group-hover:text-primary transition-colors">{perm.name}</span>
-                              <span className="text-[10px] text-muted-foreground">{perm.key}</span>
+                              {perm.description && (
+                                <span className="text-[10px] text-muted-foreground">{perm.description}</span>
+                              )}
+                              <span className="text-[10px] text-muted-foreground/60">{perm.key}</span>
                             </div>
                             <Switch 
                               checked={isAllowed} 

@@ -1,11 +1,11 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { 
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow 
 } from "@/components/ui/table";
 import ExcelJS from 'exceljs';
-import { Search, Download, UserCheck, Clock, AlertTriangle, Upload, History } from 'lucide-react';
+import { Search, Download, UserCheck, Clock, Upload, History } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -28,6 +28,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { PermissionGate } from '@/components/auth/permission-gate';
 import { useToast } from '@/hooks/use-toast';
 import { userFriendlyError } from '@/lib/error-message';
 import { useAuth } from '@/context/auth-context';
@@ -70,6 +71,8 @@ export default function AttendanceMonitoringPage() {
   const [historyPreset, setHistoryPreset] = useState<'LAST_5_DAYS' | 'LAST_WEEK' | 'LAST_MONTH' | 'LAST_YEAR' | 'CUSTOM'>('LAST_5_DAYS');
   const [historyDateFrom, setHistoryDateFrom] = useState('');
   const [historyDateTo, setHistoryDateTo] = useState('');
+  const [historyEmployeeId, setHistoryEmployeeId] = useState('all');
+  const [historyLoadedRange, setHistoryLoadedRange] = useState<{ from: string; to: string; label: string } | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const { toast } = useToast();
   const { user, hasPermission } = useAuth();
@@ -190,12 +193,22 @@ export default function AttendanceMonitoringPage() {
   const filteredHistory = useMemo(() => {
     return records.filter(rec => {
       const name = `${rec.employee?.first_name ?? ''} ${rec.employee?.last_name ?? ''}`.toLowerCase();
-      const matchesSearch = name.includes(searchTerm.toLowerCase());
+      const matchesSelectedEmployee = historyEmployeeId === 'all' || String(rec.employee_id) === historyEmployeeId || rec.employee?.uuid === historyEmployeeId;
+      const matchesSearch = historyEmployeeId !== 'all' || name.includes(searchTerm.toLowerCase());
       const category = rec.employee?.employment_category?.name?.toUpperCase();
       const matchesTab = activeTab === 'ALL' || category === activeTab;
-      return matchesSearch && matchesTab;
+      return matchesSelectedEmployee && matchesSearch && matchesTab;
     });
-  }, [records, searchTerm, activeTab]);
+  }, [records, searchTerm, activeTab, historyEmployeeId]);
+
+  const historyEmployeeOptions = useMemo(() => {
+    return employees
+      .filter((emp) => {
+        const category = emp.employment_category?.name?.toUpperCase();
+        return activeTab === 'ALL' || category === activeTab;
+      })
+      .sort((a, b) => `${a.first_name ?? ''} ${a.last_name ?? ''}`.localeCompare(`${b.first_name ?? ''} ${b.last_name ?? ''}`));
+  }, [employees, activeTab]);
 
   // One row per employee, one column per date - same layout as the bulk
   // import template (employee_id/name/department, then a P/A column per date).
@@ -207,6 +220,15 @@ export default function AttendanceMonitoringPage() {
       department: string;
       statuses: Record<string, string>;
     }>();
+
+    if (historyLoadedRange) {
+      let cursor = dayjs(historyLoadedRange.from).startOf('day');
+      const end = dayjs(historyLoadedRange.to).startOf('day');
+      while (cursor.isBefore(end, 'day') || cursor.isSame(end, 'day')) {
+        dateSet.add(cursor.format('YYYY-MM-DD'));
+        cursor = cursor.add(1, 'day');
+      }
+    }
 
     filteredHistory.forEach((rec) => {
       const dateKey = dayjs(rec.attendance_date).tz('Africa/Kigali').format('YYYY-MM-DD');
@@ -224,16 +246,28 @@ export default function AttendanceMonitoringPage() {
       employeeMap.get(empId)!.statuses[dateKey] = rec.attendance_status;
     });
 
+    if (historyLoadedRange && historyEmployeeId !== 'all' && !employeeMap.has(historyEmployeeId)) {
+      const emp = employees.find((item) => String(item.id) === historyEmployeeId || item.uuid === historyEmployeeId);
+      if (emp) {
+        employeeMap.set(historyEmployeeId, {
+          employeeId: String(emp.id),
+          name: `${emp.first_name ?? ''} ${emp.last_name ?? ''}`.trim() || String(emp.id),
+          department: emp.department?.name ?? emp.departments?.name ?? 'Unassigned',
+          statuses: {},
+        });
+      }
+    }
+
     const dates = Array.from(dateSet).sort();
     const rows = Array.from(employeeMap.values()).sort((a, b) => a.name.localeCompare(b.name));
 
     return { dates, rows };
-  }, [filteredHistory]);
+  }, [filteredHistory, historyLoadedRange, historyEmployeeId, employees]);
 
   const handleMarkAttendance = (
     employeeId: string,
     status: 'PRESENT' | 'ABSENT',
-    hoursWorked?: number,
+    overtimeHours?: number,
   ) => {
     const existing = todayRecordsMap[employeeId];
     if (existing && !canUpdateAttendance) {
@@ -245,7 +279,7 @@ export default function AttendanceMonitoringPage() {
       employee_id: employeeId,
       attendance_date: new Date().toISOString(),
       attendance_status: status,
-      hours_worked: status === 'PRESENT' ? hoursWorked : undefined,
+      overtime_hours: status === 'PRESENT' ? overtimeHours : undefined,
     };
 
     setPendingSync((prev) => ({ ...prev, [employeeId]: log }));
@@ -298,13 +332,11 @@ export default function AttendanceMonitoringPage() {
 
       // ── Column definitions ──
       // A=employee_id (locked), B=employee_name (locked), C=department (locked),
-      // D=worked_hours (editable, blank), E=row_status (editable, P/A dropdown),
-      // F onward=one column per date
-      const DATE_START_COL = 6; // Column F (1-based)
-      const ROW_STATUS_COL = 5; // Column E (1-based)
-
+      // D=working_location (locked), E=overtime_hours (editable, blank), F=row_status (editable, P/A dropdown),
+      // G onward=one column per date
+      const DATE_START_COL = 7; // Column G (1-based)
       // ── Header row ──
-      const headers = ['employee_id', 'employee_name', 'department', 'worked_hours', 'row_status', ...dates];
+      const headers = ['employee_id', 'employee_name', 'department', 'working_location', 'overtime_hours', 'row_status', ...dates];
       const headerRow = sheet.getRow(1);
       headers.forEach((h, i) => {
         const cell = headerRow.getCell(i + 1);
@@ -341,16 +373,21 @@ export default function AttendanceMonitoringPage() {
         cellC.value = emp.department?.name ?? '';
         cellC.protection = { locked: true };
 
-        // D: worked_hours (editable, blank)
+        // D: working_location (locked)
         const cellD = row.getCell(4);
-        cellD.value = '';
-        cellD.protection = { locked: false };
+        cellD.value = emp.working_location?.name ?? emp.working_locations?.name ?? '';
+        cellD.protection = { locked: true };
 
-        // E: row_status (editable, P/A dropdown)
+        // E: overtime_hours (editable, blank)
         const cellE = row.getCell(5);
         cellE.value = '';
         cellE.protection = { locked: false };
-        cellE.dataValidation = {
+
+        // F: row_status (editable, P/A dropdown)
+        const cellF = row.getCell(6);
+        cellF.value = '';
+        cellF.protection = { locked: false };
+        cellF.dataValidation = {
           type: 'list',
           formulae: ['"P,A"'],
           allowBlank: true,
@@ -359,18 +396,14 @@ export default function AttendanceMonitoringPage() {
           error: 'Only P (Present) or A (Absent) are allowed.',
         };
 
-        // F onward: date columns with formula =IF($E{row}="","",$E{row})
-        // When the user types P/A in row_status (E), Excel evaluates the
-        // formula and fills all date cells automatically. On re-import,
-        // SheetJS reads either the cached result (if Excel saved it) or
-        // the raw formula text. The JS parser below handles both cases:
-        // a raw formula string (starts with "=") is treated as blank and
-        // falls back to the row_status value, replicating the same logic
-        // in JavaScript so the upload never depends on formula evaluation.
+        // Date columns mirror row_status (F) via formula so typing P/A once
+        // fills the row in Excel. On re-import SheetJS may hand back the raw
+        // formula string instead of its cached value, so the parser below
+        // treats a leading "=" as blank and falls back to row_status.
         dates.forEach((_, dIdx) => {
           const col = DATE_START_COL + dIdx;
           const cell = row.getCell(col);
-          cell.value = { formula: `IF($E$${rowNum}="","",$E$${rowNum})` };
+          cell.value = { formula: `IF($F$${rowNum}="","",$F$${rowNum})` };
           cell.protection = { locked: false };
           cell.dataValidation = {
             type: 'list',
@@ -387,8 +420,9 @@ export default function AttendanceMonitoringPage() {
       sheet.getColumn(1).width = 14;  // employee_id
       sheet.getColumn(2).width = 30;  // employee_name
       sheet.getColumn(3).width = 25;  // department
-      sheet.getColumn(4).width = 16;  // worked_hours
-      sheet.getColumn(5).width = 14;  // row_status
+      sheet.getColumn(4).width = 25;  // working_location
+      sheet.getColumn(5).width = 16;  // overtime_hours
+      sheet.getColumn(6).width = 14;  // row_status
       dates.forEach((_, dIdx) => {
         sheet.getColumn(DATE_START_COL + dIdx).width = 14;
       });
@@ -456,21 +490,25 @@ export default function AttendanceMonitoringPage() {
         const headers: string[] = raw[0].map((h: any) => String(h ?? '').trim());
 
         // Column layout: A employee_id, B employee_name, C department,
-        // D worked_hours, E row_status, F+ dates
+        // D working_location, E overtime_hours, F row_status, G+ dates
         if (headers[0] !== 'employee_id' || headers[1] !== 'employee_name' || headers[2] !== 'department') {
           toast({ variant: 'destructive', title: 'Import Rejected', description: 'Columns A, B, C must be employee_id, employee_name, department.' });
           return;
         }
-        if (headers[3] !== 'worked_hours') {
-          toast({ variant: 'destructive', title: 'Import Rejected', description: 'Column D must be worked_hours.' });
+        if (headers[3] !== 'working_location') {
+          toast({ variant: 'destructive', title: 'Import Rejected', description: 'Column D must be working_location.' });
           return;
         }
-        if (headers[4] !== 'row_status') {
-          toast({ variant: 'destructive', title: 'Import Rejected', description: 'Column E must be row_status.' });
+        if (headers[4] !== 'overtime_hours') {
+          toast({ variant: 'destructive', title: 'Import Rejected', description: 'Column E must be overtime_hours.' });
+          return;
+        }
+        if (headers[5] !== 'row_status') {
+          toast({ variant: 'destructive', title: 'Import Rejected', description: 'Column F must be row_status.' });
           return;
         }
 
-        const dateHeaders = headers.slice(5);
+        const dateHeaders = headers.slice(6);
         if (dateHeaders.length === 0) {
           toast({ variant: 'destructive', title: 'Import Rejected', description: 'No date columns found in template.' });
           return;
@@ -505,7 +543,7 @@ export default function AttendanceMonitoringPage() {
           const empIdRaw = row[0];
           const employeeNameRaw = row[1];
           const departmentRaw = row[2];
-          const workedHrs = row[3];
+          const workedHrs = row[4];
 
           if (empIdRaw === undefined || empIdRaw === null || empIdRaw === '') continue;
 
@@ -548,14 +586,16 @@ export default function AttendanceMonitoringPage() {
             return;
           }
 
-          const hours_worked = workedHrs !== '' && workedHrs != null ? Number(workedHrs) : undefined;
+          const overtimeHours = workedHrs !== '' && workedHrs != null ? Number(workedHrs) : undefined;
 
-          const rowStatusRaw = row[4];
+          const rowStatusRaw = row[5];
           const rowStatusStr = rowStatusRaw !== undefined && rowStatusRaw !== null ? String(rowStatusRaw).trim().toUpperCase() : '';
+
+          let overtimeAssigned = false;
 
           for (let d = 0; d < dateHeaders.length; d++) {
             const dateHeaderRaw = dateHeaders[d];
-            const cellValue = row[5 + d]; // date columns start at index 5
+            const cellValue = row[6 + d]; // date columns start at index 6
             const parsedDate = parsedDateHeaders[d];
 
             // Convert cell value to string, or empty if missing.
@@ -578,20 +618,30 @@ export default function AttendanceMonitoringPage() {
 
             // Determine attendance status
             let attendance_status: 'PRESENT' | 'ABSENT';
-            let cellHoursWorked = hours_worked;
+            let cellOvertimeHours: number | undefined = undefined;
 
             if (activeSymbol === PRESENT_SYMBOL) {
               attendance_status = 'PRESENT';
+              if (overtimeHours !== undefined && overtimeHours > 0) {
+                if (!overtimeAssigned) {
+                  cellOvertimeHours = overtimeHours;
+                  overtimeAssigned = true;
+                } else {
+                  cellOvertimeHours = 0;
+                }
+              } else if (overtimeHours !== undefined && overtimeHours === 0) {
+                cellOvertimeHours = 0;
+              }
             } else if (activeSymbol === ABSENT_SYMBOL) {
               attendance_status = 'ABSENT';
-              cellHoursWorked = undefined;
+              cellOvertimeHours = undefined;
             } else {
               toast({ variant: 'destructive', title: 'Validation Error', description: `Row ${rowNum}, date "${dateHeaderRaw}": only P or A are allowed (got "${activeSymbol}").` });
               return;
             }
 
-            if (attendance_status === 'ABSENT' && (cellHoursWorked ?? 0) > 0) {
-              toast({ variant: 'destructive', title: 'Validation Error', description: `Row ${rowNum}: hours_worked must be blank/0 when marked ABSENT.` });
+            if (attendance_status === 'ABSENT' && (cellOvertimeHours ?? 0) > 0) {
+              toast({ variant: 'destructive', title: 'Validation Error', description: `Row ${rowNum}: overtime_hours must be blank/0 when marked ABSENT.` });
               return;
             }
 
@@ -599,18 +649,11 @@ export default function AttendanceMonitoringPage() {
               employee_id: empIdStr,
               attendance_date: parsedDate.format('YYYY-MM-DD'),
               attendance_status,
-              hours_worked: cellHoursWorked,
+              overtime_hours: cellOvertimeHours,
             });
           }
         }
 
-        if (allProcessedLogs.length === 0) {
-          toast({ variant: 'destructive', title: 'Nothing to import', description: 'No filled attendance cells found.' });
-          return;
-        }
-
-        // ── Diff against what's already stored ──
-        // Pull the current full set of time records and key them by
         // employee_id + date so each parsed cell can be compared to
         // what's on file. Only cells that are new or genuinely changed
         // get sent; everything identical to what's stored is skipped.
@@ -642,7 +685,7 @@ export default function AttendanceMonitoringPage() {
           const isUnchanged =
             existing &&
             existing.attendance_status === log.attendance_status &&
-            normalizedHours(existing.hours_worked) === normalizedHours(log.hours_worked);
+            normalizedHours(existing.overtime_hours) === normalizedHours(log.overtime_hours);
 
           if (isUnchanged) {
             skippedCount += 1;
@@ -697,7 +740,7 @@ export default function AttendanceMonitoringPage() {
         ...emp,
         attendance_status: rec?.attendance_status ?? 'NOT LOGGED',
         attendance_date: todayStr,
-        hours_worked: rec?.hours_worked,
+        overtime_hours: rec?.overtime_hours,
       };
     });
 
@@ -707,7 +750,7 @@ export default function AttendanceMonitoringPage() {
       Category: rec.employment_category?.name,
       Date: dayjs(rec.attendance_date).tz('Africa/Kigali').format('DD/MM/YYYY'),
       Status: rec.attendance_status,
-      'Hours Worked': rec.hours_worked ?? '',
+      'Overtime Hours': rec.overtime_hours ?? '',
     }));
 
     const dateStr = new Date().toISOString().split('T')[0];
@@ -779,10 +822,16 @@ export default function AttendanceMonitoringPage() {
         start_date: range.from.format('YYYY-MM-DD'),
         end_date: range.to.format('YYYY-MM-DD'),
         working_location_id: user?.location,
+        employee_id: historyEmployeeId !== 'all' ? historyEmployeeId : undefined,
       });
       const sorted = (Array.isArray(recs) ? recs : [])
         .sort((a, b) => dayjs(b.attendance_date).unix() - dayjs(a.attendance_date).unix());
       setRecords(sorted);
+      setHistoryLoadedRange({
+        from: range.from.format('YYYY-MM-DD'),
+        to: range.to.format('YYYY-MM-DD'),
+        label: range.label,
+      });
     } catch (error: any) {
       toast({ variant: 'destructive', title: 'Failed to load history', description: userFriendlyError(error, 'Please try again.') });
     } finally {
@@ -859,7 +908,7 @@ export default function AttendanceMonitoringPage() {
         Category: rec.employee?.employment_category?.name ?? '',
         Date: dayjs(rec.attendance_date).tz('Africa/Kigali').format('DD/MM/YYYY'),
         Status: rec.attendance_status,
-        'Hours Worked': rec.hours_worked ?? '',
+        'Overtime Hours': rec.overtime_hours ?? '',
       }));
 
       const fromStr = range.from.format('YYYY-MM-DD');
@@ -887,13 +936,15 @@ export default function AttendanceMonitoringPage() {
         </div>
         <div className="flex gap-2 items-center">
           <AttendanceSyncPopover />
-          <Button
-            variant="outline"
-            onClick={() => setIsImportOpen(true)}
-            className="h-11 border-dashed"
-          >
-            <Upload className="mr-2 h-4 w-4" /> Bulk Import
-          </Button>
+          <PermissionGate permission="attendance.create">
+            <Button
+              variant="outline"
+              onClick={() => setIsImportOpen(true)}
+              className="h-11 border-dashed"
+            >
+              <Upload className="mr-2 h-4 w-4" /> Bulk Import
+            </Button>
+          </PermissionGate>
           <Button
             variant={viewMode === 'LOG' ? 'default' : 'outline'}
             onClick={() => setViewMode('LOG')}
@@ -906,7 +957,7 @@ export default function AttendanceMonitoringPage() {
             onClick={() => setViewMode('HISTORY')}
             className="h-11"
           >
-            <History className="mr-2 h-4 w-4" /> 5-Day History
+            <History className="mr-2 h-4 w-4" /> Attendance History
           </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -920,16 +971,7 @@ export default function AttendanceMonitoringPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-        <div className="bg-white p-6 rounded-3xl border shadow-sm flex items-center gap-4">
-          <div className="h-12 w-12 rounded-2xl bg-emerald-50 flex items-center justify-center">
-            <UserCheck className="h-6 w-6 text-emerald-600" />
-          </div>
-          <div>
-            <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Present</p>
-            <p className="text-2xl font-bold">{filteredEmployees.filter(e => todayRecordsMap[e.id]?.attendance_status === 'PRESENT').length}</p>
-          </div>
-        </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div className="bg-white p-6 rounded-3xl border shadow-sm flex items-center gap-4">
           <div className="h-12 w-12 rounded-2xl bg-amber-50 flex items-center justify-center">
             <Clock className="h-6 w-6 text-amber-600" />
@@ -937,15 +979,6 @@ export default function AttendanceMonitoringPage() {
           <div>
             <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Pending</p>
             <p className="text-2xl font-bold">{filteredEmployees.length - Object.keys(todayRecordsMap).length}</p>
-          </div>
-        </div>
-        <div className="bg-white p-6 rounded-3xl border shadow-sm flex items-center gap-4">
-          <div className="h-12 w-12 rounded-2xl bg-rose-50 flex items-center justify-center">
-            <AlertTriangle className="h-6 w-6 text-rose-600" />
-          </div>
-          <div>
-            <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Absent</p>
-            <p className="text-2xl font-bold">{filteredEmployees.filter(e => todayRecordsMap[e.id]?.attendance_status === 'ABSENT').length}</p>
           </div>
         </div>
         <div className="bg-slate-900 text-white p-6 rounded-3xl shadow-lg flex items-center gap-4">
@@ -1000,7 +1033,7 @@ export default function AttendanceMonitoringPage() {
                   <TableRow>
                     <TableHead className="font-bold">Personnel</TableHead>
                     <TableHead className="font-bold">Status Today</TableHead>
-                    <TableHead className="font-bold">Hours Worked</TableHead>
+                    <TableHead className="font-bold">Overtime Hours</TableHead>
                     {canLogAttendance && <TableHead className="font-bold text-right">Actions</TableHead>}
                   </TableRow>
                 </TableHeader>
@@ -1052,6 +1085,21 @@ export default function AttendanceMonitoringPage() {
                     <Input type="date" className="h-8 w-36 text-xs" value={historyDateTo} onChange={(e) => setHistoryDateTo(e.target.value)} />
                   </div>
                 )}
+                <div className="w-full sm:w-64">
+                  <Select value={historyEmployeeId} onValueChange={setHistoryEmployeeId}>
+                    <SelectTrigger className="h-8 bg-white text-xs">
+                      <SelectValue placeholder="All employees" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All employees</SelectItem>
+                      {historyEmployeeOptions.map((emp) => (
+                        <SelectItem key={emp.uuid ?? emp.id} value={String(emp.id)}>
+                          {`${emp.first_name ?? ''} ${emp.last_name ?? ''}`.trim() || emp.national_id || emp.id}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
                 <Button
                   type="button"
                   size="sm"
@@ -1066,7 +1114,8 @@ export default function AttendanceMonitoringPage() {
               <Table>
                 <TableHeader className="bg-slate-50">
                   <TableRow>
-                    <TableHead className="font-bold sticky left-0 bg-slate-50 z-10 min-w-[180px]">Personnel</TableHead>
+                    <TableHead className="font-bold min-w-[100px]">Employee ID</TableHead>
+                    <TableHead className="font-bold sticky left-0 bg-slate-50 z-10 min-w-[180px]">Full Name</TableHead>
                     <TableHead className="font-bold min-w-[140px]">Department</TableHead>
                     {historyMatrix.dates.map((date) => (
                       <TableHead key={date} className="font-bold text-center whitespace-nowrap min-w-[60px]">
@@ -1078,6 +1127,7 @@ export default function AttendanceMonitoringPage() {
                 <TableBody>
                   {historyMatrix.rows.length > 0 ? historyMatrix.rows.map((row) => (
                     <TableRow key={row.employeeId} className="hover:bg-secondary/20 transition-colors">
+                      <TableCell className="font-mono text-xs text-muted-foreground">{row.employeeId}</TableCell>
                       <TableCell className="font-semibold sticky left-0 bg-white z-10">{row.name}</TableCell>
                       <TableCell>{row.department}</TableCell>
                       {historyMatrix.dates.map((date) => {
@@ -1097,7 +1147,7 @@ export default function AttendanceMonitoringPage() {
                     </TableRow>
                   )) : (
                     <TableRow>
-                      <TableCell colSpan={Math.max(4, 2 + historyMatrix.dates.length)} className="text-center py-20 text-muted-foreground italic">
+                      <TableCell colSpan={Math.max(4, 3 + historyMatrix.dates.length)} className="text-center py-20 text-muted-foreground italic">
                         No historical logs found for the selected range. Try a different preset or Load History again.
                       </TableCell>
                     </TableRow>
@@ -1358,13 +1408,13 @@ function AttendanceRow({
   onMark: any;
   canLogAttendance: boolean;
 }) {
-  const [hoursWorked, setHoursWorked] = useState<number | ''>('');
+  const [overtimeHours, setOvertimeHours] = useState<number | ''>('');
 
   useEffect(() => {
-    if (record?.hours_worked) setHoursWorked(Number(record.hours_worked));
+    if (record?.overtime_hours) setOvertimeHours(Number(record.overtime_hours));
   }, [record]);
 
-  const isOvertimeDay = typeof hoursWorked === 'number' && hoursWorked > 8;
+  const hasOvertime = typeof overtimeHours === 'number' && overtimeHours > 0;
 
   return (
     <TableRow className="hover:bg-secondary/10 transition-colors">
@@ -1389,13 +1439,13 @@ function AttendanceRow({
             type="number"
             min={0}
             placeholder="hrs"
-            value={hoursWorked}
-            onChange={(e) => setHoursWorked(e.target.value === '' ? '' : Number(e.target.value))}
+            value={overtimeHours}
+            onChange={(e) => setOvertimeHours(e.target.value === '' ? '' : Number(e.target.value))}
             disabled={!canLogAttendance}
             className="w-24 h-9 text-xs font-mono rounded-lg border-slate-200"
           />
-          {isOvertimeDay && (
-            <Badge className="bg-amber-500/10 text-amber-600 text-[10px] whitespace-nowrap">+2,500 RWF OT</Badge>
+          {hasOvertime && (
+            <Badge className="bg-amber-500/10 text-amber-600 text-[10px] whitespace-nowrap">Overtime</Badge>
           )}
         </div>
       </TableCell>
@@ -1407,7 +1457,7 @@ function AttendanceRow({
               size="sm"
               variant="outline"
               className={`h-9 rounded-xl font-bold text-xs ${record?.attendance_status === 'PRESENT' ? 'bg-emerald-600 text-white' : 'hover:bg-emerald-50 text-emerald-600 border-emerald-100'}`}
-              onClick={(e) => { e.preventDefault(); onMark(employee.id, 'PRESENT', hoursWorked || undefined); }}
+              onClick={(e) => { e.preventDefault(); onMark(employee.id, 'PRESENT', overtimeHours || undefined); }}
             >
               Present
             </Button>

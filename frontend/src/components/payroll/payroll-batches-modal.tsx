@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Table,
   TableBody,
@@ -19,15 +19,27 @@ import { userFriendlyError } from '@/lib/error-message';
 import { formatRwf, getPayrollItemAmounts } from '@/lib/payroll-display';
 import { useAuth } from '@/context/auth-context';
 
-interface PendingBatchesModalProps {
+interface PayrollBatchesModalProps {
   isOpen: boolean;
   onClose: () => void;
   onRefresh: () => void;
+  title: string;
+  description: string;
+  /** Comma-separated payment_batches statuses to filter to; omit for every status. */
+  statusFilter?: string;
+  /** Whether approve/reject/decline controls are shown at all. Defaults to true. */
+  showActions?: boolean;
 }
 
-const pendingStatuses = new Set(['PENDING', 'IN_REVIEW', 'MANAGER_APPROVED']);
-
-export function PendingBatchesModal({ isOpen, onClose, onRefresh }: PendingBatchesModalProps) {
+export function PayrollBatchesModal({
+  isOpen,
+  onClose,
+  onRefresh,
+  title,
+  description,
+  statusFilter,
+  showActions = true,
+}: PayrollBatchesModalProps) {
   const { user } = useAuth();
   const [batches, setBatches] = useState<any[]>([]);
   const [selectedBatch, setSelectedBatch] = useState<any>(null);
@@ -40,22 +52,26 @@ export function PendingBatchesModal({ isOpen, onClose, onRefresh }: PendingBatch
 
   useEffect(() => {
     if (isOpen) {
-      loadPendingBatches();
+      loadBatches();
+    } else {
+      setSelectedBatch(null);
     }
-  }, [isOpen]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, statusFilter]);
 
-  const loadPendingBatches = async () => {
+  const loadBatches = async () => {
     setIsLoading(true);
     try {
-      const res = await getPayrollBatches();
+      // Filtered server-side when a status set is given, instead of always
+      // fetching every batch and filtering client-side for each card.
+      const res = await getPayrollBatches(statusFilter ? { status: statusFilter } : undefined);
       const allBatches = Array.isArray(res) ? res : res.batches || [];
-      setBatches(allBatches.filter((b: any) => pendingStatuses.has(b.status)));
+      setBatches(allBatches);
     } catch (error) {
-      console.error('Failed to load pending batches:', error);
       toast({
         variant: 'destructive',
         title: 'Load failed',
-        description: userFriendlyError(error, 'Could not load payroll batches awaiting review.'),
+        description: userFriendlyError(error, 'Could not load payroll batches.'),
       });
     } finally {
       setIsLoading(false);
@@ -84,7 +100,7 @@ export function PendingBatchesModal({ isOpen, onClose, onRefresh }: PendingBatch
       await approvePayrollBatch(uuid, 'Batch approved via review panel.');
       toast({ title: 'Success', description: 'Batch has been approved.' });
       setSelectedBatch(null);
-      loadPendingBatches();
+      loadBatches();
       onRefresh();
     } catch (error: any) {
       toast({
@@ -106,7 +122,7 @@ export function PendingBatchesModal({ isOpen, onClose, onRefresh }: PendingBatch
       await rejectPayrollBatch(uuid, reason);
       toast({ title: 'Success', description: 'Batch has been rejected.' });
       setSelectedBatch(null);
-      loadPendingBatches();
+      loadBatches();
       onRefresh();
     } catch (error: any) {
       toast({
@@ -141,7 +157,7 @@ export function PendingBatchesModal({ isOpen, onClose, onRefresh }: PendingBatch
   };
 
   const canReviewBatch = (batch: any) => {
-    if (!batch || ['APPROVED', 'REJECTED'].includes(batch.status)) return false;
+    if (!showActions || !batch || ['APPROVED', 'REJECTED'].includes(batch.status)) return false;
     if (batch.status === 'MANAGER_APPROVED') return isSuperAdmin;
     if (batch.status === 'PENDING' || batch.status === 'IN_REVIEW') {
       return isBranchManager || isSuperAdmin;
@@ -156,8 +172,8 @@ export function PendingBatchesModal({ isOpen, onClose, onRefresh }: PendingBatch
       <div className="bg-white rounded-3xl w-full max-w-5xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl">
         <div className="p-6 border-b flex items-center justify-between bg-slate-50">
           <div>
-            <h2 className="text-2xl font-bold text-slate-900">Pending Payroll Review</h2>
-            <p className="text-muted-foreground">Approve or decline batches awaiting disbursement.</p>
+            <h2 className="text-2xl font-bold text-slate-900">{title}</h2>
+            <p className="text-muted-foreground">{description}</p>
           </div>
           <Button variant="ghost" size="icon" onClick={onClose} className="rounded-full">
             <XCircle className="h-6 w-6" />
@@ -167,15 +183,15 @@ export function PendingBatchesModal({ isOpen, onClose, onRefresh }: PendingBatch
         <div className="flex-1 overflow-hidden flex">
           {/* Batches List */}
           <div className="w-1/3 border-r overflow-y-auto p-4 space-y-3 bg-slate-50/50">
-            <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider px-2 mb-2">Awaiting Action</h3>
+            <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider px-2 mb-2">Batches</h3>
             {isLoading && batches.length === 0 ? (
               <div className="p-4 text-center animate-pulse">Loading batches...</div>
             ) : batches.length === 0 ? (
-              <div className="p-8 text-center text-muted-foreground italic">No pending batches found.</div>
+              <div className="p-8 text-center text-muted-foreground italic">No batches found.</div>
             ) : (
               batches.map((batch) => (
-                <div 
-                  key={batch.uuid} 
+                <div
+                  key={batch.uuid}
                   className={`p-4 rounded-2xl cursor-pointer transition-all border ${selectedBatch?.uuid === batch.uuid ? 'bg-white border-primary shadow-md ring-1 ring-primary/10' : 'bg-white hover:border-slate-300 border-transparent shadow-sm'}`}
                   onClick={() => handleViewBatch(batch.uuid)}
                 >
@@ -220,7 +236,7 @@ export function PendingBatchesModal({ isOpen, onClose, onRefresh }: PendingBatch
                     </div>
                   )}
                 </div>
-                
+
                 <div className="flex-1 overflow-hidden flex flex-col">
                   <div className="px-6 py-4 bg-slate-50 border-b flex items-center justify-between">
                     <h4 className="text-sm font-bold text-slate-700">Personnel in Batch</h4>
@@ -235,7 +251,7 @@ export function PendingBatchesModal({ isOpen, onClose, onRefresh }: PendingBatch
                           <TableHead>Gross</TableHead>
                           <TableHead>Deductions</TableHead>
                           <TableHead>Net Payable</TableHead>
-                          <TableHead className="text-right">Action</TableHead>
+                          {showActions && <TableHead className="text-right">Action</TableHead>}
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -259,17 +275,19 @@ export function PendingBatchesModal({ isOpen, onClose, onRefresh }: PendingBatch
                               <TableCell className="text-xs font-medium">{formatRwf(amounts.grossPay)}</TableCell>
                               <TableCell className="text-xs font-medium text-rose-600">-{formatRwf(amounts.totalDeductions)}</TableCell>
                               <TableCell className="text-sm font-bold text-slate-900">{formatRwf(amounts.netPay)}</TableCell>
-                              <TableCell className="text-right">
-                                {item.status === 'REJECTED' ? (
-                                  <Badge variant="secondary" className="text-[10px]">Rejected</Badge>
-                                ) : canReviewBatch(selectedBatch) ? (
-                                  <Button variant="ghost" size="sm" className="h-8 text-rose-600 hover:text-rose-700 hover:bg-rose-50 font-bold text-xs" onClick={() => handleRejectItem(item.uuid)} disabled={isActionLoading}>
-                                    Reject
-                                  </Button>
-                                ) : (
-                                  null
-                                )}
-                              </TableCell>
+                              {showActions && (
+                                <TableCell className="text-right">
+                                  {item.status === 'REJECTED' ? (
+                                    <Badge variant="secondary" className="text-[10px]">Rejected</Badge>
+                                  ) : canReviewBatch(selectedBatch) ? (
+                                    <Button variant="ghost" size="sm" className="h-8 text-rose-600 hover:text-rose-700 hover:bg-rose-50 font-bold text-xs" onClick={() => handleRejectItem(item.uuid)} disabled={isActionLoading}>
+                                      Reject
+                                    </Button>
+                                  ) : (
+                                    null
+                                  )}
+                                </TableCell>
+                              )}
                             </TableRow>
                           );
                         })}

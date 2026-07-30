@@ -1,13 +1,14 @@
 "use client";
 
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Bell, Check, AlertCircle, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { getNotifications, markAsRead, markAllAsRead, Notification } from '@/api/notifications';
+import { getNotifications, markAsRead, markAllAsRead, clearNotification, clearAllNotifications, Notification } from '@/api/notifications';
 import { approveUser, rejectUser, approveUserTransfer, rejectUserTransfer } from '@/api/users';
 import { approvePayrollBatch, rejectPayrollBatch } from '@/api/payroll';
 import { approveEmployeeTransfer, rejectEmployeeTransfer } from '@/api/employees';
+import { userFriendlyError } from '@/lib/error-message';
 import { useToast } from '@/hooks/use-toast';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -114,6 +115,34 @@ export default function NotificationsPage() {
     window.dispatchEvent(new CustomEvent('notifications_updated'));
   };
 
+  const handleClear = async (uuid: string) => {
+    try {
+      await clearNotification(uuid);
+      setNotifications((prev) => prev.filter((n) => n.uuid !== uuid));
+      window.dispatchEvent(new CustomEvent('notifications_updated'));
+    } catch (error: any) {
+      toast({
+        variant: "destructive",
+        title: "Failed to clear notification",
+        description: userFriendlyError(error, "Please try again."),
+      });
+    }
+  };
+
+  const handleClearAll = async () => {
+    try {
+      await clearAllNotifications();
+      setNotifications([]);
+      window.dispatchEvent(new CustomEvent('notifications_updated'));
+    } catch (error: any) {
+      toast({
+        variant: "destructive",
+        title: "Failed to clear notifications",
+        description: userFriendlyError(error, "Please try again."),
+      });
+    }
+  };
+
   const filtered = notifications.filter(n => 
     n.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
     n.message.toLowerCase().includes(searchTerm.toLowerCase())
@@ -126,7 +155,10 @@ export default function NotificationsPage() {
           <h1 className="text-3xl font-headline font-bold">Notification Center</h1>
           <p className="text-muted-foreground">Detailed history of all system alerts and required actions.</p>
         </div>
-        <Button variant="outline" onClick={handleMarkAllRead}>Mark all as read</Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={handleMarkAllRead}>Mark all as read</Button>
+          <Button variant="outline" className="text-destructive hover:bg-destructive/5" onClick={handleClearAll}>Clear all</Button>
+        </div>
       </div>
 
       <div className="flex items-center gap-4">
@@ -157,7 +189,12 @@ export default function NotificationsPage() {
                       <h3 className="font-bold text-lg">{n.title}</h3>
                       {!n.is_read && <Badge className="bg-blue-600">New</Badge>}
                     </div>
-                    <span className="text-xs text-muted-foreground font-medium">{new Date(n.created_at).toLocaleString()}</span>
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs text-muted-foreground font-medium">{new Date(n.created_at).toLocaleString()}</span>
+                      <button onClick={() => handleClear(n.uuid)} className="text-xs text-muted-foreground hover:text-destructive hover:underline font-bold">
+                        Clear
+                      </button>
+                    </div>
                   </div>
                   <p className="text-muted-foreground leading-relaxed">{renderNotificationText(n.message)}</p>
                   

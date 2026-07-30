@@ -1,7 +1,7 @@
 
 "use client";
 
-import { AuthProvider, useAuth, isAdminRole } from '@/context/auth-context';
+import { AuthProvider, useAuth } from '@/context/auth-context';
 import { Sidebar } from '@/components/layout/sidebar';
 import { useRouter, useParams, usePathname } from 'next/navigation';
 import { useEffect } from 'react';

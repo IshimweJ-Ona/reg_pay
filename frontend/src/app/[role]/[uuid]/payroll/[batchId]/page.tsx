@@ -1,11 +1,11 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
 import { 
   ArrowLeft, FileText, Users,
-  CheckCircle2, XCircle, Clock, MessageSquare, Download, Save
+  CheckCircle2, XCircle, Clock, MessageSquare, Download, Save, ExternalLink, Paperclip
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -50,6 +50,13 @@ const formatPeriodRange = (start?: unknown, end?: unknown) => {
   return `${startLabel} - ${endLabel}`;
 };
 
+const getAttachmentUrl = (path?: string) => {
+  if (!path) return '#';
+  if (path.startsWith('http://') || path.startsWith('https://')) return path;
+  const apiBase = process.env.NEXT_PUBLIC_API_URL ?? '';
+  return `${apiBase}${path}`;
+};
+
 export default function PayrollBatchDetailsPage() {
   const router = useRouter();
   const params = useParams<{ batchId: string }>();
@@ -83,7 +90,9 @@ export default function PayrollBatchDetailsPage() {
 
   const totals = useMemo(() => {
     let totalBasePay = 0;
-    let totalAllowanceOt = 0;
+    let totalAllowances = 0;
+    let totalOvertimeHours = 0;
+    let totalOvertimePay = 0;
     let totalTax = 0;
     let totalIkimina = 0;
     let totalOtherDeductions = 0;
@@ -94,7 +103,9 @@ export default function PayrollBatchDetailsPage() {
     rows.forEach((item: any) => {
       const {
         basePay,
-        allowanceOt,
+        allowances,
+        overtimeHours,
+        overtimePay,
         grossPay,
         tax,
         ikimina,
@@ -104,7 +115,9 @@ export default function PayrollBatchDetailsPage() {
       } = getPayrollItemAmounts(item, batch);
 
       totalBasePay += basePay;
-      totalAllowanceOt += allowanceOt;
+      totalAllowances += allowances;
+      totalOvertimeHours += overtimeHours;
+      totalOvertimePay += overtimePay;
       totalGrossPay += grossPay;
       totalTax += tax;
       totalIkimina += ikimina;
@@ -115,7 +128,9 @@ export default function PayrollBatchDetailsPage() {
 
     return {
       totalBasePay,
-      totalAllowanceOt,
+      totalAllowances,
+      totalOvertimeHours,
+      totalOvertimePay,
       totalGrossPay,
       totalTax,
       totalIkimina,
@@ -185,19 +200,31 @@ export default function PayrollBatchDetailsPage() {
   if (!batch) return <div className="p-8 text-sm text-muted-foreground">Loading payroll batch...</div>;
 
   const roles = user?.roles ?? [];
-  const isAccountant = roles.includes('ACCOUNTANT');
   const isBranchManager = roles.includes('BRANCH_MANAGER');
   const isSuperAdmin = roles.includes('SUPER_ADMIN');
+  const isApproved = batch.status === 'APPROVED';
+  const isRejected = batch.status === 'REJECTED' || batch.status.startsWith('REJECTED');
 
-  const isTerminal = batch.status === 'APPROVED' || batch.status === 'REJECTED';
-
-  const canSubmit = !isTerminal && (batch.status === 'DRAFT' || batch.status.startsWith('REJECTED')) && isAccountant;
+  const canSubmit = !isApproved && (batch.status === 'DRAFT' || isRejected);
   
-  const canApproveBM = !isTerminal && batch.status === 'PENDING' && (isBranchManager || isSuperAdmin);
-  const canApproveAdmin = !isTerminal && batch.status === 'MANAGER_APPROVED' && isSuperAdmin;
-  const canApprove = canApproveBM || canApproveAdmin;
+  const canApproveInitial = !isApproved && batch.status === 'PENDING' && (
+    user?.permissions?.includes('payroll.approve_initial') ||
+    user?.permissions?.includes('payroll.approve') ||
+    isBranchManager ||
+    isSuperAdmin
+  );
+
+  const canApproveFinal = !isApproved && batch.status === 'MANAGER_APPROVED' && (
+    user?.permissions?.includes('payroll.approve_final') ||
+    user?.permissions?.includes('payroll.approve') ||
+    isSuperAdmin
+  );
+
+  const canApprove = canApproveInitial || canApproveFinal;
   const batchPaymentDate = rows[0]?.transaction?.payment_date ?? batch.approved_at;
   const hasRows = rows.length > 0;
+  const activityTrail = batch.activity_trail ?? batch.approval_actions ?? [];
+  const attachments = Array.isArray(batch.attachments) ? batch.attachments : [];
 
   return (
     <div className="space-y-8 pb-12">
@@ -219,7 +246,7 @@ export default function PayrollBatchDetailsPage() {
         <div className="flex gap-2">
           {canSubmit && (
             <Button className="bg-primary hover:bg-primary/90 gap-2 shadow-lg" onClick={() => handleAction('SUBMIT')}>
-              <Save className="h-4 w-4" /> {batch.status.startsWith('REJECTED') ? 'Resubmit for Review' : 'Submit for Review'}
+              <Save className="h-4 w-4" /> {isRejected ? 'Resubmit for Review' : 'Submit for Review'}
             </Button>
           )}
           <Button variant="outline" className="gap-2" onClick={handleExport}>
@@ -236,9 +263,9 @@ export default function PayrollBatchDetailsPage() {
                 <DialogContent>
                   <DialogHeader>
                     <DialogTitle>Reject Payroll Batch</DialogTitle>
-                    <DialogDescription>Please provide a reason for the rejection. This will be visible to the batch creator.</DialogDescription>
+                    <DialogDescription>Please provide a reason for the rejection. This will be sent as a notification to the batch creator.</DialogDescription>
                   </DialogHeader>
-                  <Textarea placeholder="Type reason here..." value={comment} onChange={(e) => setComment(e.target.value)} className="min-h-[100px]" />
+                  <Textarea placeholder="Type rejection reason here..." value={comment} onChange={(e) => setComment(e.target.value)} className="min-h-[100px]" />
                   <DialogFooter>
                     <Button variant="ghost" onClick={() => setComment('')}>Cancel</Button>
                     <Button variant="destructive" onClick={() => handleAction('REJECT')}>Confirm Rejection</Button>
@@ -248,23 +275,23 @@ export default function PayrollBatchDetailsPage() {
               <Dialog>
                 <DialogTrigger asChild>
                   <Button className="bg-emerald-600 hover:bg-emerald-700 gap-2 shadow-lg shadow-emerald-600/20">
-                    <CheckCircle2 className="h-4 w-4" /> {canApproveAdmin ? 'Final Authorization' : 'Manager Approval'}
+                    <CheckCircle2 className="h-4 w-4" /> {canApproveFinal ? 'Final Authorization' : 'Initial Approval'}
                   </Button>
                 </DialogTrigger>
                 <DialogContent>
                   <DialogHeader>
-                    <DialogTitle>{canApproveAdmin ? 'Final Authorization' : 'Manager Approval'}</DialogTitle>
+                    <DialogTitle>{canApproveFinal ? 'Final Authorization' : 'Initial Approval'}</DialogTitle>
                     <DialogDescription>
-                      {canApproveAdmin 
+                      {canApproveFinal 
                         ? `You are authorizing the final disbursement of ${formatRwf(batch.total_amount)} to ${rows.length} employees.`
-                        : `You are approving this batch for final review by HQ.`}
+                        : `You are approving this batch for final authorization.`}
                     </DialogDescription>
                   </DialogHeader>
                   <Textarea placeholder="Optional comment..." value={comment} onChange={(e) => setComment(e.target.value)} />
                   <DialogFooter>
                     <Button variant="ghost" onClick={() => setComment('')}>Cancel</Button>
                     <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={() => handleAction('APPROVE')}>
-                      {canApproveAdmin ? 'Execute Payment' : 'Confirm Approval'}
+                      {canApproveFinal ? 'Execute Payment' : 'Confirm Approval'}
                     </Button>
                   </DialogFooter>
                 </DialogContent>
@@ -273,6 +300,33 @@ export default function PayrollBatchDetailsPage() {
           )}
         </div>
       </div>
+
+      {isRejected && batch.rejected_reason && (
+        <div className="rounded-2xl border border-rose-200 bg-rose-50 p-5 text-sm text-rose-900 shadow-sm">
+          <div className="flex items-center gap-2 font-bold text-rose-800 text-base">
+            <XCircle className="h-5 w-5 text-rose-600" />
+            Batch Rejected by Reviewer
+          </div>
+          <p className="mt-2 text-rose-700 font-medium whitespace-pre-wrap">
+            Reason: {batch.rejected_reason}
+          </p>
+          <p className="mt-2 text-xs text-rose-600">
+            Please make any required updates to employees/time records and click <strong>Resubmit for Review</strong> above to submit this batch back into the approval workflow.
+          </p>
+        </div>
+      )}
+
+      {isApproved && (
+        <div className="rounded-2xl border bg-slate-50 p-4 text-sm text-muted-foreground">
+          <div className="flex items-center gap-2 font-semibold text-slate-800">
+            <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+            Completed & Approved Batch
+          </div>
+          <p className="mt-1">
+            This payroll batch is fully approved and locked. The edit button is disabled and no further changes can be made.
+          </p>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-6 gap-6">
         <Card className="border-none shadow-sm">
@@ -338,9 +392,11 @@ export default function PayrollBatchDetailsPage() {
                       <TableHead>Role / Dept</TableHead>
                       <TableHead>Attendance</TableHead>
                       <TableHead className="text-right">Basic Pay</TableHead>
-                      <TableHead className="text-right">Allowances/OT</TableHead>
+                      <TableHead className="text-right">PIT Tax</TableHead>
+                      <TableHead className="text-right">Allowances</TableHead>
+                      <TableHead className="text-right">OT Hours</TableHead>
+                      <TableHead className="text-right">OT Pay</TableHead>
                       <TableHead className="text-right">Gross Pay</TableHead>
-                      <TableHead className="text-right">Tax</TableHead>
                       <TableHead className="text-right">Ikimina</TableHead>
                       <TableHead className="text-right">Other Deductions</TableHead>
                       <TableHead className="text-right">Net Pay</TableHead>
@@ -350,7 +406,7 @@ export default function PayrollBatchDetailsPage() {
                   <TableBody>
                     {paginatedRows.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={12} className="text-center py-16 text-muted-foreground italic">
+                        <TableCell colSpan={14} className="text-center py-16 text-muted-foreground italic">
                           No employees are attached to this payroll batch.
                         </TableCell>
                       </TableRow>
@@ -381,14 +437,16 @@ export default function PayrollBatchDetailsPage() {
                             </div>
                           </TableCell>
                           <TableCell className="text-right">{formatRwf(amounts.basePay)}</TableCell>
-                          <TableCell className="text-right text-emerald-600">{formatRwf(amounts.allowanceOt)}</TableCell>
-                          <TableCell className="text-right font-medium">{formatRwf(amounts.grossPay)}</TableCell>
                           <TableCell className="text-right text-rose-600">
                             <div className="flex flex-col">
                               <span>{amounts.tax > 0 ? `-${formatRwf(amounts.tax)}` : '-'}</span>
                               {amounts.tax > 0 && <span className="text-[10px] text-muted-foreground">{taxLabel}</span>}
                             </div>
                           </TableCell>
+                          <TableCell className="text-right text-emerald-600">{formatRwf(amounts.allowances)}</TableCell>
+                          <TableCell className="text-right font-medium">{amounts.overtimeHours.toLocaleString()}</TableCell>
+                          <TableCell className="text-right text-emerald-600">{formatRwf(amounts.overtimePay)}</TableCell>
+                          <TableCell className="text-right font-medium">{formatRwf(amounts.grossPay)}</TableCell>
                           <TableCell className="text-right font-medium text-purple-600">
                             {amounts.ikimina > 0 ? `-${formatRwf(amounts.ikimina)}` : '—'}
                           </TableCell>
@@ -426,9 +484,11 @@ export default function PayrollBatchDetailsPage() {
                       <TableRow className="bg-secondary/20 font-bold border-t-2">
                         <TableCell colSpan={4}>Total</TableCell>
                         <TableCell className="text-right">{formatRwf(totals.totalBasePay)}</TableCell>
-                        <TableCell className="text-right text-emerald-600">{formatRwf(totals.totalAllowanceOt)}</TableCell>
-                        <TableCell className="text-right">{formatRwf(totals.totalGrossPay)}</TableCell>
                         <TableCell className="text-right text-rose-600">-{formatRwf(totals.totalTax)}</TableCell>
+                        <TableCell className="text-right text-emerald-600">{formatRwf(totals.totalAllowances)}</TableCell>
+                        <TableCell className="text-right">{totals.totalOvertimeHours.toLocaleString()}</TableCell>
+                        <TableCell className="text-right text-emerald-600">{formatRwf(totals.totalOvertimePay)}</TableCell>
+                        <TableCell className="text-right">{formatRwf(totals.totalGrossPay)}</TableCell>
                         <TableCell className="text-right text-purple-600">
                           {totals.totalIkimina > 0 ? `-${formatRwf(totals.totalIkimina)}` : '—'}
                         </TableCell>
@@ -479,28 +539,102 @@ export default function PayrollBatchDetailsPage() {
         <TabsContent value="history">
           <Card className="border-none shadow-sm">
             <CardContent className="pt-6 space-y-6">
-              {(batch.approval_actions ?? []).map((step: any, idx: number) => (
+              {activityTrail.length > 0 ? activityTrail.map((step: any, idx: number) => {
+                const isRejected = String(step.action).includes('REJECT') || String(step.action).includes('DENIED');
+                const actorName = step.actor?.name ?? step.actionBy?.email ?? step.action_by ?? 'System';
+                const actorEmail = step.actor?.email ?? step.actionBy?.email;
+                return (
                 <div key={idx} className="flex gap-4 relative">
-                  {idx < (batch.approval_actions?.length ?? 0) - 1 && (
+                  {idx < activityTrail.length - 1 && (
                     <div className="absolute left-[19px] top-10 bottom-0 w-0.5 bg-slate-200" />
                   )}
                   <div className={`h-10 w-10 rounded-full flex items-center justify-center shrink-0 shadow-sm border ${
-                    step.action === 'REJECTED' ? 'bg-rose-500 text-white' : 'bg-emerald-500 text-white'
+                    isRejected ? 'bg-rose-500 text-white' : 'bg-emerald-500 text-white'
                   }`}>
-                    {step.action === 'REJECTED' ? <XCircle className="h-5 w-5" /> : <CheckCircle2 className="h-5 w-5" />}
+                    {isRejected ? <XCircle className="h-5 w-5" /> : <CheckCircle2 className="h-5 w-5" />}
                   </div>
                   <div className="flex-1 space-y-1 pb-8">
-                    <div className="flex items-center justify-between">
-                      <p className="font-bold">{step.action} - {step.actionBy?.email ?? step.action_by}</p>
-                      <span className="text-xs font-medium text-muted-foreground">{new Date(step.action_at).toLocaleString()}</span>
+                    <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <p className="font-bold">{step.label ?? step.action}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {actorName}{actorEmail ? ` (${actorEmail})` : ''}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {step.scope && <Badge variant="outline" className="text-[10px]">{step.scope}</Badge>}
+                        <span className="text-xs font-medium text-muted-foreground">{new Date(step.action_at).toLocaleString()}</span>
+                      </div>
                     </div>
                     <div className="bg-secondary/40 p-3 rounded-xl flex gap-3 items-start">
                       <MessageSquare className="h-4 w-4 text-muted-foreground mt-0.5" />
-                      <p className="text-sm italic">"{step.comment ?? 'No comment'}"</p>
+                      <p className="text-sm italic">{step.comment ?? 'No comment'}</p>
                     </div>
                   </div>
                 </div>
-              ))}
+                );
+              }) : (
+                <div className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">
+                  No batch activity has been recorded yet.
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="documents">
+          <Card className="border-none shadow-sm">
+            <CardContent className="pt-6 space-y-6">
+              <div className="rounded-xl border bg-slate-50 p-4">
+                <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Batch Description</p>
+                <p className="mt-2 text-sm text-slate-700 whitespace-pre-wrap">
+                  {batch.description?.trim() || 'No description was added to this batch.'}
+                </p>
+              </div>
+
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-bold">Attachments</p>
+                  <Badge variant="outline">{attachments.length}</Badge>
+                </div>
+                {attachments.length > 0 ? (
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {attachments.map((attachment: any, index: number) => (
+                      <div key={attachment.id ?? index} className="rounded-xl border bg-white p-4 shadow-sm">
+                        <div className="flex items-start gap-3">
+                          <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center">
+                            <Paperclip className="h-4 w-4 text-primary" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-bold">{attachment.original_name ?? attachment.name ?? 'Attachment'}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {attachment.mime_type ?? 'File'} • {attachment.size ? `${(Number(attachment.size) / 1024).toFixed(1)} KB` : 'Size unknown'}
+                            </p>
+                            {attachment.uploaded_at && (
+                              <p className="mt-1 text-[10px] text-muted-foreground">Uploaded {new Date(attachment.uploaded_at).toLocaleString()}</p>
+                            )}
+                          </div>
+                          {attachment.url && (
+                            <a
+                              href={getAttachmentUrl(attachment.url)}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-md border text-muted-foreground hover:text-primary"
+                              title="Open attachment"
+                            >
+                              <ExternalLink className="h-4 w-4" />
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">
+                    No attachments were added to this payroll batch.
+                  </div>
+                )}
+              </div>
             </CardContent>
           </Card>
         </TabsContent>

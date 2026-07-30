@@ -40,3 +40,13 @@ export const markAllAsRead = async () => {
   const response = await api.patch("/notifications/read-all");
   return response.data;
 };
+
+export const clearNotification = async (uuid: string) => {
+  const response = await api.patch(`/notifications/${uuid}/clear`);
+  return response.data;
+};
+
+export const clearAllNotifications = async () => {
+  const response = await api.patch("/notifications/clear-all");
+  return response.data;
+};

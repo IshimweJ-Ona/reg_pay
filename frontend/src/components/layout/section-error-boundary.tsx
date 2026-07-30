@@ -1,7 +1,7 @@
 
 "use client";
 
-import React, { Component, ErrorInfo, ReactNode } from "react";
+import { Component, ErrorInfo, ReactNode } from "react";
 import { AlertCircle, RefreshCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -18,7 +18,8 @@ export class SectionErrorBoundary extends Component<Props, State> {
     hasError: false
   };
 
-  public static getDerivedStateFromError(_: Error): State {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- required by React's Component contract
+  public static getDerivedStateFromError(error: Error): State {
     return { hasError: true };
   }
 

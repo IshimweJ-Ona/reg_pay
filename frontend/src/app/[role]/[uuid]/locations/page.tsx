@@ -1,7 +1,7 @@
 
 "use client";
 
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { 
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow 
 } from "@/components/ui/table";
@@ -126,10 +126,44 @@ export default function LocationsManagementPage() {
         )}
       </div>
 
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="bg-white rounded-2xl border shadow-sm p-5 flex items-center gap-4">
+          <div className="h-11 w-11 rounded-xl bg-primary/10 flex items-center justify-center">
+            <MapPin className="h-5 w-5 text-primary" />
+          </div>
+          <div>
+            <p className="text-2xl font-bold leading-none">{locations.length}</p>
+            <p className="text-xs text-muted-foreground mt-1">Working locations</p>
+          </div>
+        </div>
+        <div className="bg-white rounded-2xl border shadow-sm p-5 flex items-center gap-4">
+          <div className="h-11 w-11 rounded-xl bg-emerald-500/10 flex items-center justify-center">
+            <Users className="h-5 w-5 text-emerald-600" />
+          </div>
+          <div>
+            <p className="text-2xl font-bold leading-none">
+              {locations.reduce((sum, loc) => sum + (loc.user_count ?? 0), 0)}
+            </p>
+            <p className="text-xs text-muted-foreground mt-1">Total users</p>
+          </div>
+        </div>
+        <div className="bg-white rounded-2xl border shadow-sm p-5 flex items-center gap-4">
+          <div className="h-11 w-11 rounded-xl bg-accent/10 flex items-center justify-center">
+            <Building2 className="h-5 w-5 text-accent" />
+          </div>
+          <div>
+            <p className="text-2xl font-bold leading-none">
+              {locations.reduce((sum, loc) => sum + (loc.department_count ?? 0), 0)}
+            </p>
+            <p className="text-xs text-muted-foreground mt-1">Total departments</p>
+          </div>
+        </div>
+      </div>
+
       <div className="relative w-full max-w-md">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <Input 
-          placeholder="Search branches by name or address..." 
+        <Input
+          placeholder="Search branches by name or address..."
           className="pl-10 h-11 border-none bg-white shadow-sm"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
@@ -167,10 +201,10 @@ export default function LocationsManagementPage() {
                 <TableCell>
                   <div className="flex gap-4">
                     <div className="flex items-center gap-1.5 text-sm">
-                      <Users className="h-4 w-4 text-muted-foreground" /> {loc._count?.users ?? 0}
+                      <Users className="h-4 w-4 text-muted-foreground" /> {loc.user_count ?? 0} people
                     </div>
                     <div className="flex items-center gap-1.5 text-sm">
-                      <Building2 className="h-4 w-4 text-muted-foreground" /> {loc._count?.departments ?? 0}
+                      <Building2 className="h-4 w-4 text-muted-foreground" /> {loc.department_count ?? 0} depts
                     </div>
                   </div>
                 </TableCell>
