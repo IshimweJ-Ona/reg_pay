@@ -6,8 +6,6 @@ import {
   IsEnum,
   IsNotEmpty,
   IsOptional,
-  IsInt,
-  Min,
   IsString,
 } from 'class-validator';
 
@@ -66,8 +64,6 @@ export class CreatePaymentStructureDto {
   })
   @IsDecimal()
   tax_percentage: string;
-
-
 
   @ApiProperty({
     example: '2024-01-01',

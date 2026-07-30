@@ -122,6 +122,12 @@ export class EmployeesController {
       'phone number, or national ID.',
     example: 'Jean Mugisha',
   })
+  @ApiQuery({
+    name: 'department_id',
+    required: false,
+    type: String,
+    description: 'Filter to employees in one specific department (numeric id).',
+  })
   @ApiResponse({
     status: 200,
     description: 'Employees list returned successfully ',
@@ -135,8 +141,12 @@ export class EmployeesController {
     status: 403,
     description: 'Restricted permission or role.',
   })
-  findAll(@CurrentUser() actor: CurrentUserType, @Query('q') q?: string) {
-    return this.employeesService.findAll(actor, q);
+  findAll(
+    @CurrentUser() actor: CurrentUserType,
+    @Query('q') q?: string,
+    @Query('department_id') departmentId?: string,
+  ) {
+    return this.employeesService.findAll(actor, q, departmentId);
   }
 
   // GET /employees/:uuid

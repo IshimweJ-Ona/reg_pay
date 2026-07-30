@@ -31,6 +31,10 @@ export class CreatePayrollBatchDto {
   payment_method: transactions_payment_method;
 
   @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsOptional()
   @IsDateString()
   start_date?: string;
 

@@ -1,35 +1,50 @@
-import { BadRequestException, Injectable, NotFoundException, Inject } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+  Inject,
+} from '@nestjs/common';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import * as cacheManager from 'cache-manager';
-import { audit_logs_activity_type, audit_logs_action, working_locations_type, Prisma } from '@prisma/client';
+import {
+  audit_logs_activity_type,
+  audit_logs_action,
+  working_locations_type,
+  Prisma,
+} from '@prisma/client';
 
 import type { CurrentUserType } from '../auth/types/current-user.type';
-import { isNumericId, normalizeSearch, requireUuidOrNumeric } from '../common/utils/lookup.util';
+import {
+  isNumericId,
+  normalizeEntityName,
+  normalizeSearch,
+  requireUuidOrNumeric,
+} from '../common/utils/lookup.util';
 import { hasEffectivePermission } from '../common/utils/effective-permissions.util';
 import { generateUUID } from '../common/utils/uuid.util';
 import { PrismaService } from '../prisma/prisma.service';
-import { NotificationsService } from '../notifications/notifications.service';
 
 import { AssignManagerDto } from './dto/assign-manager.dto';
 import { CreateWorkingLocationDto } from './dto/create-working-location.dto';
 import { UpdateWorkingLocationDto } from './dto/update-working-location.dto';
 
 function normalizeName(name: string): string {
-  if (!name) return '';
-  return name.toLowerCase().replace(/[_\-\.]/g, ' ').replace(/\s+/g, ' ').trim();
+  return normalizeEntityName(name);
 }
 
 @Injectable()
 export class OrganizationService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly notificationsService: NotificationsService,
     @Inject(CACHE_MANAGER) private cacheManager: cacheManager.Cache,
   ) {}
 
   // Mutations require branches.manage at the controller and explicit
   // all-branches access here so scoped branch roles cannot edit the org tree.
-  async createWorkingLocation(dto: CreateWorkingLocationDto, actor: CurrentUserType) {
+  async createWorkingLocation(
+    dto: CreateWorkingLocationDto,
+    actor: CurrentUserType,
+  ) {
     this.ensureActorCanManageAllBranches(actor);
 
     if (!dto.name || !dto.type || !dto.address) {
@@ -46,9 +61,13 @@ export class OrganizationService {
       select: { name: true },
     });
     const normalizedNew = normalizeName(locationName);
-    const duplicate = activeLocations.find((loc) => normalizeName(loc.name) === normalizedNew);
+    const duplicate = activeLocations.find(
+      (loc) => normalizeName(loc.name) === normalizedNew,
+    );
     if (duplicate) {
-      throw new BadRequestException(`A working location named '${duplicate.name}' already exists.`);
+      throw new BadRequestException(
+        `A working location named '${duplicate.name}' already exists.`,
+      );
     }
 
     if (locationType === working_locations_type.HQ) {
@@ -101,7 +120,11 @@ export class OrganizationService {
           activity_description: `Created ${locationType.toLowerCase()} working location.`,
           action: audit_logs_action.CREATED,
           old_values: Prisma.JsonNull,
-          new_values: { name: created.name, type: created.type, address: created.address },
+          new_values: {
+            name: created.name,
+            type: created.type,
+            address: created.address,
+          },
         },
       });
 
@@ -112,7 +135,11 @@ export class OrganizationService {
     return this.serializeWorkingLocation(workingLocation);
   }
 
-  async findWorkingLocations(actor?: CurrentUserType, qInput?: string, scope?: string) {
+  async findWorkingLocations(
+    actor?: CurrentUserType,
+    qInput?: string,
+    scope?: string,
+  ) {
     const q = normalizeSearch(qInput);
     const canReadAllBranches = this.canReadAllBranches(actor);
 
@@ -147,7 +174,9 @@ export class OrganizationService {
         ...(actor && !isUnrestricted && actor.working_location_id
           ? { id: BigInt(actor.working_location_id) }
           : {}),
-        ...(q ? { OR: [{ name: { contains: q } }, { address: { contains: q } }] } : {}),
+        ...(q
+          ? { OR: [{ name: { contains: q } }, { address: { contains: q } }] }
+          : {}),
       },
       include: {
         // "users" isn't a valid relation name here because working_locations
@@ -166,14 +195,20 @@ export class OrganizationService {
     });
 
     const result = {
-      working_locations: workingLocations.map((wl) => this.serializeWorkingLocation(wl)),
+      working_locations: workingLocations.map((wl) =>
+        this.serializeWorkingLocation(wl),
+      ),
     };
 
     await this.cacheManager.set(cacheKey, result, 60000);
     return result;
   }
 
-  async updateWorkingLocation(uuid: string, dto: UpdateWorkingLocationDto, actor: CurrentUserType) {
+  async updateWorkingLocation(
+    uuid: string,
+    dto: UpdateWorkingLocationDto,
+    actor: CurrentUserType,
+  ) {
     this.ensureActorCanManageAllBranches(actor);
 
     const current = await this.prisma.working_locations.findFirst({
@@ -190,20 +225,34 @@ export class OrganizationService {
       select: { name: true },
     });
     const normalizedNew = normalizeName(newName);
-    const duplicate = activeLocations.find((loc) => normalizeName(loc.name) === normalizedNew);
+    const duplicate = activeLocations.find(
+      (loc) => normalizeName(loc.name) === normalizedNew,
+    );
     if (duplicate) {
-      throw new BadRequestException(`A working location named '${duplicate.name}' already exists.`);
+      throw new BadRequestException(
+        `A working location named '${duplicate.name}' already exists.`,
+      );
     }
 
-    if (newType === working_locations_type.HQ && current.type !== working_locations_type.HQ) {
+    if (
+      newType === working_locations_type.HQ &&
+      current.type !== working_locations_type.HQ
+    ) {
       const existingHq = await this.prisma.working_locations.findFirst({
         where: { type: working_locations_type.HQ, deleted_at: null },
         select: { id: true },
       });
-      if (existingHq) throw new BadRequestException('Only one headquarters branch can exist.');
+      if (existingHq)
+        throw new BadRequestException(
+          'Only one headquarters branch can exist.',
+        );
     }
 
-    const oldValues = { name: current.name, type: current.type, address: current.address };
+    const oldValues = {
+      name: current.name,
+      type: current.type,
+      address: current.address,
+    };
 
     const updated = await this.prisma.$transaction(async (tx) => {
       const saved = await tx.working_locations.update({
@@ -227,7 +276,11 @@ export class OrganizationService {
           activity_description: 'Updated branch details.',
           action: audit_logs_action.UPDATED,
           old_values: oldValues,
-          new_values: { name: saved.name, type: saved.type, address: saved.address },
+          new_values: {
+            name: saved.name,
+            type: saved.type,
+            address: saved.address,
+          },
         },
       });
 
@@ -249,7 +302,11 @@ export class OrganizationService {
     const deleted = await this.prisma.$transaction(async (tx) => {
       await tx.working_locations.update({
         where: { id: current.id },
-        data: { deleted_at: new Date(), deleted_by: BigInt(actor.userId), updated_at: new Date() },
+        data: {
+          deleted_at: new Date(),
+          deleted_by: BigInt(actor.userId),
+          updated_at: new Date(),
+        },
       });
 
       await tx.audit_logs.create({
@@ -328,7 +385,10 @@ export class OrganizationService {
         // manager themself), so Prisma auto-names the manager relation
         // `users_branch_managers_user_idTousers`. The location relation is
         // just `working_locations`, not `branch`.
-        include: { users_branch_managers_user_idTousers: true, working_locations: true },
+        include: {
+          users_branch_managers_user_idTousers: true,
+          working_locations: true,
+        },
       });
 
       await tx.audit_logs.create({
@@ -358,12 +418,24 @@ export class OrganizationService {
   }
 
   private serializeWorkingLocation(workingLocation: Record<string, any>) {
+    // Prisma auto-names the `_count` key for the users relation after its
+    // full FK-qualified relation name (working_locations has four relations
+    // to `users`), e.g. `users_users_working_location_idToworking_locations`.
+    // The frontend was reading `_count.users`, which never existed, so the
+    // "people" total on the branches page always rendered as 0. Expose
+    // plain, stable field names instead of leaking that Prisma internal.
+    const counts = workingLocation._count ?? {};
+
     return {
       ...workingLocation,
       id: workingLocation.id.toString(),
       created_by: workingLocation.created_by?.toString() ?? null,
       updated_by: workingLocation.updated_by?.toString() ?? null,
       deleted_by: workingLocation.deleted_by?.toString() ?? null,
+      user_count:
+        counts.users_users_working_location_idToworking_locations ?? 0,
+      department_count: counts.departments ?? 0,
+      employee_count: counts.employees ?? 0,
     };
   }
 
@@ -407,7 +479,8 @@ export class OrganizationService {
         ? {
             ...managerUser,
             id: managerUser.id.toString(),
-            working_location_id: managerUser.working_location_id?.toString() ?? null,
+            working_location_id:
+              managerUser.working_location_id?.toString() ?? null,
             department_id: managerUser.department_id?.toString() ?? null,
           }
         : undefined,

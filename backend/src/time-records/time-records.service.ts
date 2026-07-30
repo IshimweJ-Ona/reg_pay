@@ -17,7 +17,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ApproveTimeRecordDto } from './dto/approve-time-record.dto';
 import { CreateTimeRecordDto } from './dto/create-time-record.dto';
 import { UpdateTimeRecordDto } from './dto/update-time-record.dto';
-import { BulkImportDto } from './dto/bulk-import.dto';
+import { BulkAttendanceStatus, BulkImportDto } from './dto/bulk-import.dto';
 import dayjs from 'dayjs';
 import { NotificationsService } from '../notifications/notifications.service';
 
@@ -45,9 +45,9 @@ export class TimeRecordsService {
       );
     }
 
-    const hours_worked = this.normalizeHours(
-      dto.attendance_status ?? 'PRESENT' as any,
-      dto.hours_worked,
+    const overtime_hours = this.normalizeHours(
+      dto.attendance_status ?? ('PRESENT' as any),
+      dto.overtime_hours,
     );
 
     const record = await this.prisma.$transaction(async (tx) => {
@@ -56,8 +56,8 @@ export class TimeRecordsService {
           uuid: generateUUID(),
           employee_id: employeeId,
           attendance_date: attendanceDate,
-          hours_worked,
-          attendance_status: dto.attendance_status ?? 'PRESENT' as any,
+          overtime_hours,
+          attendance_status: dto.attendance_status ?? ('PRESENT' as any),
           // Denormalized from the employee at write-time so permission-driven
           // query scoping (MODULE_SCOPE_CONFIG) can filter this table
           // directly without a relation join.
@@ -95,11 +95,10 @@ export class TimeRecordsService {
   }
 
   async bulkCreate(dto: BulkImportDto, actor: CurrentUserType) {
-
     const records = dto.records || [];
 
-    if ( records.length === 0) {
-      throw new BadRequestException('No records to import.')
+    if (records.length === 0) {
+      throw new BadRequestException('No records to import.');
     }
 
     let dateFrom: Date;
@@ -129,6 +128,36 @@ export class TimeRecordsService {
       );
     }
 
+    // Resolve working_location and department from names if provided
+    let scopeWorkingLocationId: bigint | null = null;
+    let scopeDepartmentId: bigint | null = null;
+
+    if (dto.working_location) {
+      const wl = await this.prisma.working_locations.findFirst({
+        where: { name: dto.working_location, deleted_at: null },
+        select: { id: true },
+      });
+      if (!wl) {
+        throw new BadRequestException(
+          `Working location "${dto.working_location}" not found.`,
+        );
+      }
+      scopeWorkingLocationId = wl.id;
+    }
+
+    if (dto.department) {
+      const dept = await this.prisma.departments.findFirst({
+        where: { name: dto.department },
+        select: { id: true },
+      });
+      if (!dept) {
+        throw new BadRequestException(
+          `Department "${dto.department}" not found.`,
+        );
+      }
+      scopeDepartmentId = dept.id;
+    }
+
     const errors: Array<{
       row: number;
       employee_id?: string;
@@ -148,11 +177,13 @@ export class TimeRecordsService {
     });
 
     const employeeMap = new Map<
-    string, {
-      id: bigint,
-      working_location_id?: bigint | null;
-      department_id?: bigint | null;
-    }>();
+      string,
+      {
+        id: bigint;
+        working_location_id?: bigint | null;
+        department_id?: bigint | null;
+      }
+    >();
     for (const emp of employees) {
       employeeMap.set(emp.id.toString(), emp);
     }
@@ -185,25 +216,49 @@ export class TimeRecordsService {
         continue;
       }
 
+      // If working_location scope is set, filter employees by that location
+      if (
+        scopeWorkingLocationId &&
+        employee.working_location_id !== scopeWorkingLocationId
+      ) {
+        errors.push({
+          row,
+          employee_id: recordDto.employee_id,
+          message: `Employee does not belong to working location "${dto.working_location}"`,
+        });
+        continue;
+      }
+
+      // If department scope is set, filter employees by that department
+      if (scopeDepartmentId && employee.department_id !== scopeDepartmentId) {
+        errors.push({
+          row,
+          employee_id: recordDto.employee_id,
+          message: `Employee does not belong to department "${dto.department}"`,
+        });
+        continue;
+      }
+
       try {
         this.ensureActorCanAccessEmployee(actor, employee);
       } catch (err: any) {
         errors.push({
           row,
           employee_id: recordDto.employee_id,
-          message: err.message || 'Actor is not allowed to manage this employee',
+          message:
+            err.message || 'Actor is not allowed to manage this employee',
         });
       }
 
-      if (!recordDto.attendance_status) {
+      const attendanceStatus = recordDto.attendance_status;
+      if (!attendanceStatus) {
         errors.push({
           row,
           employee_id: recordDto.employee_id,
           message: 'attendance_status is required',
         });
       } else if (
-        recordDto.attendance_status !== 'PRESENT' &&
-        recordDto.attendance_status !== 'ABSENT'
+        !Object.values(BulkAttendanceStatus).includes(attendanceStatus)
       ) {
         errors.push({
           row,
@@ -213,14 +268,13 @@ export class TimeRecordsService {
       }
 
       if (
-        recordDto.attendance_status === 'ABSENT' &&
-        (recordDto.hours_worked ?? 0) > 0
+        attendanceStatus === BulkAttendanceStatus.ABSENT &&
+        (recordDto.overtime_hours ?? 0) > 0
       ) {
         errors.push({
           row,
           employee_id: recordDto.employee_id,
-          message:
-            'hours_worked must be 0 when attendance_status is ABSENT',
+          message: 'overtime_hours must be 0 when attendance_status is ABSENT',
         });
       }
 
@@ -259,9 +313,6 @@ export class TimeRecordsService {
         errors,
       });
     }
-    
-    
-
 
     const syncedRecords = await this.prisma.$transaction(async (tx) => {
       const results: any[] = [];
@@ -270,9 +321,9 @@ export class TimeRecordsService {
         const attendanceDate = new Date(recordDto.attendance_date);
         const emp = employeeMap.get(recordDto.employee_id);
 
-        const hours_worked = this.normalizeHours(
+        const overtime_hours = this.normalizeHours(
           recordDto.attendance_status,
-          recordDto.hours_worked,
+          recordDto.overtime_hours,
         );
 
         const upserted = await tx.time_records.upsert({
@@ -284,14 +335,14 @@ export class TimeRecordsService {
           },
           update: {
             attendance_status: recordDto.attendance_status,
-            hours_worked,
+            overtime_hours,
           },
           create: {
             uuid: generateUUID(),
             employee_id: employeeId,
             attendance_date: attendanceDate,
             attendance_status: recordDto.attendance_status,
-            hours_worked,
+            overtime_hours,
             working_location_id: emp?.working_location_id ?? null,
             department_id: emp?.department_id ?? null,
             updated_at: new Date(),
@@ -352,9 +403,9 @@ export class TimeRecordsService {
         const attendanceDate = new Date(recordDto.attendance_date);
         const emp = employeeById.get(employeeId.toString());
 
-        const hours_worked = this.normalizeHours(
+        const overtime_hours = this.normalizeHours(
           recordDto.attendance_status,
-          recordDto.hours_worked,
+          recordDto.overtime_hours,
         );
 
         const record = await tx.time_records.upsert({
@@ -365,7 +416,7 @@ export class TimeRecordsService {
             },
           },
           update: {
-            hours_worked,
+            overtime_hours,
             attendance_status:
               recordDto.attendance_status ?? ATTENDANCE_STATUS.PRESENT,
           },
@@ -373,9 +424,9 @@ export class TimeRecordsService {
             uuid: generateUUID(),
             employee_id: employeeId,
             attendance_date: attendanceDate,
-            hours_worked,
+            overtime_hours,
             attendance_status:
-              recordDto.attendance_status ?? 'PRESENT' as any,
+              recordDto.attendance_status ?? ('PRESENT' as any),
             working_location_id: emp?.working_location_id ?? null,
             department_id: emp?.department_id ?? null,
             updated_at: new Date(),
@@ -393,26 +444,23 @@ export class TimeRecordsService {
     return { success: true, count: results.length };
   }
 
-  async update(
-    uuid: string,
-    dto: UpdateTimeRecordDto,
-    actor: CurrentUserType,
-  ) {
+  async update(uuid: string, dto: UpdateTimeRecordDto, actor: CurrentUserType) {
     const timeRecord = await this.findByUuidOrThrow(uuid);
     this.ensureActorCanAccessEmployee(actor, timeRecord.employees);
     this.ensureActorCanAccessEmployee(actor, timeRecord.employees);
 
-    const resolvedStatus = dto.attendance_status ?? timeRecord.attendance_status;
-    const hours_worked = this.normalizeHours(
+    const resolvedStatus =
+      dto.attendance_status ?? timeRecord.attendance_status;
+    const overtime_hours = this.normalizeHours(
       resolvedStatus,
-      dto.hours_worked ?? Number(timeRecord.hours_worked ?? 0),
+      dto.overtime_hours ?? Number(timeRecord.overtime_hours ?? 0),
     );
 
     const updated = await this.prisma.$transaction(async (tx) => {
       const saved = await tx.time_records.update({
         where: { id: timeRecord.id },
         data: {
-          hours_worked,
+          overtime_hours,
           attendance_status: dto.attendance_status ?? undefined,
         },
         include: this.includes(),
@@ -429,10 +477,10 @@ export class TimeRecordsService {
           activity_description: 'Updated attendance record.',
           action: AUDIT_ACTION.UPDATED,
           new_values: {
-            hours_worked,
+            overtime_hours,
             attendance_status: dto.attendance_status ?? undefined,
           },
-          changed_fields: ['hours_worked', 'attendance_status'],
+          changed_fields: ['overtime_hours', 'attendance_status'],
         },
       });
 
@@ -498,8 +546,10 @@ export class TimeRecordsService {
 
     if (filters?.start_date || filters?.end_date) {
       where.attendance_date = {};
-      if (filters.start_date) where.attendance_date.gte = new Date(filters.start_date);
-      if (filters.end_date) where.attendance_date.lte = new Date(filters.end_date);
+      if (filters.start_date)
+        where.attendance_date.gte = new Date(filters.start_date);
+      if (filters.end_date)
+        where.attendance_date.lte = new Date(filters.end_date);
     }
 
     if (filters?.employee_id) {
@@ -507,7 +557,9 @@ export class TimeRecordsService {
     }
 
     if (filters?.working_location_id) {
-      const wlId = await this.resolveWorkingLocationId(filters.working_location_id);
+      const wlId = await this.resolveWorkingLocationId(
+        filters.working_location_id,
+      );
       if (wlId === null) return [];
       where.employees = { ...where.employees, working_location_id: wlId };
     }
@@ -521,7 +573,9 @@ export class TimeRecordsService {
     return records.map((r) => this.serialize(r));
   }
 
-  private async resolveWorkingLocationId(value: string): Promise<bigint | null> {
+  private async resolveWorkingLocationId(
+    value: string,
+  ): Promise<bigint | null> {
     if (/^\d+$/.test(value)) return BigInt(value);
 
     const wlByUuid = await this.prisma.working_locations.findUnique({
@@ -601,7 +655,9 @@ export class TimeRecordsService {
     };
 
     if (filters?.working_location_id) {
-      const wlId = await this.resolveWorkingLocationId(filters.working_location_id);
+      const wlId = await this.resolveWorkingLocationId(
+        filters.working_location_id,
+      );
       if (wlId === null) return this.emptyPendingResponse(start, end);
 
       if (
@@ -662,7 +718,8 @@ export class TimeRecordsService {
     const recordedDatesByEmployee = new Map<string, Set<string>>();
     for (const record of records) {
       const employeeId = record.employee_id.toString();
-      const dateSet = recordedDatesByEmployee.get(employeeId) ?? new Set<string>();
+      const dateSet =
+        recordedDatesByEmployee.get(employeeId) ?? new Set<string>();
       dateSet.add(this.dateKey(record.attendance_date));
       recordedDatesByEmployee.set(employeeId, dateSet);
     }
@@ -730,8 +787,10 @@ export class TimeRecordsService {
     const where: any = { employee_id: employeeId };
     if (filters?.start_date || filters?.end_date) {
       where.attendance_date = {};
-      if (filters.start_date) where.attendance_date.gte = new Date(filters.start_date);
-      if (filters.end_date) where.attendance_date.lte = new Date(filters.end_date);
+      if (filters.start_date)
+        where.attendance_date.gte = new Date(filters.start_date);
+      if (filters.end_date)
+        where.attendance_date.lte = new Date(filters.end_date);
     }
 
     const records = await this.prisma.time_records.findMany({
@@ -766,29 +825,36 @@ export class TimeRecordsService {
   private includes() {
     return {
       employees: {
-        include: { employment_categories: true, departments: true },
+        include: {
+          employment_categories: true,
+          departments: true,
+          working_locations: true,
+        },
       },
       users: true,
     };
   }
 
   private serialize(record: Record<string, any>) {
+    const emp = record.employees;
     return {
       ...record,
       id: record.id.toString(),
       employee_id: record.employee_id.toString(),
       approved_by: record.approved_by?.toString() ?? null,
-      hours_worked: record.hours_worked?.toString() ?? null,
-      employee: record.employee
+      overtime_hours: record.overtime_hours?.toString() ?? null,
+      employee: emp
         ? {
-            ...record.employee,
-            id: record.employee.id.toString(),
-            created_by: record.employee.created_by?.toString() ?? null,
-            department_id: record.employee.department_id?.toString() ?? null,
-            working_location_id:
-              record.employee.working_location_id?.toString() ?? null,
+            ...emp,
+            id: emp.id.toString(),
+            created_by: emp.created_by?.toString() ?? null,
+            department_id: emp.department_id?.toString() ?? null,
+            working_location_id: emp.working_location_id?.toString() ?? null,
             employment_category_id:
-              record.employee.employment_category_id?.toString() ?? null,
+              emp.employment_category_id?.toString() ?? null,
+            department: emp.departments ?? undefined,
+            working_location: emp.working_locations ?? undefined,
+            employment_category: emp.employment_categories ?? undefined,
           }
         : undefined,
       approvedBy: record.approvedBy
@@ -803,14 +869,11 @@ export class TimeRecordsService {
     };
   }
 
-  private normalizeHours(
-    status: any,
-    hoursWorked?: number,
-  ): number {
+  private normalizeHours(status: any, overtimeHours?: number): number {
     if (status === 'ABSENT') {
       return 0;
     }
-    return hoursWorked ?? 0;
+    return overtimeHours ?? 0;
   }
 
   private toBigInt(value: string, fieldName: string): bigint {
@@ -835,7 +898,9 @@ export class TimeRecordsService {
     end.setHours(0, 0, 0, 0);
 
     if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
-      throw new BadRequestException('Please choose a valid attendance date range.');
+      throw new BadRequestException(
+        'Please choose a valid attendance date range.',
+      );
     }
 
     if (end.getTime() < start.getTime()) {
@@ -891,23 +956,14 @@ export class TimeRecordsService {
       where.working_location_id = BigInt(actor.working_location_id);
     }
 
-    // A BRANCH_MANAGER manages an entire working location, across every
-    // department in it — they are not scoped to just the one department
-    // their own user record happens to belong to. Department-level scoping
-    // is only for narrower "attendance actor" roles (e.g. a department
-    // attendant). Without this exemption, a branch manager whose own user
-    // row has a department_id set would only ever see/manage employees in
-    // that single department, and any bulk attendance import covering the
-    // rest of the branch would appear to have "no employees" or get
-    // rejected — while SUPER_ADMIN (fully exempted above) never hit this,
-    // which is why the same import worked for one role and not the other.
-    // Mirrors the identical isBranchManager exemption already used in
-    // employees.service.ts for the same reason.
-    const isBranchManager = actor.roles.some((role) =>
-      ['BRANCH_MANAGER'].includes(role),
+    // BRANCH_MANAGER and HR manage the whole working location, not just the
+    // department their own user row happens to belong to. Mirrors the same
+    // exemption in employees.service.ts.
+    const isExempt = actor.roles.some((role) =>
+      ['BRANCH_MANAGER', 'HR'].includes(role),
     );
 
-    if (!isBranchManager && actor.department_id) {
+    if (!isExempt && actor.department_id) {
       where.department_id = BigInt(actor.department_id);
     }
     return where;
@@ -931,14 +987,14 @@ export class TimeRecordsService {
       );
     }
 
-    // See employeeScopeWhere() above: branch managers are scoped to their
-    // working location only, never additionally to a single department.
-    const isBranchManager = actor.roles.some((role) =>
-      ['BRANCH_MANAGER'].includes(role),
+    // See employeeScopeWhere() above: branch managers and HR are scoped to
+    // their working location only, never additionally to a single department.
+    const isExempt = actor.roles.some((role) =>
+      ['BRANCH_MANAGER', 'HR'].includes(role),
     );
 
     if (
-      !isBranchManager &&
+      !isExempt &&
       actor.department_id &&
       employee.department_id?.toString() !== actor.department_id
     ) {

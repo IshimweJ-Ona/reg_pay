@@ -371,6 +371,18 @@ CREATE TABLE `notifications` (
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 -- CreateTable
+CREATE TABLE `notification_dismissals` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `notification_id` BIGINT NOT NULL,
+    `user_id` BIGINT NOT NULL,
+    `dismissed_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+
+    INDEX `idx_notification_dismissal_user`(`user_id`),
+    UNIQUE INDEX `Notification_dismissals_notification_id_user_id_key`(`notification_id`, `user_id`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
 CREATE TABLE `payment_batch_items` (
     `id` BIGINT NOT NULL AUTO_INCREMENT,
     `uuid` CHAR(36) NOT NULL,
@@ -408,6 +420,8 @@ CREATE TABLE `payment_batches` (
     `status` ENUM('DRAFT', 'PENDING', 'IN_REVIEW', 'MANAGER_APPROVED', 'APPROVED', 'REJECTED', 'REJECTED_BY_BRANCH_MANAGER', 'REJECTED_BY_SUPER_ADMIN') NOT NULL,
     `current_approval_step` INTEGER NOT NULL DEFAULT 1,
     `rejected_reason` TEXT NULL,
+    `description` TEXT NULL,
+    `attachments` JSON NULL,
     `submitted_by` BIGINT NOT NULL,
     `approved_by` BIGINT NULL,
     `submitted_at` DATETIME(3) NULL,
@@ -530,7 +544,7 @@ CREATE TABLE `time_records` (
     `uuid` CHAR(36) NOT NULL,
     `employee_id` BIGINT NOT NULL,
     `attendance_date` DATE NOT NULL,
-    `hours_worked` DECIMAL(5, 2) NOT NULL DEFAULT 0.00,
+    `overtime_hours` DECIMAL(5, 2) NOT NULL DEFAULT 0.00,
     `attendance_status` ENUM('PRESENT', 'ABSENT') NOT NULL,
     `approved_by` BIGINT NULL,
     `working_location_id` BIGINT NULL,
@@ -868,6 +882,12 @@ ALTER TABLE `notifications` ADD CONSTRAINT `Notifications_sender_id_fkey` FOREIG
 
 -- AddForeignKey
 ALTER TABLE `notifications` ADD CONSTRAINT `Notifications_user_id_fkey` FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `notification_dismissals` ADD CONSTRAINT `Notification_dismissals_notification_id_fkey` FOREIGN KEY (`notification_id`) REFERENCES `notifications`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `notification_dismissals` ADD CONSTRAINT `Notification_dismissals_user_id_fkey` FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE `payment_batch_items` ADD CONSTRAINT `Payment_batch_items_approved_by_fkey` FOREIGN KEY (`approved_by`) REFERENCES `users`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;

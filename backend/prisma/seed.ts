@@ -35,6 +35,19 @@
  *    19. Welcome notifications for branch managers
  *    20. System-wide admin notification
  *
+ *  PHASE 6 — Additional role users + workflow test accounts
+ *    21. HR at HQ (final payroll approver for every branch) + HR at
+ *        branch #1 (does initial-step-adjacent workflow testing only)
+ *    22. ACCOUNTANT at HQ, ATTENDANT at branch #1
+ *    23. One PENDING user + one SUSPENDED user (workflow testing)
+ *    24. One permission override (revoke) + one direct grant
+ *
+ *  PHASE 7 — Custom deduction type ("Infrastructure Levy") assignment
+ *
+ *  Attendance (time_records), Ikimina savings memberships, and payroll
+ *  batches/transactions are intentionally NOT seeded — a fresh environment starts with none, and
+ *  they're created through the app itself.
+ *
  * ═══════════════════════════════════════════════════════════════════
  *
  *  FIX NOTES (vs previous version):
@@ -59,6 +72,7 @@ import {
   person_gender,
   employees_status,
   users_status,
+  deduction_types_deduction_mode,
 } from '@prisma/client';
 import { generateUUID } from '../src/common/utils/uuid.util';
 import { hashPassword } from '../src/auth/utils/password.util';
@@ -941,6 +955,345 @@ async function main() {
 
   console.log('    System notifications created');
 
+  // ─────────────────────────────────────────────────────────────────
+  // PHASE 6 — ADDITIONAL ROLE USERS + WORKFLOW TEST ACCOUNTS
+  // ─────────────────────────────────────────────────────────────────
+  // Every phase above only ever created BRANCH_MANAGER users, so none of
+  // the other baseline roles (HR, ACCOUNTANT, ATTENDANT) had a single real
+  // account to log in as, and there was nothing to test approvals,
+  // suspensions, or per-user permission overrides against. This phase adds
+  // exactly enough of each to exercise those workflows end-to-end:
+  //   - HR at HQ is the final payroll approver for every branch's batches;
+  //     HR at branch #1 exists only to test branch-level workflows (they
+  //     have no payroll final-approval authority themselves). Create a
+  //     batch through the app to exercise approval — batches aren't seeded.
+  //   - One PENDING user tests the registration-approval workflow.
+  //   - One SUSPENDED user (at branch #2) tests suspend/reactivate and
+  //     confirms a suspended user's still-valid token is rejected on the
+  //     very next request (see jwt.strategy.ts).
+  console.log('\n');
+  console.log(' PHASE 6 — Additional role users & workflow test accounts');
+
+  const staffPassword = 'Staff@RegPay2024!';
+  const staffPasswordHash = await hashPassword(staffPassword);
+  const staffSummary: Array<{
+    role: string;
+    branch: string;
+    name: string;
+    email: string;
+    password: string;
+    note?: string;
+  }> = [];
+
+  const [branch1Name, branch1Data] = branchLocations[0];
+  const [branch2Name, branch2Data] = branchLocations[1] ?? branchLocations[0];
+  const branch1Code = locationCode(branch1Name);
+  const branch2Code = locationCode(branch2Name);
+  const branch1AdminDeptId = deptMap.get(`${branch1Data.id}-ADMIN`) ?? null;
+  const branch2AdminDeptId = deptMap.get(`${branch2Data.id}-ADMIN`) ?? null;
+
+  async function upsertStaffUser(opts: {
+    email: string;
+    firstName: string;
+    lastName: string;
+    gender: person_gender;
+    phoneIndex: number;
+    workingLocationId: bigint | null;
+    departmentId: bigint | null;
+    status: users_status;
+    roleName?: string;
+  }) {
+    const staffUser = await prisma.users.upsert({
+      where: { email: opts.email },
+      update: {
+        status: opts.status,
+        working_location_id: opts.workingLocationId,
+        department_id: opts.departmentId,
+        updated_at: new Date(),
+      },
+      create: {
+        uuid: generateUUID(),
+        first_name: opts.firstName,
+        last_name: opts.lastName,
+        email: opts.email,
+        phone_number: generatePhone(9500 + opts.phoneIndex),
+        password_hash: staffPasswordHash,
+        gender: opts.gender,
+        status: opts.status,
+        working_location_id: opts.workingLocationId,
+        department_id: opts.departmentId,
+        avatar_url:
+          opts.gender === person_gender.MALE
+            ? maleAvatarUrl(50 + opts.phoneIndex)
+            : femaleAvatarUrl(50 + opts.phoneIndex),
+        updated_at: new Date(),
+      },
+    });
+
+    if (opts.roleName) {
+      const roleId = roleIdMap.get(opts.roleName)!;
+      await prisma.user_roles.upsert({
+        where: { user_id_role_id: { user_id: staffUser.id, role_id: roleId } },
+        update: {},
+        create: { user_id: staffUser.id, role_id: roleId },
+      });
+    }
+
+    if (opts.departmentId) {
+      await prisma.user_departments.upsert({
+        where: {
+          user_id_department_id: {
+            user_id: staffUser.id,
+            department_id: opts.departmentId,
+          },
+        },
+        update: {},
+        create: { user_id: staffUser.id, department_id: opts.departmentId },
+      });
+    }
+
+    return staffUser;
+  }
+
+  const hrHq = await upsertStaffUser({
+    email: 'hr.hq@reg.rw',
+    firstName: 'Beatrice',
+    lastName: 'Uwimana',
+    gender: person_gender.FEMALE,
+    phoneIndex: 1,
+    workingLocationId: hqId,
+    departmentId: hqDept.id,
+    status: users_status.ACTIVE,
+    roleName: 'HR',
+  });
+  staffSummary.push({
+    role: 'HR',
+    branch: 'REG Headquarters',
+    name: `${hrHq.first_name} ${hrHq.last_name}`,
+    email: hrHq.email!,
+    password: staffPassword,
+    note: 'Final approver for every branch payroll batch',
+  });
+
+  const hrBranch1 = await upsertStaffUser({
+    email: `hr.${branch1Code.toLowerCase()}@reg.rw`,
+    firstName: 'Jean',
+    lastName: 'Habimana',
+    gender: person_gender.MALE,
+    phoneIndex: 2,
+    workingLocationId: branch1Data.id,
+    departmentId: branch1AdminDeptId,
+    status: users_status.ACTIVE,
+    roleName: 'HR',
+  });
+  staffSummary.push({
+    role: 'HR',
+    branch: branch1Name,
+    name: `${hrBranch1.first_name} ${hrBranch1.last_name}`,
+    email: hrBranch1.email!,
+    password: staffPassword,
+    note: 'Branch-level HR only — no payroll final-approval authority',
+  });
+
+  const accountantHq = await upsertStaffUser({
+    email: 'accountant.hq@reg.rw',
+    firstName: 'Claudine',
+    lastName: 'Mukamana',
+    gender: person_gender.FEMALE,
+    phoneIndex: 3,
+    workingLocationId: hqId,
+    departmentId: hqDept.id,
+    status: users_status.ACTIVE,
+    roleName: 'ACCOUNTANT',
+  });
+  staffSummary.push({
+    role: 'ACCOUNTANT',
+    branch: 'REG Headquarters',
+    name: `${accountantHq.first_name} ${accountantHq.last_name}`,
+    email: accountantHq.email!,
+    password: staffPassword,
+  });
+
+  const attendantBranch1 = await upsertStaffUser({
+    email: `attendant.${branch1Code.toLowerCase()}@reg.rw`,
+    firstName: 'Eric',
+    lastName: 'Nkurunziza',
+    gender: person_gender.MALE,
+    phoneIndex: 4,
+    workingLocationId: branch1Data.id,
+    departmentId: branch1AdminDeptId,
+    status: users_status.ACTIVE,
+    roleName: 'ATTENDANT',
+  });
+  staffSummary.push({
+    role: 'ATTENDANT',
+    branch: branch1Name,
+    name: `${attendantBranch1.first_name} ${attendantBranch1.last_name}`,
+    email: attendantBranch1.email!,
+    password: staffPassword,
+  });
+
+  const pendingApplicant = await upsertStaffUser({
+    email: 'pending.applicant@reg.rw',
+    firstName: 'Grace',
+    lastName: 'Mutoni',
+    gender: person_gender.FEMALE,
+    phoneIndex: 5,
+    workingLocationId: branch1Data.id,
+    departmentId: null,
+    status: users_status.PENDING,
+  });
+  staffSummary.push({
+    role: '(unassigned — PENDING)',
+    branch: branch1Name,
+    name: `${pendingApplicant.first_name} ${pendingApplicant.last_name}`,
+    email: pendingApplicant.email!,
+    password: staffPassword,
+    note: 'Awaiting approval — use to test the approve/reject registration workflow',
+  });
+
+  const suspendedStaff = await upsertStaffUser({
+    email: `suspended.${branch2Code.toLowerCase()}@reg.rw`,
+    firstName: 'Patrick',
+    lastName: 'Bizimana',
+    gender: person_gender.MALE,
+    phoneIndex: 6,
+    workingLocationId: branch2Data.id,
+    departmentId: branch2AdminDeptId,
+    status: users_status.SUSPENDED,
+    roleName: 'ATTENDANT',
+  });
+  staffSummary.push({
+    role: 'ATTENDANT',
+    branch: branch2Name,
+    name: `${suspendedStaff.first_name} ${suspendedStaff.last_name}`,
+    email: suspendedStaff.email!,
+    password: staffPassword,
+    note: 'SUSPENDED — has a pre-seeded refresh token; both /auth/refresh and any API call using its access token must be rejected',
+  });
+
+  // A real pre-seeded session for the suspended account, so the
+  // suspend/token-rejection scenario is directly testable against
+  // /auth/refresh without needing to log in first (which would fail anyway
+  // since the account is suspended).
+  const suspendedExistingSession = await prisma.user_sessions.findFirst({
+    where: { user_id: suspendedStaff.id },
+  });
+  if (!suspendedExistingSession) {
+    const suspendedSessionExpiry = new Date();
+    suspendedSessionExpiry.setDate(suspendedSessionExpiry.getDate() + 30);
+    await prisma.user_sessions.create({
+      data: {
+        uuid: generateUUID(),
+        user_id: suspendedStaff.id,
+        refresh_token_hash: generateRefreshTokenHash(suspendedStaff.id, branch2Name),
+        device_info: 'Seed Session — Suspended Test Account',
+        ip_address: '127.0.0.1',
+        is_revoked: false,
+        expires_at: suspendedSessionExpiry,
+      },
+    });
+  }
+
+  console.log(`    ${staffSummary.length} additional staff/test accounts created`);
+
+  // Per-user permission overrides — proves the override system actually
+  // works: revoke something HR's role would normally grant, and grant the
+  // accountant a permission their role normally doesn't have.
+  await prisma.user_permission_overrides.upsert({
+    where: {
+      user_id_permission_key: {
+        user_id: hrBranch1.id,
+        permission_key: 'employees.suspend',
+      },
+    },
+    update: {
+      is_allowed: false,
+      reason: 'Seed demo: role grants this, override revokes it for this specific user.',
+    },
+    create: {
+      uuid: generateUUID(),
+      user_id: hrBranch1.id,
+      permission_key: 'employees.suspend',
+      is_allowed: false,
+      changed_by: superAdmin.id,
+      reason: 'Seed demo: role grants this, override revokes it for this specific user.',
+      updated_at: new Date(),
+    },
+  });
+
+  await prisma.user_permissions.upsert({
+    where: {
+      user_id_permission_key: {
+        user_id: accountantHq.id,
+        permission_key: 'employees.read_all',
+      },
+    },
+    update: {},
+    create: {
+      user_id: accountantHq.id,
+      permission_key: 'employees.read_all',
+      granted_by: superAdmin.id,
+    },
+  });
+
+  console.log('    Permission overrides seeded (1 revoke override, 1 direct grant)');
+
+  // Attendance/time-record seeding intentionally removed — a fresh
+  // environment should start with no attendance history. `monthStart` is
+  // still needed below (deduction start dates).
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  const monthStart = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1));
+
+  // ─────────────────────────────────────────────────────────────────
+  // PHASE 7 — CUSTOM TAX / DEDUCTION TYPE ASSIGNMENT
+  // ─────────────────────────────────────────────────────────────────
+  console.log('\n');
+  console.log(' PHASE 7 — Custom tax/deduction type + assignment');
+
+  const infrastructureLevy = await prisma.deduction_types.upsert({
+    where: { name: 'Infrastructure Levy' },
+    update: { updated_at: new Date() },
+    create: {
+      uuid: generateUUID(),
+      name: 'Infrastructure Levy',
+      deduction_mode: deduction_types_deduction_mode.PERCENTAGE,
+      amount: 0,
+      percentage_value: 2,
+      is_mandatory: false,
+      updated_at: new Date(),
+    },
+  });
+
+  const monthlyEmployeesForTax = await prisma.employees.findMany({
+    where: {
+      employment_categories: { name: 'Monthly' },
+      working_location_id: { in: [hqId, branch1Data.id] },
+      status: employees_status.ACTIVE,
+    },
+    select: { id: true },
+    take: 6,
+  });
+
+  for (const emp of monthlyEmployeesForTax) {
+    const existingAssignment = await prisma.employee_deductions.findFirst({
+      where: { employee_id: emp.id, deduction_type_id: infrastructureLevy.id },
+    });
+    if (!existingAssignment) {
+      await prisma.employee_deductions.create({
+        data: {
+          uuid: generateUUID(),
+          employee_id: emp.id,
+          deduction_type_id: infrastructureLevy.id,
+          start_date: monthStart,
+          is_active: true,
+        },
+      });
+    }
+  }
+  console.log(`    Infrastructure Levy assigned to ${monthlyEmployeesForTax.length} monthly employees`);
+
   // ═══════════════════════════════════════════════════════════════════
   // TERMINAL SUMMARY
   // ═══════════════════════════════════════════════════════════════════
@@ -969,6 +1322,28 @@ async function main() {
   }
   
   console.log('');
+  console.log(' ADDITIONAL STAFF & TEST ACCOUNTS  (password for all: Staff@RegPay2024!)');
+  console.log('─────────────────────────────────────────────────────────────────');
+  for (const staff of staffSummary) {
+    console.log(`   Role     : ${staff.role}`);
+    console.log(`   Branch   : ${staff.branch}`);
+    console.log(`   Name     : ${staff.name}`);
+    console.log(`   Email    : ${staff.email}`);
+    if (staff.note) console.log(`   Note     : ${staff.note}`);
+    console.log('   ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·');
+  }
+
+  console.log('');
+  console.log(' TEST SCENARIOS READY TO EXERCISE');
+  console.log('─────────────────────────────────────────────────────────────────');
+  console.log('   - Registration approval: pending.applicant@reg.rw is PENDING.');
+  console.log('   - Suspension / token rejection: suspended.* is SUSPENDED — its');
+  console.log('     pre-seeded session should be rejected on the very next request.');
+  console.log('   - Permission overrides: hrBranch1 has employees.suspend revoked;');
+  console.log('     accountant.hq@reg.rw has employees.read_all granted directly.');
+  console.log('   - Attendance, payroll batches, and transactions start empty —');
+  console.log('     create them through the app to test those workflows fresh.');
+  console.log('');
   console.log(' STATISTICS');
   console.log('─────────────────────────────────────────────────────────────────');
   console.log(`   Working locations : ${allLocations.length} (1 HQ + ${branchLocations.length} branches)`);
@@ -976,8 +1351,12 @@ async function main() {
   console.log(`   Roles             : ${roleIdMap.size}`);
   console.log(`   Permissions       : ${ALL_PERMISSION_KEYS.length}`);
   console.log(`   Branch managers   : ${branchManagerSummary.length}`);
+  console.log(`   Additional staff  : ${staffSummary.length}`);
   console.log(`   Employees         : ${TOTAL_EMPLOYEES}`);
   console.log(`   Payment structures: ${TOTAL_EMPLOYEES}`);
+  console.log('   Ikimina members   : 0 (not seeded — create through the app to test)');
+  console.log('   Attendance records: 0 (not seeded — starts empty)');
+  console.log('   Payroll batches   : 0 (not seeded — starts empty)');
   console.log('');
   console.log('  SECURITY REMINDER');
   console.log('   Set SEED_SUPER_ADMIN_PASSWORD env var before seeding production.');

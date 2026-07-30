@@ -1,4 +1,4 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiPropertyOptional } from '@nestjs/swagger';
 import { ArrayUnique, IsArray, IsOptional, IsString } from 'class-validator';
 
 export class ApproveUserDto {

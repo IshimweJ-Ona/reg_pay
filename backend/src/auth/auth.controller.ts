@@ -46,19 +46,9 @@ type UpdateProfileDto = {
 };
 
 /**
- * Handles all authentication and session management for Reg Pay.
- * Registration flow:
- *   1. User registers -> status = PENDING
- *   2. Branch Maager or Super Admin approves -> status = ACTIVE
- *   3. User can login and receive tokens
- *
- * Role-based redirect (after login):
- *   SUPER_ADMIN -> /super_admin/<uuid>
- *   BRANCH_MANAGER -> /manager/<uuid>
- *   HR -> /hr/<uuid>
- *   ACCOUNTANT -> /finance/<uuid>
- *   FINANCE   -> /finance/<uuid>
- *   PENDING status -> /auth/pending/<uuid>
+ * Registration flow: PENDING -> (branch manager or super admin approves) -> ACTIVE.
+ * Login redirects by role: SUPER_ADMIN -> /super_admin/<uuid>, BRANCH_MANAGER -> /manager/<uuid>,
+ * HR -> /hr/<uuid>, ACCOUNTANT/FINANCE -> /finance/<uuid>, PENDING status -> /auth/pending/<uuid>.
  */
 
 @ApiTags('Auth')

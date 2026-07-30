@@ -56,7 +56,11 @@ export class PrismaService extends PrismaClient implements OnModuleInit {
               config.readAllPermission,
             );
 
-            if (hasReadAll || !config.locationField || !scope.working_location_id) {
+            if (
+              hasReadAll ||
+              !config.locationField ||
+              !scope.working_location_id
+            ) {
               return query(args);
             }
 

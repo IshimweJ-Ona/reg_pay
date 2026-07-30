@@ -42,7 +42,9 @@ export class RolesService {
 
   async findAll(actor?: CurrentUserType) {
     const scoped = this.isLocationScopedRoleManager(actor);
-    const cacheKey = scoped ? `roles:branch:${actor!.working_location_id}` : 'roles:all';
+    const cacheKey = scoped
+      ? `roles:branch:${actor!.working_location_id}`
+      : 'roles:all';
     const cached = await this.cacheManager.get(cacheKey);
     if (cached) return cached as any;
 
@@ -51,7 +53,11 @@ export class RolesService {
         ? {
             OR: [
               { working_location_id: null },
-              { working_location_id: actor!.working_location_id ? BigInt(actor!.working_location_id) : undefined },
+              {
+                working_location_id: actor!.working_location_id
+                  ? BigInt(actor!.working_location_id)
+                  : undefined,
+              },
             ],
           }
         : undefined,
@@ -76,7 +82,9 @@ export class RolesService {
 
     for (const key of permissionKeys) {
       if (!ALL_PERMISSION_KEYS.includes(key)) {
-        throw new BadRequestException(`Permission key "${key}" is not a valid system permission.`);
+        throw new BadRequestException(
+          `Permission key "${key}" is not a valid system permission.`,
+        );
       }
     }
 
@@ -91,19 +99,12 @@ export class RolesService {
       }
       workingLocationId = BigInt(actor.working_location_id);
     } else if (dto.working_location_id) {
-      workingLocationId = await this.resolveWorkingLocationId(dto.working_location_id);
-    }
-
-    const existing = await this.prisma.roles.findFirst({
-      where: { name, working_location_id: workingLocationId },
-    });
-    if (existing) {
-      throw new ConflictException(
-        workingLocationId
-          ? 'A role with this name already exists for this branch.'
-          : 'A global role with this name already exists.',
+      workingLocationId = await this.resolveWorkingLocationId(
+        dto.working_location_id,
       );
     }
+
+    await this.ensureRoleNameIsAvailable(dto.name, workingLocationId);
 
     const role = await this.prisma.$transaction(async (tx) => {
       const created = await tx.roles.create({
@@ -140,7 +141,7 @@ export class RolesService {
     });
 
     // No users hold a brand-new role yet, so nothing to notify.
-    await this.clearRbacCaches();
+    await this.clearRbacCaches(workingLocationId);
     return this.findOne(role.id);
   }
 
@@ -151,9 +152,17 @@ export class RolesService {
 
     const scoped = this.isLocationScopedRoleManager(actor);
     if (scoped) {
-      const ownLocation = actor.working_location_id ? BigInt(actor.working_location_id) : null;
-      if (!role.working_location_id || !ownLocation || role.working_location_id !== ownLocation) {
-        throw new ForbiddenException('You can only edit roles that belong to your own branch.');
+      const ownLocation = actor.working_location_id
+        ? BigInt(actor.working_location_id)
+        : null;
+      if (
+        !role.working_location_id ||
+        !ownLocation ||
+        role.working_location_id !== ownLocation
+      ) {
+        throw new ForbiddenException(
+          'You can only edit roles that belong to your own branch.',
+        );
       }
     }
 
@@ -162,6 +171,11 @@ export class RolesService {
       if (role.is_system_role) {
         throw new BadRequestException('System role names cannot be changed.');
       }
+      await this.ensureRoleNameIsAvailable(
+        dto.name,
+        role.working_location_id,
+        roleId,
+      );
       data.name = this.normalizeRoleName(dto.name);
     }
     if (dto.description !== undefined) {
@@ -170,7 +184,9 @@ export class RolesService {
     if (dto.permission_keys !== undefined) {
       for (const key of dto.permission_keys) {
         if (!ALL_PERMISSION_KEYS.includes(key)) {
-          throw new BadRequestException(`Permission key "${key}" is not a valid system permission.`);
+          throw new BadRequestException(
+            `Permission key "${key}" is not a valid system permission.`,
+          );
         }
       }
       data.permission_keys = dto.permission_keys;
@@ -210,7 +226,10 @@ export class RolesService {
         });
       }
     }
-    await this.clearRbacCaches();
+    await this.clearRbacCaches(
+      actor.working_location_id,
+      role.working_location_id,
+    );
     return this.findOne(roleId);
   }
 
@@ -221,7 +240,8 @@ export class RolesService {
         : { uuid: value, deleted_at: null },
       select: { id: true },
     });
-    if (!location) throw new BadRequestException('Selected branch does not exist.');
+    if (!location)
+      throw new BadRequestException('Selected branch does not exist.');
     return location.id;
   }
 
@@ -239,9 +259,50 @@ export class RolesService {
   }
 
   private normalizeRoleName(name: string) {
-    const normalized = name.trim().toUpperCase().replace(/[^A-Z0-9]+/g, '_');
+    const normalized = name
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '');
     if (!normalized) throw new BadRequestException('Role name is required.');
     return normalized;
+  }
+
+  private normalizeRoleDuplicateKey(name: string) {
+    return name
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '');
+  }
+
+  private async ensureRoleNameIsAvailable(
+    name: string,
+    workingLocationId: bigint | null,
+    excludeRoleId?: bigint,
+  ) {
+    const normalizedNew = this.normalizeRoleDuplicateKey(name);
+    if (!normalizedNew) {
+      throw new BadRequestException('Role name is required.');
+    }
+
+    const existingRoles = await this.prisma.roles.findMany({
+      where: {
+        working_location_id: workingLocationId,
+        ...(excludeRoleId ? { id: { not: excludeRoleId } } : {}),
+      },
+      select: { name: true },
+    });
+
+    const duplicate = existingRoles.find(
+      (role) => this.normalizeRoleDuplicateKey(role.name) === normalizedNew,
+    );
+    if (duplicate) {
+      throw new ConflictException(
+        workingLocationId
+          ? `A role matching '${duplicate.name}' already exists for this branch.`
+          : `A global role matching '${duplicate.name}' already exists.`,
+      );
+    }
   }
 
   private toBigInt(value: string, label: string) {
@@ -251,10 +312,42 @@ export class RolesService {
     return BigInt(value);
   }
 
-  private async clearRbacCaches() {
-    await Promise.all([
-      this.cacheManager.del('roles:all'),
-      this.cacheManager.del('permissions:all'),
+  private async clearRbacCaches(
+    ...locationIds: Array<bigint | string | number | null | undefined>
+  ) {
+    const cacheKeys = new Set([
+      'roles:all',
+      'permissions:all',
+      'users:all',
+      'users:pending',
     ]);
+
+    for (const locationId of locationIds) {
+      if (locationId === null || locationId === undefined) continue;
+      cacheKeys.add(`roles:branch:${locationId.toString()}`);
+    }
+
+    try {
+      const store = (this.cacheManager as any).store;
+      if (store && typeof store.keys === 'function') {
+        const keys = await store.keys();
+        for (const key of keys) {
+          if (
+            typeof key === 'string' &&
+            (key.startsWith('users:all') ||
+              key.startsWith('users:pending') ||
+              key.startsWith('roles:branch:'))
+          ) {
+            cacheKeys.add(key);
+          }
+        }
+      }
+    } catch {
+      // Exact-key fallback below still clears stores without key enumeration.
+    }
+
+    await Promise.all(
+      Array.from(cacheKeys).map((key) => this.cacheManager.del(key)),
+    );
   }
 }

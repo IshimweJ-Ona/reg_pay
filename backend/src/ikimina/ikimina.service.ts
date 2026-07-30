@@ -1,31 +1,38 @@
 import {
-    BadRequestException,
+  BadRequestException,
   Injectable,
   NotFoundException,
   Inject,
 } from '@nestjs/common';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
-import * as cacheManager from 'cache-manager';
-import {
-  audit_logs_activity_type as ACTIVITY_TYPE,
-  audit_logs_action as AUDIT_ACTION,
-  Prisma,
-} from '@prisma/client';
+import type { Cache } from 'cache-manager';
+import { Prisma } from '@prisma/client';
 import type { CurrentUserType } from '../auth/types/current-user.type';
 import { isNumericId, requireUuidOrNumeric } from '../common/utils/lookup.util';
 import { generateUUID } from '../common/utils/uuid.util';
 import { PrismaService } from '../prisma/prisma.service';
-import { NotificationsService } from '../notifications/notifications.service';
 import { CreateMembershipDto } from './dto/create-membership.dto';
 import { UpdateMembershipDto } from './dto/update-membership.dto';
+
+const MEMBERSHIPS_LIST_CACHE_KEY = 'ikimina:memberships:all';
+const membershipByEmployeeCacheKey = (employeeId: string) =>
+  `ikimina:membership:employee:${employeeId}`;
 
 @Injectable()
 export class IkiminaService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly notificationsService: NotificationsService,
-    @Inject(CACHE_MANAGER) private cacheManager: cacheManager.Cache,
+    @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
   ) {}
+
+  private async invalidateMembershipCaches(employeeId?: bigint | string) {
+    await this.cacheManager.del(MEMBERSHIPS_LIST_CACHE_KEY);
+    if (employeeId !== undefined) {
+      await this.cacheManager.del(
+        membershipByEmployeeCacheKey(employeeId.toString()),
+      );
+    }
+  }
 
   /**
    * Create an Ikimina membership for an employee.
@@ -33,7 +40,9 @@ export class IkiminaService {
    */
   async createMembership(dto: CreateMembershipDto, actor: CurrentUserType) {
     if (!dto.employee_id || !dto.monthly_amount) {
-      throw new BadRequestException('Employee ID and monthly amount are required.');
+      throw new BadRequestException(
+        'Employee ID and monthly amount are required.',
+      );
     }
 
     const employeeId = this.toBigInt(dto.employee_id, 'employee_id');
@@ -55,11 +64,14 @@ export class IkiminaService {
     }
 
     // Check payroll frequency — only MONTHLY employees may join Ikimina
-    const frequency = employee.payment_structures?.[0]?.payroll_frequency
-      ?? employee.employment_categories?.payroll_frequency;
+    const frequency =
+      employee.payment_structures?.[0]?.payroll_frequency ??
+      employee.employment_categories?.payroll_frequency;
     if (frequency !== 'MONTHLY') {
       throw new BadRequestException(
-        'Only employees with a MONTHLY payroll frequency may join Ikimina. This employee\'s payroll frequency is ' + frequency + '.',
+        "Only employees with a MONTHLY payroll frequency may join Ikimina. This employee's payroll frequency is " +
+          frequency +
+          '.',
       );
     }
 
@@ -90,7 +102,11 @@ export class IkiminaService {
           department_id: employee.department_id,
           updated_at: new Date(),
         },
-        include: { employees: true },
+        include: {
+          employees: {
+            include: { departments: true, working_locations: true },
+          },
+        },
       });
 
       await tx.audit_logs.create({
@@ -115,10 +131,14 @@ export class IkiminaService {
       return created;
     });
 
+    await this.invalidateMembershipCaches(employeeId);
     return this.serializeMembership(membership);
   }
 
   async findMemberships(actor: CurrentUserType) {
+    const cached = await this.cacheManager.get(MEMBERSHIPS_LIST_CACHE_KEY);
+    if (cached) return cached as any;
+
     const memberships = await this.prisma.ikimina_memberships.findMany({
       include: {
         employees: {
@@ -131,7 +151,7 @@ export class IkiminaService {
       orderBy: { joined_at: 'desc' },
     });
 
-    return memberships.map((m) => {
+    const result = memberships.map((m) => {
       const totalSavings = (m as any).ikimina_contributions.reduce(
         (sum: number, c: any) => sum + Number(c.amount),
         0,
@@ -141,47 +161,69 @@ export class IkiminaService {
         total_savings: totalSavings,
       };
     });
+
+    await this.cacheManager.set(MEMBERSHIPS_LIST_CACHE_KEY, result, 20000);
+    return result;
   }
 
   async findMembershipByEmployee(employeeId: string) {
     const eid = this.toBigInt(employeeId, 'employee_id');
+    const cacheKey = membershipByEmployeeCacheKey(eid.toString());
+    const cached = await this.cacheManager.get(cacheKey);
+    if (cached) return cached as any;
+
     const membership = await this.prisma.ikimina_memberships.findUnique({
       where: { employee_id: eid },
       include: {
-        employees: true,
+        employees: {
+          include: { departments: true, working_locations: true },
+        },
         ikimina_contributions: {
           orderBy: { contribution_date: 'desc' },
         },
       },
     });
 
-    if (!membership) throw new NotFoundException('No Ikimina membership found for this employee.');
+    if (!membership)
+      throw new NotFoundException(
+        'No Ikimina membership found for this employee.',
+      );
 
     const totalSavings = (membership as any).ikimina_contributions.reduce(
       (sum: number, c: any) => sum + Number(c.amount),
       0,
     );
 
-    return {
+    const result = {
       ...this.serializeMembership(membership),
       total_savings: totalSavings,
-      contributions: (membership as any).ikimina_contributions.map((c: any) => ({
-        ...c,
-        id: c.id.toString(),
-        employee_id: c.employee_id.toString(),
-        membership_id: c.membership_id.toString(),
-        payroll_batch_id: c.payroll_batch_id?.toString() ?? null,
-        amount: Number(c.amount),
-      })),
+      contributions: (membership as any).ikimina_contributions.map(
+        (c: any) => ({
+          ...c,
+          id: c.id.toString(),
+          employee_id: c.employee_id.toString(),
+          membership_id: c.membership_id.toString(),
+          payroll_batch_id: c.payroll_batch_id?.toString() ?? null,
+          amount: Number(c.amount),
+        }),
+      ),
     };
+
+    await this.cacheManager.set(cacheKey, result, 20000);
+    return result;
   }
 
-  async updateMembership(uuid: string, dto: UpdateMembershipDto, actor: CurrentUserType) {
+  async updateMembership(
+    uuid: string,
+    dto: UpdateMembershipDto,
+    actor: CurrentUserType,
+  ) {
     const membership = await this.prisma.ikimina_memberships.findUnique({
       where: { uuid },
     });
 
-    if (!membership) throw new NotFoundException('Ikimina membership not found.');
+    if (!membership)
+      throw new NotFoundException('Ikimina membership not found.');
 
     const updated = await this.prisma.$transaction(async (tx) => {
       const saved = await tx.ikimina_memberships.update({
@@ -191,7 +233,11 @@ export class IkiminaService {
           is_active: dto.is_active ?? membership.is_active,
           updated_at: new Date(),
         },
-        include: { employees: true },
+        include: {
+          employees: {
+            include: { departments: true, working_locations: true },
+          },
+        },
       });
 
       await tx.audit_logs.create({
@@ -218,18 +264,73 @@ export class IkiminaService {
       return saved;
     });
 
+    await this.invalidateMembershipCaches(membership.employee_id);
     return this.serializeMembership(updated);
+  }
+
+  /**
+   * Remove an employee from the Ikimina savings program entirely.
+   * Blocked if the membership has contributions tied to a processed payroll
+   * batch — that's settled financial history and must stay immutable.
+   * Deactivating (updateMembership with is_active: false) is the right move
+   * for that case; this is for fully dropping a membership.
+   */
+  async removeMembership(uuid: string, actor: CurrentUserType) {
+    const membership = await this.prisma.ikimina_memberships.findUnique({
+      where: { uuid },
+      include: {
+        ikimina_contributions: { select: { id: true, payroll_batch_id: true } },
+      },
+    });
+
+    if (!membership)
+      throw new NotFoundException('Ikimina membership not found.');
+
+    const hasProcessedContributions = membership.ikimina_contributions.some(
+      (c) => c.payroll_batch_id !== null,
+    );
+    if (hasProcessedContributions) {
+      throw new BadRequestException(
+        'This membership has contributions already processed through payroll and cannot be removed. Deactivate it instead to stop future deductions.',
+      );
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.ikimina_contributions.deleteMany({
+        where: { membership_id: membership.id },
+      });
+
+      await tx.ikimina_memberships.delete({ where: { id: membership.id } });
+
+      await tx.audit_logs.create({
+        data: {
+          user_id: BigInt(actor.userId),
+          employee_id: membership.employee_id,
+          entity_table: 'ikimina_memberships',
+          entity_id: membership.id,
+          module_name: 'IKIMINA',
+          activity_type: 'DELETE' as any,
+          activity_description: 'Removed employee from Ikimina savings.',
+          action: 'DELETED' as any,
+          old_values: {
+            employee_id: membership.employee_id.toString(),
+            monthly_amount: membership.monthly_amount.toString(),
+            is_active: membership.is_active,
+          },
+          new_values: Prisma.JsonNull,
+        },
+      });
+    });
+
+    await this.invalidateMembershipCaches(membership.employee_id);
+    return { message: 'Employee removed from Ikimina savings.' };
   }
 
   /**
    * Called during batch creation — deduct Ikimina contributions for MONTHLY
    * employees with active memberships.
    */
-  async deductForBatch(
-    tx: any,
-    batchId: bigint,
-    employeeIds: bigint[],
-  ) {
+  async deductForBatch(tx: any, batchId: bigint, employeeIds: bigint[]) {
     if (employeeIds.length === 0) return [];
 
     const activeMemberships = await tx.ikimina_memberships.findMany({
@@ -289,6 +390,12 @@ export class IkiminaService {
       });
     }
 
+    // Contributions just created affect total_savings shown by the read
+    // endpoints above, so their cache entries can't be left stale.
+    await Promise.all(
+      deductions.map((d) => this.invalidateMembershipCaches(d.employeeId)),
+    );
+
     return deductions;
   }
 
@@ -305,9 +412,14 @@ export class IkiminaService {
         ? {
             ...membership.employees,
             id: membership.employees.id.toString(),
-            department_id: membership.employees.department_id?.toString() ?? null,
-            working_location_id: membership.employees.working_location_id?.toString() ?? null,
-            employment_category_id: membership.employees.employment_category_id?.toString() ?? null,
+            department_id:
+              membership.employees.department_id?.toString() ?? null,
+            working_location_id:
+              membership.employees.working_location_id?.toString() ?? null,
+            employment_category_id:
+              membership.employees.employment_category_id?.toString() ?? null,
+            department: membership.employees.departments ?? null,
+            working_location: membership.employees.working_locations ?? null,
           }
         : undefined,
     };

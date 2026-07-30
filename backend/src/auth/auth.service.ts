@@ -8,34 +8,20 @@ import {
   audit_logs_activity_type as ACTIVITY_TYPE,
   audit_logs_action as AUDIT_ACTION,
 } from '@prisma/client';
-import { compareHash, hashValue, hashToken } from '../common/utils/hash.util';
-import {
-  isNumericId,
-  isUuid,
-  requireUuidOrNumeric,
-} from '../common/utils/lookup.util';
+import { hashToken } from '../common/utils/hash.util';
+import { isNumericId, requireUuidOrNumeric } from '../common/utils/lookup.util';
 import { generateUUID } from '../common/utils/uuid.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
-import {
-  JWT_REFRESH_SECRET,
-  REFRESH_TOKEN_EXPIRES_IN_DAYS,
-} from './constants/auth.constants';
+import { REFRESH_TOKEN_EXPIRES_IN_DAYS } from './constants/auth.constants';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { JwtPayload } from './interfaces/jwt-payload.interface';
 import { comparePassword, hashPassword } from './utils/password.util';
-import {
-  buildJwtPayload,
-  signAccessToken,
-  signRefreshToken,
-} from './utils/token.util';
-import {
-  IMPLIED_PERMISSIONS,
-  PERMISSION_MODULES,
-} from '../common/constants/permissions.constants';
-
+import { signAccessToken, signRefreshToken } from './utils/token.util';
+import { IMPLIED_PERMISSIONS } from '../common/constants/permissions.constants';
+import { buildRawPermissionKeys } from '../common/utils/effective-permissions.util';
 
 type RequestContext = {
   deviceInfo?: string | string[];
@@ -96,7 +82,9 @@ export class AuthService {
     const department = await this.prisma.departments.findFirst({
       where: {
         ...(isNumericId(value) ? { id: BigInt(value) } : { uuid: value }),
-        ...(workingLocationId ? { working_location_id: workingLocationId } : {}),
+        ...(workingLocationId
+          ? { working_location_id: workingLocationId }
+          : {}),
         status: 'ACTIVE',
       },
       select: { id: true },
@@ -153,7 +141,9 @@ export class AuthService {
         phone_number: true,
         status: true,
         created_at: true,
-        working_locations_users_working_location_idToworking_locations: { select: { name: true } },
+        working_locations_users_working_location_idToworking_locations: {
+          select: { name: true },
+        },
         departments: { select: { name: true } },
       },
     });
@@ -161,17 +151,14 @@ export class AuthService {
     // Route notification to branch_manager of the working_location via
     // the notifications service so SSE broadcast fires immediately.
     if (workingLocationId) {
-      await this.notificationsService.notifyBranchManager(
-        workingLocationId,
-        {
-          senderId: undefined,
-          title: 'New User Registration',
-          message: `${user.first_name} ${user.last_name} has registered and is pending approval.`,
-          type: 'REGISTRATION_REQUEST',
-          referenceId: user.uuid,
-          metadata: { redirect: 'users', level: 'BRANCH_MANAGER' },
-        },
-      );
+      await this.notificationsService.notifyBranchManager(workingLocationId, {
+        senderId: undefined,
+        title: 'New User Registration',
+        message: `${user.first_name} ${user.last_name} has registered and is pending approval.`,
+        type: 'REGISTRATION_REQUEST',
+        referenceId: user.uuid,
+        metadata: { redirect: 'users', level: 'BRANCH_MANAGER' },
+      });
     } else {
       await this.notificationsService.notifyAdmins({
         senderId: undefined,
@@ -291,7 +278,7 @@ export class AuthService {
       }
       console.error('Login error:', error);
       throw new Error(
-        `An unexpected error occurred during login. ${(error as any).message || ''}`,
+        `An unexpected error occurred during login. ${error.message || ''}`,
       );
     }
   }
@@ -316,7 +303,7 @@ export class AuthService {
 
     const roles = user.user_roles.map((ur) => ur.roles.name);
     const isSuperAdmin = roles.includes('SUPER_ADMIN');
-    let adminContacts: Array<{
+    const adminContacts: Array<{
       name: string;
       email: string;
       phone_number: string;
@@ -344,7 +331,8 @@ export class AuthService {
         adminContacts.push({
           name: `${bm.users_branch_managers_user_idTousers?.first_name ?? ''} ${bm.users_branch_managers_user_idTousers?.last_name ?? ''}`.trim(),
           email: bm.users_branch_managers_user_idTousers?.email ?? '',
-          phone_number: bm.users_branch_managers_user_idTousers?.phone_number ?? '',
+          phone_number:
+            bm.users_branch_managers_user_idTousers?.phone_number ?? '',
         });
       }
     }
@@ -393,24 +381,43 @@ export class AuthService {
           name: role,
         })),
         permissions: effectivePermissions.map((key) => ({ key })),
-        working_location: (user as any).working_locations_users_working_location_idToworking_locations
+        working_location: (user as any)
+          .working_locations_users_working_location_idToworking_locations
           ? {
-              ...(user as any).working_locations_users_working_location_idToworking_locations,
-              id: (user as any).working_locations_users_working_location_idToworking_locations.id.toString(),
-              created_by: (user as any).working_locations_users_working_location_idToworking_locations.created_by?.toString() ?? null,
-              updated_by: (user as any).working_locations_users_working_location_idToworking_locations.updated_by?.toString() ?? null,
-              deleted_by: (user as any).working_locations_users_working_location_idToworking_locations.deleted_by?.toString() ?? null,
+              ...(user as any)
+                .working_locations_users_working_location_idToworking_locations,
+              id: (
+                user as any
+              ).working_locations_users_working_location_idToworking_locations.id.toString(),
+              created_by:
+                (
+                  user as any
+                ).working_locations_users_working_location_idToworking_locations.created_by?.toString() ??
+                null,
+              updated_by:
+                (
+                  user as any
+                ).working_locations_users_working_location_idToworking_locations.updated_by?.toString() ??
+                null,
+              deleted_by:
+                (
+                  user as any
+                ).working_locations_users_working_location_idToworking_locations.deleted_by?.toString() ??
+                null,
             }
           : null,
         department: (user as any).departments
           ? {
               ...(user as any).departments,
               id: (user as any).departments.id.toString(),
-              working_location_id:
-                (user as any).departments.working_location_id.toString(),
+              working_location_id: (
+                user as any
+              ).departments.working_location_id.toString(),
             }
           : null,
-        permission_overrides: ((user as any).user_permission_overrides ?? []).map((o: any) => ({
+        permission_overrides: (
+          (user as any).user_permission_overrides ?? []
+        ).map((o: any) => ({
           id: o.id.toString(),
           permission_key: o.permission_key,
           is_allowed: o.is_allowed,
@@ -451,6 +458,26 @@ export class AuthService {
       throw new UnauthorizedException('Refresh token has expired.');
     }
 
+    // Refresh previously minted a brand new access token for ANY holder of a
+    // still-valid refresh token, without checking the account's current
+    // status. A user suspended (or rejected/soft-deleted) after they logged
+    // in could keep silently refreshing indefinitely - the access-token-side
+    // fix in jwt.strategy.ts only blocks them once their old access token
+    // expires, but refresh would just hand them a fresh one. Block it here
+    // too, and revoke the session so this refresh token can't be reused.
+    const sessionUserStatus = (session as any).users.status;
+    if (sessionUserStatus === 'SUSPENDED' || sessionUserStatus === 'REJECTED') {
+      await this.prisma.user_sessions.updateMany({
+        where: { id: session.id, is_revoked: false },
+        data: { is_revoked: true },
+      });
+      throw new UnauthorizedException(
+        sessionUserStatus === 'SUSPENDED'
+          ? 'Your account has been suspended. Please contact the system administrator for assistance.'
+          : 'Your registration request was rejected. Please contact support if you believe this is an error.',
+      );
+    }
+
     // Atomically "claim" this session before doing anything else. Two
     // requests can arrive with the same refresh token nearly simultaneously
     // (duplicate tabs, or the refresh timer racing an axios 401 retry). A
@@ -482,12 +509,16 @@ export class AuthService {
       },
     });
 
-    const roles = (session as any).users.user_roles.map((ur: any) => ur.roles.name);
+    const roles = (session as any).users.user_roles.map(
+      (ur: any) => ur.roles.name,
+    );
     let rolePath = 'users';
     if (roles.includes('SUPER_ADMIN')) rolePath = 'super_admin';
     else if (roles.includes('BRANCH_MANAGER')) rolePath = 'branch_manager';
-    else if (roles.includes('HR') || roles.includes('HR_MANAGER')) rolePath = 'hr';
-    else if (roles.includes('ACCOUNTANT') || roles.includes('FINANCE')) rolePath = 'finance';
+    else if (roles.includes('HR') || roles.includes('HR_MANAGER'))
+      rolePath = 'hr';
+    else if (roles.includes('ACCOUNTANT') || roles.includes('FINANCE'))
+      rolePath = 'finance';
     else if (roles.includes('ATTENDANT')) rolePath = 'attendant';
 
     return {
@@ -585,10 +616,7 @@ export class AuthService {
     return { message: 'Password reset successfully.' };
   }
 
-  async updateProfile(
-    userId: string,
-    dto: UpdateProfileDto,
-  ) {
+  async updateProfile(userId: string, dto: UpdateProfileDto) {
     const updateData: Record<string, any> = {};
 
     if (dto.first_name !== undefined) updateData.first_name = dto.first_name;
@@ -650,9 +678,7 @@ export class AuthService {
     };
   }
 
-  private async createTokenPair(
-    payload: JwtPayload,
-  ): Promise<TokenPair> {
+  private async createTokenPair(payload: JwtPayload): Promise<TokenPair> {
     const access_token = signAccessToken(this.jwtService, payload);
     const refresh_token = signRefreshToken(this.jwtService, payload);
 
@@ -664,20 +690,10 @@ export class AuthService {
   }
 
   private async buildEffectivePermissions(user: any): Promise<string[]> {
-    const permissionSet = new Set<string>();
-
-    // Collect from roles
-    for (const userRole of user.user_roles ?? []) {
-      const keys = (userRole.roles?.permission_keys as string[]) ?? [];
-      for (const key of keys) {
-        permissionSet.add(key);
-      }
-    }
-
-    // Collect direct permissions
-    for (const up of user.user_permissions ?? []) {
-      permissionSet.add(up.permission_key);
-    }
+    // Raw grants come from the shared helper (also used by jwt.strategy.ts
+    // on every request) so login/refresh and per-request auth can never
+    // compute two different permission sets for the same user.
+    const permissionSet = new Set<string>(buildRawPermissionKeys(user));
 
     // Expand implied permissions
     const initial = Array.from(permissionSet);
@@ -711,15 +727,11 @@ export class AuthService {
           entity_table: 'users',
           entity_id: userId,
           module_name: 'AUTH',
-          activity_type: success
-            ? ('LOGIN' as any)
-            : ('FAILED_LOGIN' as any),
+          activity_type: success ? ('LOGIN' as any) : ('FAILED_LOGIN' as any),
           activity_description: success
             ? 'User logged in successfully.'
             : 'Failed login attempt.',
-          action: success
-            ? ('LOGIN' as any)
-            : ('DENIED' as any),
+          action: success ? ('LOGIN' as any) : ('DENIED' as any),
           ip_address: ipAddress,
         },
       });

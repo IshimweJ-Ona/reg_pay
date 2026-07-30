@@ -21,3 +21,11 @@ export function requireUuidOrNumeric(value: string, fieldName: string) {
     );
   }
 }
+
+export function normalizeEntityName(name: string): string {
+  if (!name) return '';
+  return name
+    .toLowerCase()
+    .replace(/[\s_-]+/g, '')
+    .trim();
+}

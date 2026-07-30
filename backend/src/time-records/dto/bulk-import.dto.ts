@@ -22,20 +22,20 @@ export class BulkImportItem {
 
   @IsNumber()
   @Min(0)
-  hours_worked!: number;
+  overtime_hours!: number;
 
   @IsEnum(BulkAttendanceStatus)
   attendance_status!: BulkAttendanceStatus;
 }
 
 export class BulkImportDto {
-  @IsArray()
-  @IsString({ each: true })
-  working_location_ids!: string[];
+  @IsOptional()
+  @IsString()
+  working_location?: string;
 
   @IsOptional()
   @IsString()
-  department_id?: string;
+  department?: string;
 
   @IsOptional()
   @IsDateString()
@@ -45,8 +45,9 @@ export class BulkImportDto {
   @IsDateString()
   date_to?: string;
 
+  @IsOptional()
   @IsDateString()
-  attendance_date!: string;
+  attendance_date?: string;
 
   @IsArray()
   records!: BulkImportItem[];

@@ -18,21 +18,23 @@ import type { CurrentUserType } from '../auth/types/current-user.type';
 import { RejectTransferDto } from '../common/dto/reject-transfer.dto';
 import {
   isNumericId,
-  isUuid,
   normalizeSearch,
   requireUuidOrNumeric,
 } from '../common/utils/lookup.util';
 import { hasEffectivePermission } from '../common/utils/effective-permissions.util';
 import { generateUUID } from '../common/utils/uuid.util';
+import { buildAuditDiff } from '../common/utils/audit-diff.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { SuspendEmployeeDto } from './dto/suspend-employee.dto';
 import { TransferEmployeeDto } from './dto/transfer-employee.dto';
-import { BulkImportEmployeeDto, BulkImportEmployeeItem } from './dto/bulk-import-employee.dto';
+import { BulkImportEmployeeDto } from './dto/bulk-import-employee.dto';
 
 import { NotificationsService } from '../notifications/notifications.service';
-import { PaymentStructuresService } from '../payment-structures/payment-structures.service';
-import { calculateCustomContractTotal } from '../common/utils/payroll-calc.util';
+import {
+  calculateCustomContractTotal,
+  calculateMonthlyDailyRate,
+} from '../common/utils/payroll-calc.util';
 
 @Injectable()
 export class EmployeesService {
@@ -40,7 +42,6 @@ export class EmployeesService {
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
     @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
-    private readonly paymentStructuresService: PaymentStructuresService,
   ) {}
 
   async create(dto: CreateEmployeeDto, actor?: CurrentUserType) {
@@ -134,8 +135,12 @@ export class EmployeesService {
           national_id: dto.national_id,
           gender: dto.gender,
           hire_date: dto.hire_date ? new Date(dto.hire_date) : null,
-          contract_start_date: dto.contract_start_date ? new Date(dto.contract_start_date) : null,
-          contract_end_date: dto.contract_end_date ? new Date(dto.contract_end_date) : null,
+          contract_start_date: dto.contract_start_date
+            ? new Date(dto.contract_start_date)
+            : null,
+          contract_end_date: dto.contract_end_date
+            ? new Date(dto.contract_end_date)
+            : null,
           department_id: departmentId,
           working_location_id: workingLocationId,
           employment_category_id: categoryId,
@@ -152,9 +157,11 @@ export class EmployeesService {
           where: { id: categoryId },
         });
         if (category) {
+          const isMonthly = category.payroll_frequency === 'MONTHLY';
           const isCustom = category.payroll_frequency === 'CUSTOM';
-          const dailyRate = category.payroll_frequency === 'MONTHLY'
-            ? (dto.daily_rate ?? '5000')
+          const monthlyBasicSalary = dto.basic_salary ?? '150000';
+          const dailyRate = isMonthly
+            ? calculateMonthlyDailyRate(monthlyBasicSalary).toString()
             : (dto.daily_rate ?? '3000');
 
           await tx.payment_structures.create({
@@ -162,8 +169,8 @@ export class EmployeesService {
               uuid: generateUUID(),
               employee_id: created.id,
               payroll_frequency: category.payroll_frequency,
-              basic_salary: category.payroll_frequency === 'MONTHLY'
-                ? (dto.basic_salary ?? '150000')
+              basic_salary: isMonthly
+                ? monthlyBasicSalary
                 : isCustom
                   ? this.resolveCustomBasicSalary(
                       dailyRate,
@@ -269,9 +276,13 @@ export class EmployeesService {
     }
   }
 
-  async findAll(actor: CurrentUserType, qInput?: string) {
+  async findAll(
+    actor: CurrentUserType,
+    qInput?: string,
+    departmentIdInput?: string,
+  ) {
     const q = normalizeSearch(qInput);
-    const cacheKey = `employees:all:${actor.userId}:${actor.working_location_id ?? ''}:${q ?? ''}`;
+    const cacheKey = `employees:all:${actor.userId}:${actor.working_location_id ?? ''}:${departmentIdInput ?? ''}:${q ?? ''}`;
 
     const cached = await this.cacheManager.get(cacheKey);
     if (cached) return cached as any;
@@ -280,6 +291,12 @@ export class EmployeesService {
       where: {
         deleted_at: null,
         ...this.employeeScopeWhere(actor),
+        // ANDed on top of the actor's own scope above, so a department- or
+        // branch-scoped actor can never widen their view by passing another
+        // department's id here - the scope clause still restricts the result.
+        ...(departmentIdInput && isNumericId(departmentIdInput)
+          ? { department_id: BigInt(departmentIdInput) }
+          : {}),
         ...(q
           ? {
               OR: [
@@ -319,8 +336,17 @@ export class EmployeesService {
       },
     });
 
+    const attendanceStats = await this.getAttendanceStatsByEmployee(
+      employees.map((employee) => employee.id),
+    );
+
     const result = {
-      employees: employees.map((employee) => this.serializeEmployee(employee)),
+      employees: employees.map((employee) =>
+        this.serializeEmployee(
+          employee,
+          attendanceStats.get(employee.id.toString()),
+        ),
+      ),
     };
     await this.cacheManager.set(cacheKey, result, 30000); // 30 seconds cache
     return result;
@@ -480,20 +506,32 @@ export class EmployeesService {
           const isMonthly = category.payroll_frequency === 'MONTHLY';
           const isCustom = category.payroll_frequency === 'CUSTOM';
 
+          const resolvedMonthlyBasicSalary =
+            dto.basic_salary ??
+            (currentStructure?.basic_salary &&
+            Number(currentStructure.basic_salary) !== 0
+              ? currentStructure.basic_salary.toString()
+              : '150000');
           const resolvedDailyRate = isMonthly
-            ? (dto.daily_rate ?? (currentStructure?.daily_rate && Number(currentStructure.daily_rate) !== 0 ? currentStructure.daily_rate.toString() : '5000'))
-            : (dto.daily_rate ?? (currentStructure?.daily_rate && Number(currentStructure.daily_rate) !== 0 ? currentStructure.daily_rate.toString() : '3000'));
+            ? calculateMonthlyDailyRate(resolvedMonthlyBasicSalary).toString()
+            : (dto.daily_rate ??
+              (currentStructure?.daily_rate &&
+              Number(currentStructure.daily_rate) !== 0
+                ? currentStructure.daily_rate.toString()
+                : '3000'));
 
           const structureData = {
             payroll_frequency: category.payroll_frequency,
             basic_salary: isMonthly
-              ? (dto.basic_salary ?? (currentStructure?.basic_salary && Number(currentStructure.basic_salary) !== 0 ? currentStructure.basic_salary.toString() : '150000'))
+              ? resolvedMonthlyBasicSalary
               : isCustom
                 ? this.resolveCustomBasicSalary(
                     resolvedDailyRate,
                     saved.contract_start_date,
                     saved.contract_end_date,
-                    dto.basic_salary ?? currentStructure?.basic_salary?.toString() ?? '0',
+                    dto.basic_salary ??
+                      currentStructure?.basic_salary?.toString() ??
+                      '0',
                   )
                 : '0',
             daily_rate: resolvedDailyRate,
@@ -563,7 +601,22 @@ export class EmployeesService {
         }
       }
 
-      // Log the update activity for auditing
+      // Log the update activity for auditing - a targeted diff of just the
+      // scalar profile fields, not the full serialized employee + relations.
+      const profileDiff = buildAuditDiff(employee, saved, [
+        'first_name',
+        'last_name',
+        'email',
+        'phone_number',
+        'national_id',
+        'gender',
+        'hire_date',
+        'contract_start_date',
+        'contract_end_date',
+        'department_id',
+        'working_location_id',
+        'employment_category_id',
+      ]);
       await tx.audit_logs.create({
         data: {
           user_id: BigInt(actor.userId),
@@ -575,8 +628,9 @@ export class EmployeesService {
           activity_description:
             'Updated employee profile, salary, and benefits in a unified operation.',
           action: 'UPDATED' as any,
-          old_values: this.serializeEmployee(employee) as any,
-          new_values: this.serializeEmployee(saved) as any,
+          old_values: profileDiff.old_values as any,
+          new_values: profileDiff.new_values as any,
+          changed_fields: profileDiff.changed_fields as any,
         },
       });
 
@@ -683,7 +737,9 @@ export class EmployeesService {
       throw new BadRequestException('Transfer request has no employee.');
     }
 
-    const hasTransferApprove = actor.permissions.includes('employees.transfer_approve') || this.isSystemAdmin(actor);
+    const hasTransferApprove =
+      actor.permissions.includes('employees.transfer_approve') ||
+      this.isSystemAdmin(actor);
     const isAdmin = this.isSystemAdmin(actor);
 
     if (request.current_level === 'BRANCH_MANAGER') {
@@ -869,7 +925,9 @@ export class EmployeesService {
     }
 
     if (dto.employees.length > 500) {
-      throw new BadRequestException('Maximum 500 employees allowed per bulk import.');
+      throw new BadRequestException(
+        'Maximum 500 employees allowed per bulk import.',
+      );
     }
 
     const results: any[] = [];
@@ -881,7 +939,9 @@ export class EmployeesService {
 
       try {
         if (!item.first_name || !item.last_name) {
-          throw new BadRequestException('First name and last name are required.');
+          throw new BadRequestException(
+            'First name and last name are required.',
+          );
         }
 
         const managerScoped =
@@ -896,7 +956,10 @@ export class EmployeesService {
           : null;
 
         const departmentId = item.department_id
-          ? await this.resolveDepartmentId(item.department_id, workingLocationId)
+          ? await this.resolveDepartmentId(
+              item.department_id,
+              workingLocationId,
+            )
           : null;
 
         const categoryId = item.employment_category_id
@@ -965,8 +1028,12 @@ export class EmployeesService {
               phone_number: item.phone_number,
               national_id: item.national_id,
               gender: item.gender as any,
-              contract_start_date: item.contract_start_date ? new Date(item.contract_start_date) : null,
-              contract_end_date: item.contract_end_date ? new Date(item.contract_end_date) : null,
+              contract_start_date: item.contract_start_date
+                ? new Date(item.contract_start_date)
+                : null,
+              contract_end_date: item.contract_end_date
+                ? new Date(item.contract_end_date)
+                : null,
               department_id: departmentId,
               working_location_id: workingLocationId,
               employment_category_id: categoryId,
@@ -983,9 +1050,11 @@ export class EmployeesService {
               where: { id: categoryId },
             });
             if (category) {
+              const isMonthly = category.payroll_frequency === 'MONTHLY';
               const isCustom = category.payroll_frequency === 'CUSTOM';
-              const dailyRate = category.payroll_frequency === 'MONTHLY'
-                ? (item.daily_rate ?? '5000')
+              const monthlyBasicSalary = item.basic_salary ?? '150000';
+              const dailyRate = isMonthly
+                ? calculateMonthlyDailyRate(monthlyBasicSalary).toString()
                 : (item.daily_rate ?? '3000');
 
               await tx.payment_structures.create({
@@ -993,8 +1062,8 @@ export class EmployeesService {
                   uuid: generateUUID(),
                   employee_id: created.id,
                   payroll_frequency: category.payroll_frequency,
-                  basic_salary: category.payroll_frequency === 'MONTHLY'
-                    ? (item.basic_salary ?? '150000')
+                  basic_salary: isMonthly
+                    ? monthlyBasicSalary
                     : isCustom
                       ? this.resolveCustomBasicSalary(
                           dailyRate,
@@ -1113,7 +1182,11 @@ export class EmployeesService {
           : 'Contract working days have ended.';
         await tx.employees.update({
           where: { id: employee.id },
-          data: { status: 'PAUSED' as any, pause_reason: reason, updated_at: new Date() },
+          data: {
+            status: 'PAUSED' as any,
+            pause_reason: reason,
+            updated_at: new Date(),
+          },
         });
 
         // Log the pause action
@@ -1144,7 +1217,8 @@ export class EmployeesService {
             entity_id: employee.id,
             module_name: 'EMPLOYEES',
             activity_type: 'UPDATE' as any,
-            activity_description: 'Employee auto-paused: contract end date expired.',
+            activity_description:
+              'Employee auto-paused: contract end date expired.',
             action: 'UPDATED' as any,
             old_values: {
               status: employee.status,
@@ -1207,10 +1281,7 @@ export class EmployeesService {
           new_location_id: employee.working_location_id,
           old_employment_category_id: employee.employment_category_id,
           new_employment_category_id: employee.employment_category_id,
-          status:
-            status === 'ACTIVE'
-              ? 'ACTIVE'
-              : 'INACTIVE',
+          status: status === 'ACTIVE' ? 'ACTIVE' : 'INACTIVE',
           reason,
           changed_by: BigInt(actor.userId),
           approved_by: BigInt(actor.userId),
@@ -1406,26 +1477,60 @@ export class EmployeesService {
         orderBy: { effective_from: 'desc' as const },
         take: 1,
       },
-      // Include all attendance for accurate rate calculation
+      employee_deductions: {
+        where: { is_active: true },
+        include: { deduction_types: true },
+        orderBy: { created_at: 'desc' as const },
+      },
+      // Include only the latest attendance row; aggregate counts are fetched
+      // separately for list views so the employee page does not pull the full
+      // time_records table.
       time_records: {
         orderBy: { attendance_date: 'desc' as const },
+        take: 1,
       },
     };
   }
 
-  private serializeEmployee(employee: Record<string, any>) {
+  private async getAttendanceStatsByEmployee(employeeIds: bigint[]) {
+    const stats = new Map<string, { present: number; total: number }>();
+    if (employeeIds.length === 0) return stats;
+
+    const grouped = await this.prisma.time_records.groupBy({
+      by: ['employee_id', 'attendance_status'],
+      where: { employee_id: { in: employeeIds } },
+      _count: { _all: true },
+    });
+
+    grouped.forEach((row) => {
+      const key = row.employee_id.toString();
+      const current = stats.get(key) ?? { present: 0, total: 0 };
+      const count = row._count._all;
+      current.total += count;
+      if (row.attendance_status === 'PRESENT') current.present += count;
+      stats.set(key, current);
+    });
+
+    return stats;
+  }
+
+  private serializeEmployee(
+    employee: Record<string, any>,
+    attendanceStats?: { present: number; total: number },
+  ) {
     const timeRecords = employee.time_records || [];
 
     // Improved Attendance Logic:
     // 1. If we have NO records at all, rate is 0%.
     // 2. If we have records, calculate present percentage.
 
-    const presentCount = timeRecords.filter(
-      (r: any) => r.attendance_status === 'PRESENT',
-    ).length;
+    const presentCount =
+      attendanceStats?.present ??
+      timeRecords.filter((r: any) => r.attendance_status === 'PRESENT').length;
+    const totalRecords = attendanceStats?.total ?? timeRecords.length;
 
-    const attendanceRate = timeRecords.length
-      ? Math.round((presentCount / timeRecords.length) * 100)
+    const attendanceRate = totalRecords
+      ? Math.round((presentCount / totalRecords) * 100)
       : 0;
 
     const latestRecord = timeRecords[0];
@@ -1441,11 +1546,36 @@ export class EmployeesService {
       department: employee.departments ?? null,
       working_location: employee.working_locations ?? null,
       employment_category: employee.employment_categories ?? null,
+      employee_deductions: (employee.employee_deductions ?? []).map(
+        (deduction: any) => ({
+          ...deduction,
+          id: deduction.id?.toString?.() ?? deduction.id,
+          employee_id:
+            deduction.employee_id?.toString?.() ?? deduction.employee_id,
+          deduction_type_id:
+            deduction.deduction_type_id?.toString?.() ??
+            deduction.deduction_type_id,
+          deduction_type: deduction.deduction_types
+            ? {
+                ...deduction.deduction_types,
+                id:
+                  deduction.deduction_types.id?.toString?.() ??
+                  deduction.deduction_types.id,
+                amount:
+                  deduction.deduction_types.amount?.toString?.() ??
+                  deduction.deduction_types.amount,
+                percentage_value:
+                  deduction.deduction_types.percentage_value?.toString?.() ??
+                  deduction.deduction_types.percentage_value,
+              }
+            : undefined,
+        }),
+      ),
       attendance_stats: {
         rate: attendanceRate,
         last_status: latestRecord?.attendance_status ?? null,
         last_date: latestRecord?.attendance_date ?? null,
-        record_count: timeRecords.length,
+        record_count: totalRecords,
       },
     };
   }
@@ -1470,6 +1600,16 @@ export class EmployeesService {
     return !!actor?.roles?.some((role) => ['SUPER_ADMIN'].includes(role));
   }
 
+  /**
+   * BRANCH_MANAGER and HR manage their whole working location, across every
+   * department in it, so they are exempt from department-level scoping.
+   * Anyone else with a department_id on their own user row only ever sees
+   * employees in that one department.
+   */
+  private isDepartmentScopeExempt(actor: CurrentUserType): boolean {
+    return actor.roles.some((role) => ['BRANCH_MANAGER', 'HR'].includes(role));
+  }
+
   private employeeScopeWhere(actor: CurrentUserType) {
     if (this.isSystemAdmin(actor)) {
       return {};
@@ -1485,17 +1625,7 @@ export class EmployeesService {
       where.working_location_id = BigInt(actor.working_location_id);
     }
 
-    const isBranchManager = actor.roles.some((role) =>
-      ['BRANCH_MANAGER'].includes(role),
-    );
-
-    const isAttendanceActor =
-      actor.permissions.includes('attendance.create') ||
-      actor.permissions.includes('attendance.read') ||
-      actor.permissions.includes('attendance.update') ||
-      actor.permissions.includes('attendance.approve');
-
-    if (!isBranchManager && isAttendanceActor && actor.department_id) {
+    if (!this.isDepartmentScopeExempt(actor) && actor.department_id) {
       where.department_id = BigInt(actor.department_id);
     }
 
@@ -1522,24 +1652,13 @@ export class EmployeesService {
       );
     }
 
-    const isBranchManager = actor.roles.some((role) =>
-      ['BRANCH_MANAGER'].includes(role),
-    );
-
-    const isAttendanceActor =
-      actor.permissions.includes('attendance.create') ||
-      actor.permissions.includes('attendance.read') ||
-      actor.permissions.includes('attendance.update') ||
-      actor.permissions.includes('attendance.approve');
-
     if (
-      !isBranchManager &&
-      isAttendanceActor &&
+      !this.isDepartmentScopeExempt(actor) &&
       actor.department_id &&
       employee.department_id?.toString() !== actor.department_id
     ) {
       throw new ForbiddenException(
-        'Attendance users can only access employees in their department.',
+        'You can only access employees in your department.',
       );
     }
   }
@@ -1581,17 +1700,8 @@ export class EmployeesService {
       );
     }
 
-    const isBranchManager = actor.roles.some((role) =>
-      ['BRANCH_MANAGER'].includes(role),
-    );
-
-    const isAttendanceActor =
-      actor.permissions.includes('attendance.create') ||
-      actor.permissions.includes('attendance.update');
-
     if (
-      !isBranchManager &&
-      isAttendanceActor &&
+      !this.isDepartmentScopeExempt(actor) &&
       actor.department_id &&
       departmentId?.toString() !== actor.department_id
     ) {

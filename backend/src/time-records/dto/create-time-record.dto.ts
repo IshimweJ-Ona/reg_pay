@@ -26,7 +26,7 @@ export class CreateTimeRecordDto {
   @IsNumber()
   @Min(0)
   @Type(() => Number)
-  hours_worked?: number;
+  overtime_hours?: number;
 
   @IsOptional()
   @IsEnum(AttendanceStatus)

@@ -15,13 +15,17 @@ import {
   transactions_transaction_status as TRANSACTION_STATUS,
 } from '@prisma/client';
 import type { CurrentUserType } from '../auth/types/current-user.type';
-import { hasEffectivePermission } from '../common/utils/effective-permissions.util';
+import {
+  hasEffectivePermission,
+  buildRawPermissionKeys,
+} from '../common/utils/effective-permissions.util';
 import {
   isNumericId,
   normalizeSearch,
   requireUuidOrNumeric,
 } from '../common/utils/lookup.util';
 import { generateUUID } from '../common/utils/uuid.util';
+import { buildAuditDiff } from '../common/utils/audit-diff.util';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SystemConfigService } from '../system-config/system-config.service';
@@ -31,7 +35,9 @@ import { ApprovePayrollItemDto } from './dto/approve-payroll-item.dto';
 import { CreatePayrollBatchDto } from './dto/create-payroll-batch.dto';
 import { RejectPayrollItemDto } from './dto/reject-payroll-item.dto';
 import {
-  calculateOvertimeBonus,
+  calculateOvertimePay,
+  calculateMonthlyDailyRate,
+  DEFAULT_MONTHLY_WORK_DAYS,
   getContractDays,
 } from '../common/utils/payroll-calc.util';
 import dayjs from 'dayjs';
@@ -171,6 +177,7 @@ export class PayrollService {
       (sum, item) => sum + item.taxAmount,
       0,
     );
+    const batchDescription = dto.description?.trim() || null;
     const existingDraft = await this.prisma.payment_batches.findFirst({
       where: {
         working_location_id: workingLocationId,
@@ -214,7 +221,9 @@ export class PayrollService {
             total_allowances: totalAllowances,
             total_deductions: totalDeductions,
             total_tax: totalTax,
+            description: batchDescription,
             submitted_at: new Date(),
+            updated_at: new Date(),
           },
         });
       } else {
@@ -236,6 +245,8 @@ export class PayrollService {
             total_deductions: totalDeductions,
             total_tax: totalTax,
             status: (PAYMENT_BATCH_STATUS as any).DRAFT,
+            description: batchDescription,
+            attachments: [],
             submitted_by: BigInt(actor.userId),
             submitted_at: new Date(),
             updated_at: new Date(),
@@ -317,7 +328,8 @@ export class PayrollService {
           );
           if (calculation) {
             const ikiminaAmount = deduction.amount;
-            const updatedTotalDeductions = calculation.totalDeductions + ikiminaAmount;
+            const updatedTotalDeductions =
+              calculation.totalDeductions + ikiminaAmount;
             const updatedNetAmount = calculation.netAmount - ikiminaAmount;
 
             await tx.transactions.updateMany({
@@ -383,6 +395,7 @@ export class PayrollService {
             total_allowances: totalAllowances,
             total_deductions: recalculatedTotalDeductions ?? totalDeductions,
             total_tax: totalTax,
+            description: batchDescription,
           },
         },
       });
@@ -413,10 +426,103 @@ export class PayrollService {
     return this.serializeBatch(batch);
   }
 
+  async addBatchAttachments(
+    uuid: string,
+    files: Express.Multer.File[],
+    actor: CurrentUserType,
+  ) {
+    if (!files.length) {
+      throw new BadRequestException(
+        'Select at least one attachment to upload.',
+      );
+    }
+
+    const batch = await this.prisma.payment_batches.findUnique({
+      where: { uuid },
+    });
+
+    if (!batch) throw new NotFoundException('Payroll batch not found.');
+    this.ensureActorCanUseWorkingLocation(actor, batch.working_location_id);
+
+    if (
+      batch.status === PAYMENT_BATCH_STATUS.APPROVED ||
+      batch.status === PAYMENT_BATCH_STATUS.REJECTED
+    ) {
+      throw new BadRequestException(
+        'Completed payroll batches are read-only and cannot receive new attachments.',
+      );
+    }
+
+    const existingAttachments = Array.isArray(batch.attachments)
+      ? (batch.attachments as any[])
+      : [];
+    const addedAttachments = files.map((file) => ({
+      id: generateUUID(),
+      original_name: file.originalname,
+      stored_name: file.filename,
+      mime_type: file.mimetype,
+      size: file.size,
+      url: `/uploads/payroll/${file.filename}`,
+      uploaded_by: actor.userId,
+      uploaded_at: new Date().toISOString(),
+    }));
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const saved = await tx.payment_batches.update({
+        where: { id: batch.id },
+        data: {
+          attachments: [...existingAttachments, ...addedAttachments] as any,
+          updated_at: new Date(),
+        },
+        include: this.batchIncludes(),
+      });
+
+      await tx.audit_logs.create({
+        data: {
+          user_id: BigInt(actor.userId),
+          entity_table: 'payment_batches',
+          entity_id: batch.id,
+          module_name: 'PAYROLL',
+          activity_type: ACTIVITY_TYPE.UPDATE,
+          activity_description: `Added ${addedAttachments.length} payroll batch attachment${addedAttachments.length === 1 ? '' : 's'}.`,
+          action: AUDIT_ACTION.UPDATED,
+          old_values: {
+            attachment_count: existingAttachments.length,
+          },
+          new_values: {
+            attachment_count:
+              existingAttachments.length + addedAttachments.length,
+            files: addedAttachments.map((attachment) => ({
+              name: attachment.original_name,
+              type: attachment.mime_type,
+              size: attachment.size,
+            })),
+          },
+          changed_fields: ['attachments'],
+        },
+      });
+
+      return saved;
+    });
+
+    await this.clearPayrollCache();
+    return this.serializeBatch(updated);
+  }
+
   // Retrieve payroll batches with scoping and caching
-  async findBatches(actor: CurrentUserType, qInput?: string) {
+  async findBatches(
+    actor: CurrentUserType,
+    qInput?: string,
+    statusInput?: string,
+  ) {
     const q = normalizeSearch(qInput);
-    const cacheKey = `payroll:batches:${actor.userId}:${actor.working_location_id ?? ''}:${q ?? ''}`;
+    const statuses = statusInput
+      ? statusInput
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : [];
+    const cacheKey = `payroll:batches:${actor.userId}:${actor.working_location_id ?? ''}:${q ?? ''}:${statuses.join(',')}`;
 
     // Check if result is in cache
     const cached = await this.cacheManager.get(cacheKey);
@@ -426,6 +532,7 @@ export class PayrollService {
       where: {
         ...this.batchScopeWhere(actor),
         ...(q ? { batch_code: { contains: q } } : {}),
+        ...(statuses.length ? { status: { in: statuses as any } } : {}),
       },
       include: this.batchIncludes(),
       orderBy: { created_at: 'desc' },
@@ -446,49 +553,67 @@ export class PayrollService {
 
     if (!batch) throw new NotFoundException('Payroll batch not found.');
 
-    if (
-      batch.status === PAYMENT_BATCH_STATUS.APPROVED ||
-      batch.status === PAYMENT_BATCH_STATUS.REJECTED
-    ) {
-      throw new BadRequestException('Terminal batches cannot be modified.');
+    if (batch.status === PAYMENT_BATCH_STATUS.APPROVED) {
+      throw new BadRequestException(
+        'Approved batches cannot be modified or resubmitted.',
+      );
     }
 
-    if (batch.status !== (PAYMENT_BATCH_STATUS as any).DRAFT) {
-      throw new BadRequestException('Only DRAFT batches can be submitted.');
+    const submittableStatuses: string[] = [
+      (PAYMENT_BATCH_STATUS as any).DRAFT,
+      PAYMENT_BATCH_STATUS.REJECTED,
+    ];
+    if (!submittableStatuses.includes(batch.status)) {
+      throw new BadRequestException(
+        'Only DRAFT or REJECTED batches can be submitted.',
+      );
     }
 
-    if (batch.submitted_by.toString() !== actor.userId) {
-      // Allow Accountant role even if they didn't create it?
-      // Spec says "ACCOUNTANT (creates) -> BRANCH_MANAGER (approves)"
-      // So normally the submitter IS the accountant.
-      // But let's be strict.
-      // throw new ForbiddenException('Only the creator can submit the batch.');
-    }
+    const initialApproverExists = await this.hasInitialApprover(
+      batch.working_location_id,
+    );
 
     const updated = await this.prisma.payment_batches.update({
       where: { id: batch.id },
       data: {
         status: PAYMENT_BATCH_STATUS.PENDING,
+        current_approval_step: 1,
+        rejected_reason: null,
         submitted_at: new Date(),
       },
       include: this.batchIncludes(),
     });
 
-    await this.notificationsService.notifyBranchManager(
-      batch.working_location_id,
-      {
+    if (initialApproverExists) {
+      await this.notificationsService.notifyBranchManager(
+        batch.working_location_id,
+        {
+          senderId: actor.userId,
+          title: 'Payroll Batch Submitted',
+          message: `${batch.batch_code} is awaiting manager / initial approval.`,
+          type: 'PAYROLL_APPROVAL_REQUEST',
+          referenceId: batch.uuid,
+          metadata: {
+            redirect: `payroll/${batch.uuid}`,
+            level: 'BRANCH_MANAGER',
+            status: updated.status,
+          },
+        },
+      );
+    } else {
+      await this.notificationsService.notifyAdmins({
         senderId: actor.userId,
-        title: 'Payroll Batch Submitted',
-        message: `${batch.batch_code} is awaiting manager approval.`,
+        title: 'Payroll Batch Submitted for Admin Approval',
+        message: `${batch.batch_code} has no local approver and is awaiting super admin approval.`,
         type: 'PAYROLL_APPROVAL_REQUEST',
         referenceId: batch.uuid,
         metadata: {
           redirect: `payroll/${batch.uuid}`,
-          level: 'BRANCH_MANAGER',
+          level: 'SUPER_ADMIN',
           status: updated.status,
         },
-      },
-    );
+      });
+    }
 
     await this.clearPayrollCache();
     return this.serializeBatch(updated);
@@ -526,6 +651,8 @@ export class PayrollService {
       'Gross Pay',
       'Base Pay',
       'Allowances',
+      'Overtime Hours',
+      'Overtime Pay',
       'Tax',
       'Deductions',
       'Net Pay',
@@ -537,6 +664,7 @@ export class PayrollService {
     const rows = batch.payment_batch_items.map((item) => {
       const employeeName =
         `${item.employees?.first_name ?? ''} ${item.employees?.last_name ?? ''}`.trim();
+      const metadata = (item.transactions?.calculation_metadata ?? {}) as any;
       return [
         batch.batch_code,
         `${batch.payroll_month}/${batch.payroll_year}`,
@@ -550,6 +678,8 @@ export class PayrollService {
         item.transactions?.gross_amount?.toString() ?? '0',
         item.transactions?.base_amount?.toString() ?? '0',
         item.transactions?.allowance_amount?.toString() ?? '0',
+        metadata.overtime_hours?.toString?.() ?? '0',
+        metadata.overtime_amount?.toString?.() ?? '0',
         item.transactions?.tax_amount?.toString() ?? '0',
         item.transactions?.total_deductions?.toString() ?? '0',
         item.transactions?.net_amount?.toString() ?? '0',
@@ -608,11 +738,7 @@ export class PayrollService {
         },
       });
 
-      await this.recalculateBatchStatus(
-        tx,
-        item.payment_batch_id,
-        BigInt(actor.userId),
-      );
+      await this.recalculateBatchStatus(tx, item.payment_batch_id);
 
       return saved;
     });
@@ -647,6 +773,12 @@ export class PayrollService {
         data: { transaction_status: TRANSACTION_STATUS.REJECTED as any },
       });
 
+      const itemDiff = buildAuditDiff(item, saved, [
+        'status',
+        'rejection_reason',
+        'approved_by',
+        'approved_at',
+      ]);
       await tx.audit_logs.create({
         data: {
           user_id: BigInt(actor.userId),
@@ -657,24 +789,13 @@ export class PayrollService {
           activity_type: ACTIVITY_TYPE.UPDATE,
           activity_description: `Rejected payroll item: ${dto.rejection_reason}`,
           action: AUDIT_ACTION.DENIED,
-          new_values: {
-            status: PAYMENT_BATCH_STATUS.REJECTED,
-            rejection_reason: dto.rejection_reason,
-          },
-          changed_fields: [
-            'status',
-            'rejection_reason',
-            'approved_by',
-            'approved_at',
-          ],
+          old_values: itemDiff.old_values as any,
+          new_values: itemDiff.new_values as any,
+          changed_fields: itemDiff.changed_fields as any,
         },
       });
 
-      await this.recalculateBatchStatus(
-        tx,
-        item.payment_batch_id,
-        BigInt(actor.userId),
-      );
+      await this.recalculateBatchStatus(tx, item.payment_batch_id);
 
       return saved;
     });
@@ -732,14 +853,10 @@ export class PayrollService {
 
     await this.ensureActorCanApproveBatch(actor, batch);
 
-    const branchManager = await this.prisma.branch_managers.findFirst({
-      where: {
-        working_location_id: batch.working_location_id,
-        is_active: true,
-      },
-    });
-
-    const finalStep = branchManager ? 2 : 1;
+    const initialApproverExists = await this.hasInitialApprover(
+      batch.working_location_id,
+    );
+    const finalStep = initialApproverExists ? 2 : 1;
     const isFinal = batch.current_approval_step >= finalStep;
     const nextStep = batch.current_approval_step + 1;
 
@@ -826,19 +943,37 @@ export class PayrollService {
     });
 
     if (approved.status === PAYMENT_BATCH_STATUS.MANAGER_APPROVED) {
+      const authority = await this.resolveFinalApprovalAuthority();
+      await this.notificationsService.notifyFinalApprovers({
+        senderId: actor.userId,
+        title: 'Payroll Batch Awaiting Final Approval',
+        message:
+          authority.kind === 'SUPER_ADMIN_ONLY'
+            ? `${approved.batch_code} was approved by the manager and needs final super admin approval (no HR is assigned at headquarters).`
+            : `${approved.batch_code} was approved by the manager and needs final HR approval at headquarters.`,
+        type: 'PAYROLL_APPROVAL_REQUEST',
+        referenceId: approved.uuid,
+        metadata: {
+          redirect: `payroll/${approved.uuid}`,
+          level: authority.kind === 'SUPER_ADMIN_ONLY' ? 'SUPER_ADMIN' : 'HR',
+          status: approved.status,
+        },
+      });
+    } else if (approved.status === PAYMENT_BATCH_STATUS.APPROVED) {
       await this.notificationsService.notifyAdmins({
         senderId: actor.userId,
-        title: 'Payroll Batch Awaiting Admin Approval',
-        message: `${approved.batch_code} was approved by the manager and needs final admin approval.`,
-        type: 'PAYROLL_APPROVAL_REQUEST',
+        title: 'Payroll Batch Completed',
+        message: `${approved.batch_code} is completed and ready for read-only admin review.`,
+        type: 'PAYROLL_COMPLETED_REVIEW',
         referenceId: approved.uuid,
         metadata: {
           redirect: `payroll/${approved.uuid}`,
           level: 'SUPER_ADMIN',
           status: approved.status,
+          readOnly: true,
         },
       });
-    } else if (approved.status === PAYMENT_BATCH_STATUS.APPROVED) {
+
       await this.notificationsService.create({
         userId: approved.submitted_by,
         senderId: actor.userId,
@@ -868,8 +1003,8 @@ export class PayrollService {
         status: PAYMENT_BATCH_STATUS.REJECTED,
       },
       include: {
-        transaction: true,
-        employee: { include: { working_locations: true } },
+        transactions: true,
+        employees: { include: { working_locations: true } },
       },
     });
 
@@ -894,26 +1029,30 @@ export class PayrollService {
         payroll_year: year,
         total_employees: rejectedItems.length,
         total_amount: rejectedItems.reduce(
-          (sum, item) => sum + Number(item.transaction.net_amount),
+          (sum, item) => sum + Number(item.transactions.net_amount),
           0,
         ),
         total_gross: rejectedItems.reduce(
-          (sum, item) => sum + Number(item.transaction.gross_amount),
+          (sum, item) => sum + Number(item.transactions.gross_amount),
           0,
         ),
         total_allowances: rejectedItems.reduce(
-          (sum, item) => sum + Number(item.transaction.allowance_amount),
+          (sum, item) => sum + Number(item.transactions.allowance_amount),
           0,
         ),
         total_deductions: rejectedItems.reduce(
-          (sum, item) => sum + Number(item.transaction.total_deductions),
+          (sum, item) => sum + Number(item.transactions.total_deductions),
           0,
         ),
         total_tax: rejectedItems.reduce(
-          (sum, item) => sum + Number(item.transaction.tax_amount),
+          (sum, item) => sum + Number(item.transactions.tax_amount),
           0,
         ),
         status: PAYMENT_BATCH_STATUS.DRAFT as any,
+        description: batch.description
+          ? `Rejected employees split from ${batch.batch_code}. ${batch.description}`
+          : `Rejected employees split from ${batch.batch_code}.`,
+        attachments: Array.isArray(batch.attachments) ? batch.attachments : [],
         submitted_by: batch.submitted_by,
         submitted_at: new Date(),
         updated_at: new Date(),
@@ -937,31 +1076,31 @@ export class PayrollService {
         total_employees: { decrement: rejectedItems.length },
         total_amount: {
           decrement: rejectedItems.reduce(
-            (sum, item) => sum + Number(item.transaction.net_amount),
+            (sum, item) => sum + Number(item.transactions.net_amount),
             0,
           ),
         },
         total_gross: {
           decrement: rejectedItems.reduce(
-            (sum, item) => sum + Number(item.transaction.gross_amount),
+            (sum, item) => sum + Number(item.transactions.gross_amount),
             0,
           ),
         },
         total_allowances: {
           decrement: rejectedItems.reduce(
-            (sum, item) => sum + Number(item.transaction.allowance_amount),
+            (sum, item) => sum + Number(item.transactions.allowance_amount),
             0,
           ),
         },
         total_deductions: {
           decrement: rejectedItems.reduce(
-            (sum, item) => sum + Number(item.transaction.total_deductions),
+            (sum, item) => sum + Number(item.transactions.total_deductions),
             0,
           ),
         },
         total_tax: {
           decrement: rejectedItems.reduce(
-            (sum, item) => sum + Number(item.transaction.tax_amount),
+            (sum, item) => sum + Number(item.transactions.tax_amount),
             0,
           ),
         },
@@ -1125,12 +1264,25 @@ export class PayrollService {
   }
 
   private csvCell(value: unknown) {
-    const text =
-      value === null || value === undefined
-        ? ''
-        : typeof value === 'object'
-          ? JSON.stringify(value)
-          : String(value);
+    let text = '';
+    if (value !== null && value !== undefined) {
+      switch (typeof value) {
+        case 'string':
+          text = value;
+          break;
+        case 'number':
+        case 'boolean':
+        case 'bigint':
+          text = value.toString();
+          break;
+        case 'symbol':
+          text = value.description ?? '';
+          break;
+        case 'object':
+          text = JSON.stringify(value) ?? '';
+          break;
+      }
+    }
     if (/[",\r\n]/.test(text)) {
       return `"${text.replace(/"/g, '""')}"`;
     }
@@ -1219,43 +1371,55 @@ export class PayrollService {
       (record) => record.attendance_status === 'PRESENT',
     ).length;
 
-    // Overtime is no longer a manually entered value. A day counts as an
-    // overtime day whenever hours_worked exceeds the configured default
-    // work hours (8/day unless changed in System Config), and each
-    // overtime day earns one flat bonus — not a per-hour multiple.
-    const defaultWorkHours = await this.systemConfigService.getDefaultWorkHours();
+    // Overtime is now entered directly on attendance and summed for payroll.
+    const overtimeRatePerHour =
+      await this.systemConfigService.getOvertimeBonusPerDay();
+    const overtimeHours = attendance.reduce(
+      (sum, record) => sum + Number(record.overtime_hours ?? 0),
+      0,
+    );
     const overtimeDays = attendance.filter(
-      (record) => Number(record.hours_worked) > defaultWorkHours,
+      (record) => Number(record.overtime_hours ?? 0) > 0,
     ).length;
+    const totalOvertimeEarned = calculateOvertimePay(
+      overtimeHours,
+      overtimeRatePerHour,
+    );
 
     const frequency = paymentStructure.payroll_frequency;
-
-    // Flat-rate overtime bonus (default 2,500 RWF/day, configurable via
-    // system_config) replaces the old per-employee overtime_rate multiplier
-    // for every payroll frequency.
-    const overtimeBonusPerDay = await this.systemConfigService.getOvertimeBonusPerDay();
 
     // CUSTOM (fixed-term) employees are anchored to their contract's own day
     // count rather than the calendar month, so daily_rate x contract days
     // becomes the "full period" baseline that attendance is measured against.
     const contractDays =
       employee.contract_start_date && employee.contract_end_date
-        ? getContractDays(employee.contract_start_date, employee.contract_end_date)
+        ? getContractDays(
+            employee.contract_start_date,
+            employee.contract_end_date,
+          )
         : null;
 
-    // Determine expectedWorkDays - manual overrides always win, then CUSTOM/DAILY
-    // contract days (if present), then the calendar.
-    let expectedWorkDays = periodCalendarDays;
+    // Determine expectedWorkDays - manual overrides always win. Monthly
+    // employees use the fixed 26-day payroll basis requested by the business.
+    let expectedWorkDays =
+      frequency === 'MONTHLY' ? DEFAULT_MONTHLY_WORK_DAYS : periodCalendarDays;
     if (dto.work_days !== undefined && dto.work_days !== null) {
       expectedWorkDays = dto.work_days;
-    } else if ((frequency === 'CUSTOM' || frequency === 'DAILY') && contractDays) {
+    } else if (
+      (frequency === 'CUSTOM' || frequency === 'DAILY') &&
+      contractDays
+    ) {
       expectedWorkDays = contractDays;
     }
     if (expectedWorkDays < 1) {
       expectedWorkDays = 1;
     }
 
-    const prorationRatio = presentDays / expectedWorkDays;
+    const salaryPresentDays =
+      frequency === 'MONTHLY'
+        ? Math.min(presentDays, expectedWorkDays)
+        : presentDays;
+    const prorationRatio = salaryPresentDays / expectedWorkDays;
 
     // Attendance is now the single source of truth for the 21-day
     // tax/allowance eligibility threshold across every frequency.
@@ -1263,16 +1427,24 @@ export class PayrollService {
     const isOver21Days = daysWorked > 21;
 
     let baseAmount = 0;
+    let fullBaseSalary = 0;
+    const absentDays = Math.max(0, expectedWorkDays - salaryPresentDays);
+    let absentDaysDeduction = 0;
     let phoneNumber: string | undefined = undefined;
 
     if (frequency === 'MONTHLY') {
-      baseAmount = Number(paymentStructure.basic_salary);
+      fullBaseSalary = Number(paymentStructure.basic_salary);
+      const monthlyDailyRate =
+        Number(paymentStructure.daily_rate) ||
+        calculateMonthlyDailyRate(fullBaseSalary, expectedWorkDays);
+      absentDaysDeduction = absentDays * monthlyDailyRate;
+      baseAmount = monthlyDailyRate * salaryPresentDays;
     } else {
       // DAILY and CUSTOM: attendance drives what actually gets paid out.
-      // A present day earns the daily_rate; an absent day earns 0 and is
-      // deducted from the amount owed - this is identical for DAILY workers
-      // and CUSTOM (fixed-term contract) employees.
-      baseAmount = Number(paymentStructure.daily_rate) * presentDays;
+      const dailyRate = Number(paymentStructure.daily_rate);
+      fullBaseSalary = dailyRate * expectedWorkDays;
+      absentDaysDeduction = absentDays * dailyRate;
+      baseAmount = dailyRate * presentDays;
     }
 
     // Apply manual overrides from DTO
@@ -1304,13 +1476,88 @@ export class PayrollService {
     let taxBreakdown: Array<{
       name: string;
       rate: number;
+      taxable_base?: number;
       full_amount: number;
       prorated_amount: number;
     }> = [];
+    let configuredDeductionBreakdown: Array<{
+      name: string;
+      mode: string;
+      rate?: number;
+      base_amount?: number;
+      full_amount: number;
+      prorated_amount: number;
+    }> = [];
+    let employeeAssignedTaxPolicies = new Map<string, any>();
+
+    const calculateConfiguredDeductions = (
+      employeeDeductions: any[],
+      deductionBase: number,
+      ratio: number,
+    ) => {
+      const breakdown = employeeDeductions.map((deduction) => {
+        const type = deduction.deduction_types;
+        const assignedTaxPolicy = employeeAssignedTaxPolicies.get(
+          this.normalizeDeductionName(type.name),
+        );
+        const isPercentage =
+          !!assignedTaxPolicy || type.deduction_mode === 'PERCENTAGE';
+        const rate = assignedTaxPolicy
+          ? Number(assignedTaxPolicy.rate)
+          : Number(type.percentage_value);
+        const fullAmount = isPercentage
+          ? deductionBase * (rate / 100)
+          : Number(type.amount);
+
+        return {
+          name: assignedTaxPolicy?.name ?? type.name,
+          mode: assignedTaxPolicy ? 'PERCENTAGE' : type.deduction_mode,
+          rate: isPercentage ? rate : undefined,
+          base_amount: isPercentage ? deductionBase : undefined,
+          full_amount: fullAmount,
+          prorated_amount: fullAmount * ratio,
+        };
+      });
+
+      return {
+        fullAmount: breakdown.reduce(
+          (sum, deduction) => sum + deduction.full_amount,
+          0,
+        ),
+        proratedAmount: breakdown.reduce(
+          (sum, deduction) => sum + deduction.prorated_amount,
+          0,
+        ),
+        breakdown,
+      };
+    };
+
+    const monthlyTaxesAtPeriod =
+      await this.systemConfigService.findMonthlyTaxesAtDate(periodEnd);
+    const employeeAssignedTaxesAtPeriod =
+      await this.systemConfigService.findEmployeeAssignedMonthlyTaxesAtDate(
+        periodEnd,
+      );
+    employeeAssignedTaxPolicies = new Map(
+      employeeAssignedTaxesAtPeriod.map((tax) => [
+        this.normalizeDeductionName(tax.name),
+        tax,
+      ]),
+    );
+    const globalMonthlyTaxNames = new Set(
+      monthlyTaxesAtPeriod.map((tax) => this.normalizeDeductionName(tax.name)),
+    );
+    const filterEmployeeSpecificDeductions = (employeeDeductions: any[]) =>
+      employeeDeductions.filter(
+        (deduction) =>
+          !globalMonthlyTaxNames.has(
+            this.normalizeDeductionName(deduction.deduction_types?.name),
+          ),
+      );
 
     if (frequency === 'MONTHLY') {
-      const basicSalary = baseAmount;
-      const fullOvertime = calculateOvertimeBonus(overtimeDays, overtimeBonusPerDay);
+      const basicSalary = fullBaseSalary;
+      const fullOvertime = totalOvertimeEarned;
       allowanceEligible = true;
 
       allowances = await this.prisma.allowances.findMany({
@@ -1324,12 +1571,13 @@ export class PayrollService {
       const fullMonthlyGross = basicSalary + fullAllowance + fullOvertime;
       monthlyGrossBeforeProration = fullMonthlyGross;
 
-      // Full Tax
-      const monthlyTaxes = await this.systemConfigService.findMonthlyTaxesAtDate(periodEnd);
-      const fullTaxBreakdown = monthlyTaxes.map((tax) => ({
+      // PIT/PAYE is automatic only for monthly employees and is calculated
+      // from base salary before allowances/overtime are added.
+      const fullTaxBreakdown = monthlyTaxesAtPeriod.map((tax) => ({
         name: tax.name,
         rate: Number(tax.rate),
-        full_amount: fullMonthlyGross * (Number(tax.rate) / 100),
+        taxable_base: basicSalary,
+        full_amount: basicSalary * (Number(tax.rate) / 100),
       }));
       const fullTax = fullTaxBreakdown.reduce(
         (sum, tax) => sum + tax.full_amount,
@@ -1337,54 +1585,59 @@ export class PayrollService {
       );
 
       // Full Configured Deductions
-      const employeeDeductions = await this.prisma.employee_deductions.findMany({
-        where: {
-          employee_id: employee.id,
-          is_active: true,
-          start_date: { lte: periodEnd },
-          OR: [{ end_date: null }, { end_date: { gte: periodStart } }],
+      const employeeDeductions = await this.prisma.employee_deductions.findMany(
+        {
+          where: {
+            employee_id: employee.id,
+            is_active: true,
+            start_date: { lte: periodEnd },
+            OR: [{ end_date: null }, { end_date: { gte: periodStart } }],
+          },
+          include: { deduction_types: true },
         },
-        include: { deduction_types: true },
-      });
-      const fullConfiguredDeductions = employeeDeductions.reduce((sum, deduction) => {
-        if (deduction.deduction_types.deduction_mode === 'PERCENTAGE') {
-          return (
-            sum +
-            fullMonthlyGross *
-              (Number(deduction.deduction_types.percentage_value) / 100)
-          );
-        }
-        return sum + Number(deduction.deduction_types.amount);
-      }, 0);
+      );
+      const configuredDeductions = calculateConfiguredDeductions(
+        filterEmployeeSpecificDeductions(employeeDeductions),
+        basicSalary,
+        prorationRatio,
+      );
+      const fullConfiguredDeductions = configuredDeductions.fullAmount;
+      configuredDeductionBreakdown = configuredDeductions.breakdown;
 
-      const fullTaxAndDeductions = fullTax + fullConfiguredDeductions;
-      const fullMonthlyNetAfterTax = fullMonthlyGross - fullTaxAndDeductions;
+      const fullMonthlyNetAfterTax =
+        basicSalary - fullTax - fullConfiguredDeductions + fullAllowance;
       monthlyNetBeforeProration = fullMonthlyNetAfterTax;
 
       dailyNetRate = fullMonthlyNetAfterTax / expectedWorkDays;
 
-      // Prorated values
-      baseAmount = basicSalary * prorationRatio;
+      // Basic Pay is the full monthly salary - attendance never shrinks it.
+      // Absences instead reduce pay through their own deduction line below.
+      baseAmount = basicSalary;
       allowanceAmount = fullAllowance * prorationRatio;
-      overtimeAmount = fullOvertime * prorationRatio;
-      grossAmount = fullMonthlyGross * prorationRatio;
+      overtimeAmount = fullOvertime;
+      grossAmount = baseAmount + allowanceAmount + overtimeAmount;
       taxAmount = fullTax * prorationRatio;
       taxBreakdown = fullTaxBreakdown.map((tax) => ({
         ...tax,
         prorated_amount: tax.full_amount * prorationRatio,
       }));
-      totalDeductions = fullTaxAndDeductions * prorationRatio;
-      netAmount = dailyNetRate * presentDays;
+      totalDeductions =
+        taxAmount + configuredDeductions.proratedAmount + absentDaysDeduction;
+      netAmount = Math.max(
+        0,
+        baseAmount -
+          taxAmount -
+          configuredDeductions.proratedAmount -
+          absentDaysDeduction +
+          allowanceAmount +
+          overtimeAmount,
+      );
     } else if (isOver21Days) {
-      // DAILY & CUSTOM, past the 21-day threshold: mirror the MONTHLY
-      // approach - compute base/overtime/allowance/tax on the FULL
-      // (pre-attendance) period, then prorate the entire result down by
-      // how many days were actually present. Tax is only ever applied
-      // once an employee has passed 21 days worked.
+      // DAILY & CUSTOM, past the 21-day threshold
       allowanceEligible = true;
 
       const fullBase = Number(paymentStructure.daily_rate) * expectedWorkDays;
-      const fullOvertime = calculateOvertimeBonus(overtimeDays, overtimeBonusPerDay);
+      const fullOvertime = totalOvertimeEarned;
 
       allowances = await this.prisma.allowances.findMany({
         where: { employee_id: employee.id, is_active: true },
@@ -1397,59 +1650,49 @@ export class PayrollService {
       const fullGross = fullBase + fullOvertime + fullAllowance;
       monthlyGrossBeforeProration = fullGross;
 
-      const monthlyTaxes = await this.systemConfigService.findMonthlyTaxesAtDate(periodEnd);
-      const fullTaxBreakdown = monthlyTaxes.map((tax) => ({
-        name: tax.name,
-        rate: Number(tax.rate),
-        full_amount: fullGross * (Number(tax.rate) / 100),
-      }));
-      const fullTax = fullTaxBreakdown.reduce(
-        (sum, tax) => sum + tax.full_amount,
-        0,
-      );
-
-      const employeeDeductions = await this.prisma.employee_deductions.findMany({
-        where: {
-          employee_id: employee.id,
-          is_active: true,
-          start_date: { lte: periodEnd },
-          OR: [{ end_date: null }, { end_date: { gte: periodStart } }],
+      const employeeDeductions = await this.prisma.employee_deductions.findMany(
+        {
+          where: {
+            employee_id: employee.id,
+            is_active: true,
+            start_date: { lte: periodEnd },
+            OR: [{ end_date: null }, { end_date: { gte: periodStart } }],
+          },
+          include: { deduction_types: true },
         },
-        include: { deduction_types: true },
-      });
-      const fullConfiguredDeductions = employeeDeductions.reduce((sum, deduction) => {
-        if (deduction.deduction_types.deduction_mode === 'PERCENTAGE') {
-          return (
-            sum +
-            fullGross *
-              (Number(deduction.deduction_types.percentage_value) / 100)
-          );
-        }
-        return sum + Number(deduction.deduction_types.amount);
-      }, 0);
+      );
+      const configuredDeductions = calculateConfiguredDeductions(
+        filterEmployeeSpecificDeductions(employeeDeductions),
+        fullBase,
+        prorationRatio,
+      );
+      const fullConfiguredDeductions = configuredDeductions.fullAmount;
+      configuredDeductionBreakdown = configuredDeductions.breakdown;
 
-      const fullTaxAndDeductions = fullTax + fullConfiguredDeductions;
-      const fullNetAfterTax = fullGross - fullTaxAndDeductions;
+      const fullNetAfterTax =
+        fullBase - fullConfiguredDeductions + fullAllowance;
       monthlyNetBeforeProration = fullNetAfterTax;
 
       dailyNetRate = fullNetAfterTax / expectedWorkDays;
 
       baseAmount = fullBase * prorationRatio; // == daily_rate * presentDays
-      overtimeAmount = fullOvertime * prorationRatio;
+      overtimeAmount = fullOvertime;
       allowanceAmount = fullAllowance * prorationRatio;
-      grossAmount = fullGross * prorationRatio;
-      taxAmount = fullTax * prorationRatio;
-      taxBreakdown = fullTaxBreakdown.map((tax) => ({
-        ...tax,
-        prorated_amount: tax.full_amount * prorationRatio,
-      }));
-      totalDeductions = fullTaxAndDeductions * prorationRatio;
-      netAmount = dailyNetRate * presentDays;
+      grossAmount = baseAmount + allowanceAmount + overtimeAmount;
+      taxAmount = 0;
+      taxBreakdown = [];
+      totalDeductions = configuredDeductions.proratedAmount;
+      netAmount = Math.max(
+        0,
+        baseAmount +
+          allowanceAmount +
+          overtimeAmount -
+          configuredDeductions.proratedAmount,
+      );
     } else {
-      // DAILY & CUSTOM, 21 days or fewer worked: no tax, no allowances -
-      // straightforward attendance-driven pay plus the flat overtime bonus.
+      // DAILY & CUSTOM, 21 days or fewer worked: no tax, no allowances
       allowanceEligible = false;
-      overtimeAmount = calculateOvertimeBonus(overtimeDays, overtimeBonusPerDay);
+      overtimeAmount = totalOvertimeEarned;
       allowanceAmount = 0;
       grossAmount = baseAmount + overtimeAmount + allowanceAmount;
       taxAmount = 0;
@@ -1476,13 +1719,26 @@ export class PayrollService {
         present_days: presentDays,
         expected_work_days: expectedWorkDays,
         contract_days: contractDays,
-        overtime_bonus_per_day: overtimeBonusPerDay,
-        default_work_hours: defaultWorkHours,
+        overtime_bonus_per_day: overtimeRatePerHour,
+        overtime_rate_per_hour: overtimeRatePerHour,
         daily_net_rate: dailyNetRate,
         monthly_gross_before_proration: monthlyGrossBeforeProration || null,
         monthly_net_before_proration: monthlyNetBeforeProration || null,
         proration_ratio: prorationRatio,
         overtime_days: overtimeDays,
+        overtime_hours: overtimeHours,
+        overtime_amount: overtimeAmount,
+        taxable_base_amount: taxBreakdown.length > 0 ? baseAmount : 0,
+        base_after_pit: Math.max(0, baseAmount - taxAmount),
+        additions_amount: allowanceAmount + overtimeAmount,
+        configured_deductions_amount: configuredDeductionBreakdown.reduce(
+          (sum, deduction) => sum + deduction.prorated_amount,
+          0,
+        ),
+        configured_deductions_breakdown: configuredDeductionBreakdown,
+        full_base_salary: fullBaseSalary,
+        absent_days: absentDays,
+        absent_days_deduction: absentDaysDeduction,
         allowance_eligible: allowanceEligible,
         tax_breakdown: taxBreakdown,
         // original metadata fields
@@ -1498,11 +1754,7 @@ export class PayrollService {
     };
   }
 
-  private async recalculateBatchStatus(
-    tx: any,
-    batchId: bigint,
-    actorId: bigint,
-  ) {
+  private async recalculateBatchStatus(tx: any, batchId: bigint) {
     const items = await tx.payment_batch_items.findMany({
       where: { payment_batch_id: batchId },
       select: { status: true },
@@ -1566,6 +1818,94 @@ export class PayrollService {
     this.ensureActorCanUseWorkingLocation(actor, workingLocationId);
   }
 
+  private async hasInitialApprover(
+    workingLocationId: bigint,
+  ): Promise<boolean> {
+    const branchManager = await this.prisma.branch_managers.findFirst({
+      where: { working_location_id: workingLocationId, is_active: true },
+    });
+    if (branchManager) return true;
+
+    const userWithInitialPerm = await this.prisma.user_permissions.findFirst({
+      where: {
+        permission_key: { in: ['payroll.approve_initial', 'payroll.approve'] },
+        users_user_permissions_user_idTousers: {
+          working_location_id: workingLocationId,
+          status: 'ACTIVE',
+        },
+      },
+    });
+    if (userWithInitialPerm) return true;
+
+    // NOTE: roles carry their permissions in `roles.permission_keys` (a JSON
+    // array) — the same source RolesService/PermissionsService/JwtStrategy
+    // all read from. The `role_permissions`/`permissions` relational tables
+    // are legacy and are never populated by seeding or by the roles module,
+    // so querying them here (as this used to) silently always returned
+    // false and made every role-based approver invisible to this check.
+    const usersAtLocation = await this.prisma.users.findMany({
+      where: { working_location_id: workingLocationId, status: 'ACTIVE' },
+      select: {
+        user_permissions: { select: { permission_key: true } },
+        user_roles: {
+          select: { roles: { select: { permission_keys: true } } },
+        },
+      },
+    });
+
+    return usersAtLocation.some((user) => {
+      const keys = buildRawPermissionKeys(user);
+      return (
+        keys.includes('payroll.approve_initial') ||
+        keys.includes('payroll.approve')
+      );
+    });
+  }
+
+  /**
+   * Final payroll approval always belongs to HR at headquarters, regardless
+   * of which branch the batch belongs to. SUPER_ADMIN is the fallback only
+   * when headquarters has no active HR (SUPER_ADMIN already bypasses this
+   * check entirely in ensureActorCanApproveBatch).
+   */
+  private async hasActiveHrAt(workingLocationId: bigint): Promise<boolean> {
+    const hrUser = await this.prisma.user_roles.findFirst({
+      where: {
+        roles: { name: 'HR' },
+        users: { working_location_id: workingLocationId, status: 'ACTIVE' },
+      },
+      select: { id: true },
+    });
+    return !!hrUser;
+  }
+
+  private async resolveFinalApprovalAuthority(): Promise<{
+    kind: 'HQ_HR' | 'SUPER_ADMIN_ONLY';
+    hqId: bigint | null;
+    message: string;
+  }> {
+    const hq = await this.prisma.working_locations.findFirst({
+      where: { type: 'HQ' as any, deleted_at: null },
+      select: { id: true },
+    });
+
+    if (hq && (await this.hasActiveHrAt(hq.id))) {
+      return {
+        kind: 'HQ_HR',
+        hqId: hq.id,
+        message:
+          'Only HR at headquarters can give final approval for this payroll batch.',
+      };
+    }
+
+    return {
+      kind: 'SUPER_ADMIN_ONLY',
+      hqId: hq?.id ?? null,
+      message:
+        'No HR is available at headquarters, so only a super admin can give final approval.',
+    };
+  }
+
   private async ensureActorCanApproveBatch(
     actor: CurrentUserType,
     batch: {
@@ -1573,41 +1913,51 @@ export class PayrollService {
       current_approval_step: number;
     },
   ) {
-    const branchManager = await this.prisma.branch_managers.findFirst({
-      where: {
-        working_location_id: batch.working_location_id,
-        is_active: true,
-      },
-    });
+    if (actor.roles.includes('SUPER_ADMIN')) return;
 
-    const isSuperAdmin = actor.roles.includes('SUPER_ADMIN');
-    const isBranchManager =
-      actor.roles.includes('BRANCH_MANAGER') &&
-      actor.working_location_id === batch.working_location_id.toString();
+    const initialApproverExists = await this.hasInitialApprover(
+      batch.working_location_id,
+    );
 
-    if (branchManager) {
-      if (batch.current_approval_step === 1) {
-        if (isBranchManager || isSuperAdmin) return;
+    if (batch.current_approval_step === 1 && initialApproverExists) {
+      const canInitialApprove =
+        hasEffectivePermission(actor, 'payroll.approve_initial') ||
+        hasEffectivePermission(actor, 'payroll.approve') ||
+        (actor.roles.includes('BRANCH_MANAGER') &&
+          actor.working_location_id === batch.working_location_id.toString());
+
+      if (!canInitialApprove) {
         throw new BadRequestException(
-          'Only the BRANCH_MANAGER or SUPER_ADMIN can approve this payroll step.',
-        );
-      } else {
-        if (isSuperAdmin) return;
-        throw new BadRequestException(
-          'Only SUPER_ADMIN can finalize payroll batches.',
+          'You do not have permission to approve the initial step of this payroll batch.',
         );
       }
     } else {
-      // No branch manager, Super Admin handles it
-      if (isSuperAdmin) return;
-      throw new BadRequestException(
-        'Only SUPER_ADMIN can approve this payroll.',
-      );
+      const holdsFinalPermission =
+        hasEffectivePermission(actor, 'payroll.approve_final') ||
+        hasEffectivePermission(actor, 'payroll.approve');
+
+      const authority = await this.resolveFinalApprovalAuthority();
+
+      const isHr = actor.roles.includes('HR');
+      let canFinalApprove = false;
+
+      if (authority.kind === 'HQ_HR') {
+        canFinalApprove =
+          holdsFinalPermission &&
+          isHr &&
+          actor.working_location_id === authority.hqId?.toString();
+      }
+      // authority.kind === 'SUPER_ADMIN_ONLY' -> stays false; SUPER_ADMIN
+      // already returned true at the top of this method.
+
+      if (!canFinalApprove) {
+        throw new BadRequestException(authority.message);
+      }
     }
   }
 
   private ensureBatchCanStillBeReviewed(batch: {
-    status?: PAYMENT_BATCH_STATUS | string;
+    status?: PAYMENT_BATCH_STATUS;
     current_approval_step?: number;
   }) {
     if (
@@ -1659,8 +2009,9 @@ export class PayrollService {
           employees: {
             include: {
               departments: {
-                select: { name: true },
+                select: { id: true, name: true, working_location_id: true },
               },
+              ikimina_memberships: true,
             },
           },
           transactions: true,
@@ -1676,22 +2027,130 @@ export class PayrollService {
     };
   }
 
-  private itemIncludes() {
+  private serializeBatchActor(user: Record<string, any> | null | undefined) {
+    if (!user) return null;
     return {
-      employees: {
-        include: {
-          departments: {
-            select: { name: true },
-          },
-          ikimina_memberships: true,
-        },
-      },
-      transactions: true,
-      users: true,
+      id: user.id?.toString?.() ?? String(user.id),
+      uuid: user.uuid,
+      name:
+        `${user.first_name ?? ''} ${user.last_name ?? ''}`.trim() ||
+        user.email ||
+        'System',
+      email: user.email ?? null,
+      working_location_id: user.working_location_id?.toString?.() ?? null,
+      department_id: user.department_id?.toString?.() ?? null,
     };
   }
 
+  private buildBatchActivityTrail(batch: Record<string, any>) {
+    const trail: any[] = [];
+    const submitter = batch.users_payment_batches_submitted_byTousers;
+    const approver = batch.users_payment_batches_approved_byTousers;
+
+    trail.push({
+      id: `created-${batch.uuid}`,
+      scope: 'BATCH',
+      action: 'CREATED_DRAFT',
+      label: 'Created payroll draft',
+      actor: this.serializeBatchActor(submitter),
+      comment: batch.description ?? null,
+      action_at: batch.created_at,
+    });
+
+    if (batch.submitted_at && batch.status !== PAYMENT_BATCH_STATUS.DRAFT) {
+      trail.push({
+        id: `submitted-${batch.uuid}`,
+        scope: 'BATCH',
+        action: 'SUBMITTED_FOR_REVIEW',
+        label: 'Submitted payroll for review',
+        actor: this.serializeBatchActor(submitter),
+        comment: null,
+        action_at: batch.submitted_at,
+      });
+    }
+
+    for (const action of batch.payroll_batch_approval_actions ?? []) {
+      const actor = action.users ?? action.actionBy;
+      const label =
+        action.step_order === 1
+          ? action.action === APPROVAL_ACTION.REJECTED
+            ? 'Manager rejected payroll batch'
+            : 'Manager approved payroll batch'
+          : action.action === APPROVAL_ACTION.REJECTED
+            ? 'Final reviewer rejected payroll batch'
+            : 'Final reviewer approved payroll batch';
+
+      trail.push({
+        id: `approval-${action.id?.toString?.() ?? trail.length}`,
+        scope: 'BATCH',
+        action: action.action,
+        label,
+        step_order: action.step_order,
+        actor: this.serializeBatchActor(actor),
+        comment: action.comment ?? null,
+        action_at: action.action_at,
+      });
+    }
+
+    for (const item of batch.payment_batch_items ?? []) {
+      if (item.status !== PAYMENT_BATCH_STATUS.REJECTED) continue;
+      const employeeName =
+        `${item.employees?.first_name ?? ''} ${item.employees?.last_name ?? ''}`.trim() ||
+        item.employee_id?.toString?.() ||
+        'Employee';
+      trail.push({
+        id: `item-${item.id?.toString?.() ?? trail.length}`,
+        scope: 'EMPLOYEE',
+        action: 'EMPLOYEE_REJECTED',
+        label: `Rejected employee: ${employeeName}`,
+        actor: this.serializeBatchActor(item.users),
+        comment: item.rejection_reason ?? null,
+        action_at: item.approved_at ?? item.created_at,
+        employee: {
+          id: item.employee_id?.toString?.() ?? null,
+          name: employeeName,
+        },
+      });
+    }
+
+    if (batch.status === PAYMENT_BATCH_STATUS.APPROVED && batch.approved_at) {
+      trail.push({
+        id: `completed-${batch.uuid}`,
+        scope: 'BATCH',
+        action: 'COMPLETED_READ_ONLY',
+        label: 'Completed and locked for read-only review',
+        actor: this.serializeBatchActor(approver),
+        comment:
+          'Super Admin can view the completed batch details, but cannot change them.',
+        action_at: batch.approved_at,
+      });
+    }
+
+    return trail.sort(
+      (a, b) =>
+        new Date(a.action_at ?? 0).getTime() -
+        new Date(b.action_at ?? 0).getTime(),
+    );
+  }
+
   private serializeBatch(batch: Record<string, any>) {
+    const totalOvertimeHours =
+      batch.payment_batch_items?.reduce((sum: number, item: any) => {
+        return (
+          sum +
+          (Number(item.transactions?.calculation_metadata?.overtime_hours) || 0)
+        );
+      }, 0) ?? 0;
+
+    const totalOvertimeAmount =
+      batch.payment_batch_items?.reduce((sum: number, item: any) => {
+        return (
+          sum +
+          (Number(item.transactions?.calculation_metadata?.overtime_amount) ||
+            0)
+        );
+      }, 0) ?? 0;
+
     return {
       ...batch,
       id: batch.id.toString(),
@@ -1703,6 +2162,9 @@ export class PayrollService {
       total_allowances: batch.total_allowances?.toString?.() ?? '0',
       total_deductions: batch.total_deductions?.toString?.() ?? '0',
       total_tax: batch.total_tax?.toString?.() ?? '0',
+      total_overtime_hours: totalOvertimeHours,
+      total_overtime_amount: totalOvertimeAmount,
+      activity_trail: this.buildBatchActivityTrail(batch),
       working_location: batch.working_locations
         ? {
             ...batch.working_locations,
@@ -1718,15 +2180,20 @@ export class PayrollService {
         id: action.id.toString(),
         payment_batch_id: action.payment_batch_id.toString(),
         action_by: action.action_by.toString(),
-        actionBy: action.actionBy
-          ? {
-              ...action.actionBy,
-              id: action.actionBy.id.toString(),
-              working_location_id:
-                action.actionBy.working_location_id?.toString() ?? null,
-              department_id: action.actionBy.department_id?.toString() ?? null,
-            }
-          : undefined,
+        actionBy:
+          (action.users ?? action.actionBy)
+            ? {
+                ...(action.users ?? action.actionBy),
+                id: (action.users ?? action.actionBy).id.toString(),
+                working_location_id:
+                  (
+                    action.users ?? action.actionBy
+                  ).working_location_id?.toString() ?? null,
+                department_id:
+                  (action.users ?? action.actionBy).department_id?.toString() ??
+                  null,
+              }
+            : undefined,
       })),
       ikimina_contributions: batch.ikimina_contributions?.map((c) => ({
         ...c,
@@ -1740,17 +2207,58 @@ export class PayrollService {
   }
 
   private serializeItem(item: Record<string, any>) {
+    const meta = item.transactions?.calculation_metadata ?? {};
     return {
       ...item,
-      id: item.id.toString(),
-      payment_batch_id: item.payment_batch_id.toString(),
-      employee_id: item.employee_id.toString(),
-      transaction_id: item.transaction_id.toString(),
+      id: item.id?.toString(),
+      payment_batch_id: item.payment_batch_id?.toString(),
+      employee_id: item.employee_id?.toString(),
+      transaction_id: item.transaction_id?.toString(),
       approved_by: item.approved_by?.toString() ?? null,
+      overtime_hours: meta.overtime_hours ?? 0,
+      overtime_rate: meta.overtime_rate_per_hour ?? 2500,
+      overtime_amount: meta.overtime_amount ?? 0,
+      absent_days_deduction: meta.absent_days_deduction ?? 0,
+      calculation_breakdown: {
+        default_work_hours: meta.default_work_hours ?? 8,
+        overtime_rate_per_hour: meta.overtime_rate_per_hour ?? 2500,
+        overtime_hours: meta.overtime_hours ?? 0,
+        overtime_amount: meta.overtime_amount ?? 0,
+        taxable_base_amount: meta.taxable_base_amount ?? 0,
+        base_after_pit: meta.base_after_pit ?? 0,
+        additions_amount: meta.additions_amount ?? 0,
+        configured_deductions_amount: meta.configured_deductions_amount ?? 0,
+        configured_deductions_breakdown:
+          meta.configured_deductions_breakdown ?? [],
+        full_base_salary: meta.full_base_salary ?? 0,
+        present_days: meta.present_days ?? 0,
+        expected_work_days: meta.expected_work_days ?? 0,
+        absent_days: meta.absent_days ?? 0,
+        absent_days_deduction: meta.absent_days_deduction ?? 0,
+        base_amount: item.transactions?.base_amount
+          ? Number(item.transactions.base_amount)
+          : 0,
+        allowance_amount: item.transactions?.allowance_amount
+          ? Number(item.transactions.allowance_amount)
+          : 0,
+        tax_amount: item.transactions?.tax_amount
+          ? Number(item.transactions.tax_amount)
+          : 0,
+        total_deductions: item.transactions?.total_deductions
+          ? Number(item.transactions.total_deductions)
+          : 0,
+        gross_amount: item.transactions?.gross_amount
+          ? Number(item.transactions.gross_amount)
+          : 0,
+        net_amount: item.transactions?.net_amount
+          ? Number(item.transactions.net_amount)
+          : 0,
+        tax_breakdown: meta.tax_breakdown ?? [],
+      },
       employee: item.employees
         ? {
             ...item.employees,
-            id: item.employees.id.toString(),
+            id: item.employees.id?.toString(),
             created_by: item.employees.created_by?.toString() ?? null,
             department_id: item.employees.department_id?.toString() ?? null,
             working_location_id:
@@ -1760,18 +2268,25 @@ export class PayrollService {
             department: item.employees.departments
               ? {
                   ...item.employees.departments,
-                  id: item.employees.departments.id.toString(),
+                  id: item.employees.departments.id?.toString() ?? null,
                   working_location_id:
-                    item.employees.departments.working_location_id.toString(),
+                    item.employees.departments.working_location_id?.toString() ??
+                    null,
                 }
               : null,
             ikimina_membership: item.employees.ikimina_memberships
               ? {
                   ...item.employees.ikimina_memberships,
-                  id: item.employees.ikimina_memberships.id.toString(),
-                  employee_id: item.employees.ikimina_memberships.employee_id.toString(),
-                  created_by: item.employees.ikimina_memberships.created_by?.toString() ?? null,
-                  monthly_amount: Number(item.employees.ikimina_memberships.monthly_amount),
+                  id: item.employees.ikimina_memberships.id?.toString() ?? null,
+                  employee_id:
+                    item.employees.ikimina_memberships.employee_id?.toString() ??
+                    null,
+                  created_by:
+                    item.employees.ikimina_memberships.created_by?.toString() ??
+                    null,
+                  monthly_amount: Number(
+                    item.employees.ikimina_memberships.monthly_amount ?? 0,
+                  ),
                   is_active: item.employees.ikimina_memberships.is_active,
                 }
               : null,
@@ -1780,34 +2295,27 @@ export class PayrollService {
       transaction: item.transactions
         ? {
             ...item.transactions,
-            id: item.transactions.id.toString(),
-            employee_id: item.transactions.employee_id.toString(),
+            id: item.transactions.id?.toString(),
+            employee_id: item.transactions.employee_id?.toString(),
             payment_structure_id:
-              item.transactions.payment_structure_id.toString(),
+              item.transactions.payment_structure_id?.toString(),
             approved_by: item.transactions.approved_by?.toString() ?? null,
-            gross_amount: item.transactions.gross_amount.toString(),
+            gross_amount: item.transactions.gross_amount?.toString() ?? '0',
             base_amount: item.transactions.base_amount?.toString?.() ?? '0',
             allowance_amount:
               item.transactions.allowance_amount?.toString?.() ?? '0',
             tax_amount: item.transactions.tax_amount?.toString?.() ?? '0',
-            total_deductions: item.transactions.total_deductions.toString(),
-            net_amount: item.transactions.net_amount.toString(),
+            total_deductions:
+              item.transactions.total_deductions?.toString() ?? '0',
+            net_amount: item.transactions.net_amount?.toString() ?? '0',
           }
         : undefined,
     };
   }
 
-  private toBigInt(value: string, fieldName: string): bigint {
-    if (!/^\d+$/.test(value)) {
-      throw new BadRequestException(
-        `Please choose a valid ${fieldName.replace('_', ' ')}.`,
-      );
-    }
-
-    return BigInt(value);
-  }
-
-  private diffCalendarDays(start: Date, end: Date) {
-    return dayjs(end).diff(dayjs(start), 'day');
+  private normalizeDeductionName(name?: string | null) {
+    return String(name ?? '')
+      .toLowerCase()
+      .replace(/[^a-z]/g, '');
   }
 }

@@ -30,6 +30,7 @@ import type { CurrentUserType } from '../auth/types/current-user.type';
 import { RejectTransferDto } from '../common/dto/reject-transfer.dto';
 import { RequestTransferDto } from '../common/dto/request-transfer.dto';
 import { ApproveUserDto } from './dto/approve-user.dto';
+import { UpdateUserDto } from './dto/update-user.dto';
 import { UpdateUserPermissionOverrideDto } from './dto/update-user-permission-override.dto';
 
 import { NotificationsService } from '../notifications/notifications.service';
@@ -63,9 +64,9 @@ export class UsersService {
     // new user is automatically assigned to the same branch.
     const workingLocationId = data.working_location_id
       ? await this.resolveWorkingLocationId(data.working_location_id)
-      : (actor?.working_location_id
-          ? BigInt(actor.working_location_id)
-          : null);
+      : actor?.working_location_id
+        ? BigInt(actor.working_location_id)
+        : null;
 
     const departmentId = data.department_id
       ? await this.resolveDepartmentId(data.department_id, workingLocationId)
@@ -173,8 +174,7 @@ export class UsersService {
       });
     });
 
-    await this.cacheManager.del('users:all');
-    await this.cacheManager.del('users:pending');
+    await this.clearUserCaches();
 
     return {
       message: 'Registration submitted successfully. Awaiting admin approval.',
@@ -184,18 +184,36 @@ export class UsersService {
 
   async findAll(
     actor: CurrentUserType,
-    filters: { q?: string; status?: string } = {},
+    filters: {
+      q?: string;
+      status?: string;
+      working_location_id?: string;
+      department_id?: string;
+    } = {},
   ) {
     const q = normalizeSearch(filters.q);
-    const cacheKey = `users:all:${actor.userId}:${filters.status ?? ''}:${q ?? ''}`;
+    const cacheKey = `users:all:${actor.userId}:${filters.status ?? ''}:${filters.working_location_id ?? ''}:${filters.department_id ?? ''}:${q ?? ''}`;
 
     const cached = await this.cacheManager.get(cacheKey);
     if (cached) return cached as any;
 
+    // working_location_id / department_id are ANDed on top of the actor's
+    // own scope (userScopeWhere), so a branch-scoped actor can never widen
+    // their view by passing another branch's id here - the scope clause
+    // still restricts rows to what they're already allowed to see.
     const users = await this.prisma.users.findMany({
       where: {
         deleted_at: null,
         ...this.userScopeWhere(actor),
+
+        ...(filters.working_location_id &&
+        isNumericId(filters.working_location_id)
+          ? { working_location_id: BigInt(filters.working_location_id) }
+          : {}),
+
+        ...(filters.department_id && isNumericId(filters.department_id)
+          ? { department_id: BigInt(filters.department_id) }
+          : {}),
 
         ...(filters.status
           ? {
@@ -488,9 +506,144 @@ export class UsersService {
       type: 'ACCOUNT_APPROVED',
       referenceId: user.uuid,
     });
+    await this.clearUserCaches();
 
     return {
       message: 'User approved and activated.',
+      user: this.serializeUser(updatedUser),
+    };
+  }
+
+  async updateUser(uuid: string, dto: UpdateUserDto, actor: CurrentUserType) {
+    const user = await this.findUserByUuidOrThrow(uuid);
+    const nextWorkingLocationId = dto.working_location_id
+      ? await this.resolveWorkingLocationId(dto.working_location_id)
+      : user.working_location_id;
+
+    if (dto.department_id && !nextWorkingLocationId) {
+      throw new BadRequestException(
+        'Choose a working location before assigning a department.',
+      );
+    }
+
+    if (nextWorkingLocationId) {
+      await this.ensureWorkingLocationExists(nextWorkingLocationId);
+    }
+
+    this.ensureActorCanManageUser(
+      actor,
+      user.working_location_id ?? nextWorkingLocationId,
+    );
+    this.ensureActorCanManageUser(actor, nextWorkingLocationId);
+
+    const departmentWasProvided = Object.prototype.hasOwnProperty.call(
+      dto,
+      'department_id',
+    );
+    const nextDepartmentId = departmentWasProvided
+      ? dto.department_id
+        ? await this.resolveDepartmentId(
+            dto.department_id,
+            nextWorkingLocationId,
+          )
+        : null
+      : user.department_id;
+
+    if (nextDepartmentId && nextWorkingLocationId) {
+      await this.ensureDepartmentExists(
+        nextDepartmentId,
+        nextWorkingLocationId,
+      );
+    }
+
+    const changedFields = [
+      user.working_location_id?.toString() !== nextWorkingLocationId?.toString()
+        ? 'working_location'
+        : null,
+      user.department_id?.toString() !== nextDepartmentId?.toString()
+        ? 'department'
+        : null,
+    ].filter(Boolean) as string[];
+
+    if (changedFields.length === 0) {
+      const current = await this.prisma.users.findUniqueOrThrow({
+        where: { id: user.id },
+        include: this.userIncludes(),
+      });
+      return {
+        message: 'No user assignment changes were needed.',
+        user: this.serializeUser(current),
+      };
+    }
+
+    const [oldLocation, newLocation, oldDepartment, newDepartment] =
+      await Promise.all([
+        user.working_location_id
+          ? this.prisma.working_locations.findUnique({
+              where: { id: user.working_location_id },
+              select: { name: true },
+            })
+          : null,
+        nextWorkingLocationId
+          ? this.prisma.working_locations.findUnique({
+              where: { id: nextWorkingLocationId },
+              select: { name: true },
+            })
+          : null,
+        user.department_id
+          ? this.prisma.departments.findUnique({
+              where: { id: user.department_id },
+              select: { name: true },
+            })
+          : null,
+        nextDepartmentId
+          ? this.prisma.departments.findUnique({
+              where: { id: nextDepartmentId },
+              select: { name: true },
+            })
+          : null,
+      ]);
+
+    const updatedUser = await this.prisma.$transaction(async (tx) => {
+      const saved = await tx.users.update({
+        where: { id: user.id },
+        data: {
+          working_location_id: nextWorkingLocationId ?? null,
+          department_id: nextDepartmentId ?? null,
+          updated_at: new Date(),
+        },
+        include: this.userIncludes(),
+      });
+
+      await tx.audit_logs.create({
+        data: {
+          user_id: BigInt(actor.userId),
+          entity_table: 'users',
+          entity_id: user.id,
+          module_name: 'USER_MANAGEMENT',
+          activity_type: ACTIVITY_TYPE.UPDATE,
+          activity_description: 'Updated user branch or department assignment.',
+          action: AUDIT_ACTION.UPDATED,
+          old_values: {
+            working_location: oldLocation?.name ?? null,
+            department: oldDepartment?.name ?? null,
+          },
+          new_values: {
+            working_location: newLocation?.name ?? null,
+            department: newDepartment?.name ?? null,
+          },
+          changed_fields: changedFields,
+        },
+      });
+
+      return saved;
+    });
+
+    await this.clearUserCaches();
+    this.notificationsService.broadcast({ type: 'permissions_updated' });
+
+    return {
+      message: 'User assignment updated.',
       user: this.serializeUser(updatedUser),
     };
   }
@@ -549,6 +702,7 @@ export class UsersService {
       type: 'ACCOUNT_REJECTED',
       referenceId: user.uuid,
     });
+    await this.clearUserCaches();
 
     return {
       message: 'User rejected and removed.',
@@ -598,6 +752,8 @@ export class UsersService {
       return suspended;
     });
 
+    await this.clearUserCaches();
+
     return {
       message: 'User suspended successfully.',
       user: this.serializeUser(updatedUser),
@@ -616,13 +772,18 @@ export class UsersService {
       include: this.userIncludes(),
     });
 
+    await this.clearUserCaches();
+
     return {
       message: 'User account reactivated.',
       user: this.serializeUser(reactivated),
     };
   }
 
-  private async ensureActorCanAssignRoles(actor: CurrentUserType, roleIds: bigint[]) {
+  private async ensureActorCanAssignRoles(
+    actor: CurrentUserType,
+    roleIds: bigint[],
+  ) {
     if (this.isSystemAdmin(actor) || !roleIds.length) return;
 
     const roles = await this.prisma.roles.findMany({
@@ -630,10 +791,15 @@ export class UsersService {
       select: { id: true, name: true, working_location_id: true },
     });
 
-    const actorLocation = actor.working_location_id ? BigInt(actor.working_location_id) : null;
+    const actorLocation = actor.working_location_id
+      ? BigInt(actor.working_location_id)
+      : null;
 
     for (const role of roles) {
-      if (role.working_location_id && (!actorLocation || role.working_location_id !== actorLocation)) {
+      if (
+        role.working_location_id &&
+        (!actorLocation || role.working_location_id !== actorLocation)
+      ) {
         throw new BadRequestException(
           `The role "${role.name}" belongs to a different branch and cannot be assigned from here.`,
         );
@@ -672,6 +838,7 @@ export class UsersService {
       });
     });
 
+    await this.clearUserCaches();
     this.notificationsService.broadcast({ type: 'permissions_updated' });
 
     return {
@@ -727,6 +894,7 @@ export class UsersService {
         });
       }
     }
+    await this.clearUserCaches();
     return { success: true, count: results.length, details: results };
   }
 
@@ -750,10 +918,17 @@ export class UsersService {
     dto: UpdateUserPermissionOverrideDto,
     actor: CurrentUserType,
   ) {
-    const [user, permission] = await Promise.all([
-      this.findUserByUuidOrThrow(uuid),
-      this.resolvePermission(permissionInput),
-    ]);
+    const user = await this.findUserByUuidOrThrow(uuid);
+    const permission = this.resolvePermission(permissionInput);
+    const existingOverride =
+      await this.prisma.user_permission_overrides.findUnique({
+        where: {
+          user_id_permission_key: {
+            user_id: user.id,
+            permission_key: permission.permission_key,
+          },
+        },
+      });
 
     const updatedUser = await this.prisma.$transaction(async (tx) => {
       await tx.user_permission_overrides.upsert({
@@ -791,11 +966,13 @@ export class UsersService {
             ? `Activated user permission: ${permission.permission_key}.`
             : `Deactivated user permission: ${permission.permission_key}.`,
           action: 'UPDATED' as any,
+          old_values: {
+            is_allowed: existingOverride?.is_allowed ?? null,
+          },
           new_values: {
-            user_id: user.id.toString(),
-            permission_key: permission.permission_key,
             is_allowed: dto.is_allowed,
           },
+          changed_fields: ['is_allowed'],
         },
       });
 
@@ -826,8 +1003,7 @@ export class UsersService {
       });
     });
 
-    await this.cacheManager.del(`users:all:${actor.userId}::`);
-    await this.cacheManager.del('users:pending:');
+    await this.clearUserCaches();
 
     this.notificationsService.broadcast({ type: 'permissions_updated' });
 
@@ -908,10 +1084,7 @@ export class UsersService {
   }
 
   async approveTransfer(requestUuid: string, actor: CurrentUserType) {
-    const request = await this.findTransferRequestOrThrow(
-      requestUuid,
-      'USER' as any,
-    );
+    const request = await this.findTransferRequestOrThrow(requestUuid, 'USER');
 
     if (!request.user_id) {
       throw new BadRequestException('Transfer request has no user.');
@@ -1014,10 +1187,7 @@ export class UsersService {
     dto: RejectTransferDto,
     actor: CurrentUserType,
   ) {
-    const request = await this.findTransferRequestOrThrow(
-      requestUuid,
-      'USER' as any,
-    );
+    const request = await this.findTransferRequestOrThrow(requestUuid, 'USER');
 
     const rejected = await this.prisma.transfer_requests.update({
       where: { id: request.id },
@@ -1331,6 +1501,31 @@ export class UsersService {
     return request;
   }
 
+  private async clearUserCaches() {
+    const cacheKeys = new Set(['users:all', 'users:pending']);
+
+    try {
+      const store = (this.cacheManager as any).store;
+      if (store && typeof store.keys === 'function') {
+        const keys = await store.keys();
+        for (const key of keys) {
+          if (
+            typeof key === 'string' &&
+            (key.startsWith('users:all') || key.startsWith('users:pending'))
+          ) {
+            cacheKeys.add(key);
+          }
+        }
+      }
+    } catch {
+      // Exact-key fallback below still works for stores without key iteration.
+    }
+
+    await Promise.all(
+      Array.from(cacheKeys).map((key) => this.cacheManager.del(key)),
+    );
+  }
+
   private userIncludes() {
     return {
       working_locations_users_working_location_idToworking_locations: {
@@ -1410,7 +1605,8 @@ export class UsersService {
         ? {
             ...user.departments,
             id: user.departments.id.toString(),
-            working_location_id: user.departments.working_location_id.toString(),
+            working_location_id:
+              user.departments.working_location_id.toString(),
           }
         : null,
     };
@@ -1423,7 +1619,10 @@ export class UsersService {
     for (const userRole of user.user_roles ?? []) {
       const keys = (userRole.roles?.permission_keys as string[]) ?? [];
       for (const key of keys) {
-        let name = key.split('.').map((s) => s.charAt(0).toUpperCase() + s.slice(1)).join(' ');
+        let name = key
+          .split('.')
+          .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
+          .join(' ');
         let moduleName = 'SYSTEM';
         for (const mod of PERMISSION_MODULES) {
           const found = mod.permissions.find((p) => p.key === key);
@@ -1444,7 +1643,10 @@ export class UsersService {
 
     for (const userPermission of user.user_permissions ?? []) {
       const key = userPermission.permission_key;
-      let name = key.split('.').map((s) => s.charAt(0).toUpperCase() + s.slice(1)).join(' ');
+      let name = key
+        .split('.')
+        .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
+        .join(' ');
       let moduleName = 'SYSTEM';
       for (const mod of PERMISSION_MODULES) {
         const found = mod.permissions.find((p) => p.key === key);
@@ -1486,7 +1688,10 @@ export class UsersService {
       if (!permissionKey) continue;
 
       if (override.is_allowed) {
-        let name = permissionKey.split('.').map((s) => s.charAt(0).toUpperCase() + s.slice(1)).join(' ');
+        let name = permissionKey
+          .split('.')
+          .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
+          .join(' ');
         let moduleName = 'SYSTEM';
         for (const mod of PERMISSION_MODULES) {
           const found = mod.permissions.find((p) => p.key === permissionKey);

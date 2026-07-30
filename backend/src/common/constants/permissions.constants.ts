@@ -10,6 +10,8 @@
 export interface PermissionDefinition {
   key: string;
   name: string;
+  /** Plain-language explanation surfaced by GET /permissions for admin UIs. */
+  description?: string;
 }
 
 export interface PermissionModule {
@@ -21,135 +23,346 @@ export const PERMISSION_MODULES: PermissionModule[] = [
   {
     module: 'USER_MANAGEMENT',
     permissions: [
-      { key: 'users.read',     name: 'Users Read'     },
-      { key: 'users.read_all', name: 'Users Read (All Locations)' },
-      { key: 'users.create',   name: 'Users Create'   },
-      { key: 'users.approve',  name: 'Users Approve'  },
-      { key: 'users.update',   name: 'Users Update'   },
-      { key: 'users.suspend',  name: 'Users Suspend'  },
-      { key: 'users.transfer', name: 'Users Transfer' },
+      {
+        key: 'users.read',
+        name: 'View Users',
+        description: 'See the list of staff accounts in your working location.',
+      },
+      {
+        key: 'users.read_all',
+        name: 'View Users (All Branches)',
+        description:
+          'See staff accounts across every working location, not just your own.',
+      },
+      {
+        key: 'users.create',
+        name: 'Add New User',
+        description:
+          'Manually create a staff account instead of waiting for self-registration.',
+      },
+      {
+        key: 'users.approve',
+        name: 'Approve User Registration',
+        description:
+          'Approve or reject accounts that registered themselves and are pending review.',
+      },
+      {
+        key: 'users.update',
+        name: 'Edit User Details',
+        description:
+          "Change a user's working location, department, or profile details.",
+      },
+      {
+        key: 'users.suspend',
+        name: 'Suspend/Deactivate User',
+        description:
+          'Block a user from logging in without deleting their account.',
+      },
+      {
+        key: 'users.transfer',
+        name: 'Transfer User',
+        description:
+          'Request moving a user to a different working location or department.',
+      },
     ],
   },
   {
     module: 'RBAC',
     permissions: [
-      { key: 'roles.manage',              name: 'Roles Manage'              },
-      { key: 'roles.manage_own_location', name: 'Roles Manage (Own Branch)' },
-      { key: 'permissions.read',          name: 'Permissions Read'          },
-      { key: 'permissions.assign',        name: 'Permissions Assign'        },
+      {
+        key: 'roles.manage',
+        name: 'Manage Roles & Permissions (All)',
+        description:
+          'Create, edit, and delete roles for the whole system, in any working location.',
+      },
+      {
+        key: 'roles.manage_own_location',
+        name: 'Manage Roles (Own Branch Only)',
+        description:
+          'Create and edit roles scoped to your own working location only.',
+      },
+      {
+        key: 'permissions.read',
+        name: 'View Permission Settings',
+        description:
+          'See which permissions exist and which roles/users hold them.',
+      },
+      {
+        key: 'permissions.assign',
+        name: 'Assign Permissions to Users/Roles',
+        description:
+          'Grant or revoke individual permissions on a role or a specific user.',
+      },
     ],
   },
   {
     module: 'ORGANIZATION',
     permissions: [
-      { key: 'branches.manage',       name: 'Branches Manage'       },
-      { key: 'branches.read_all',     name: 'Branches Read (All Locations)' },
-      { key: 'departments.manage',    name: 'Departments Manage'    },
-      { key: 'branch-manager.manage', name: 'Branch Manager Manage' },
+      {
+        key: 'branches.manage',
+        name: 'Manage Branches/Locations',
+        description:
+          'Create and edit working locations (branches/HQ). Also grants department management.',
+      },
+      {
+        key: 'branches.read_all',
+        name: 'View All Branches',
+        description: 'See every working location instead of just your own.',
+      },
+      {
+        key: 'departments.manage',
+        name: 'Manage Departments',
+        description: 'Create, rename, or archive departments.',
+      },
+      {
+        key: 'branch-manager.manage',
+        name: 'Assign/Remove Branch Managers',
+        description: 'Choose who is the branch manager for a working location.',
+      },
     ],
   },
   {
     module: 'EMPLOYEES',
     permissions: [
-      { key: 'employees.create',   name: 'Employees Create'   },
-      { key: 'employees.read',     name: 'Employees Read'     },
-      { key: 'employees.read_all', name: 'Employees Read (All Locations)' },
-      { key: 'employees.update',   name: 'Employees Update'   },
-      { key: 'employees.approve',  name: 'Employees Approve'  },
-      { key: 'employees.transfer', name: 'Employees Transfer' },
-      { key: 'employees.transfer_approve', name: 'Employees Transfer Approve' },
-      { key: 'employees.suspend',  name: 'Employees Suspend'  },
+      {
+        key: 'employees.create',
+        name: 'Add New Employee',
+        description: 'Register a new employee record.',
+      },
+      {
+        key: 'employees.read',
+        name: 'View Employees List',
+        description: 'See employees in your own working location.',
+      },
+      {
+        key: 'employees.read_all',
+        name: 'View Employees (All Branches)',
+        description: 'See employees across every working location.',
+      },
+      {
+        key: 'employees.update',
+        name: 'Edit Employee Details',
+        description:
+          'Change an employee’s profile, category, or contract details.',
+      },
+      {
+        key: 'employees.approve',
+        name: 'Approve Employee Registration',
+        description:
+          'Approve a newly added employee before they become active.',
+      },
+      {
+        key: 'employees.transfer',
+        name: 'Transfer Employee',
+        description:
+          'Request moving an employee to a different branch or department.',
+      },
+      {
+        key: 'employees.transfer_approve',
+        name: 'Approve Employee Transfer',
+        description: 'Approve or reject a pending employee transfer request.',
+      },
+      {
+        key: 'employees.suspend',
+        name: 'Suspend/Deactivate Employee',
+        description: 'Pause an employee’s active status (e.g. contract ended).',
+      },
     ],
   },
   {
     module: 'ATTENDANCE',
     permissions: [
-      { key: 'attendance.create',  name: 'Attendance Create'  },
-      { key: 'attendance.read',    name: 'Attendance Read'    },
-      { key: 'attendance.read_all', name: 'Attendance Read (All Locations)' },
-      { key: 'attendance.update',  name: 'Attendance Update'  },
-      { key: 'attendance.approve', name: 'Attendance Approve' },
+      {
+        key: 'attendance.create',
+        name: 'Log Attendance / Bulk Import',
+        description: 'Record daily attendance manually or via bulk import.',
+      },
+      {
+        key: 'attendance.read',
+        name: 'View Attendance Records',
+        description: 'See attendance history for your working location.',
+      },
+      {
+        key: 'attendance.read_all',
+        name: 'View Attendance (All Branches)',
+        description: 'See attendance history across every working location.',
+      },
+      {
+        key: 'attendance.update',
+        name: 'Edit Attendance Records',
+        description: 'Correct an already-logged attendance entry.',
+      },
+      {
+        key: 'attendance.approve',
+        name: 'Approve Attendance',
+        description:
+          'Approve submitted attendance records before payroll uses them.',
+      },
     ],
   },
   {
     module: 'PAYMENT_STRUCTURES',
     permissions: [
-      { key: 'payment-structures.create', name: 'Payment Structures Create' },
-      { key: 'payment-structures.read',   name: 'Payment Structures Read'   },
-      { key: 'payment-structures.read_all', name: 'Payment Structures Read (All Locations)' },
-      { key: 'payment-structures.update', name: 'Payment Structures Update' },
-      { key: 'payment-structures.delete', name: 'Payment Structures Delete' },
-      { key: 'allowances.manage',         name: 'Allowances Manage'         },
+      {
+        key: 'payment-structures.create',
+        name: 'Create Pay Rates / Scales',
+        description: 'Set up a new pay rate/structure for an employee.',
+      },
+      {
+        key: 'payment-structures.read',
+        name: 'View Pay Rates & Scales',
+        description: 'See employee pay rates and structures.',
+      },
+      {
+        key: 'payment-structures.read_all',
+        name: 'View Pay Rates (All Branches)',
+        description:
+          'See pay rates and structures across every working location.',
+      },
+      {
+        key: 'payment-structures.update',
+        name: 'Edit Pay Rates / Scales',
+        description: 'Change an existing pay rate or structure.',
+      },
+      {
+        key: 'payment-structures.delete',
+        name: 'Delete Pay Rates / Scales',
+        description: 'Remove a pay rate/structure.',
+      },
+      {
+        key: 'allowances.manage',
+        name: 'Manage Allowances',
+        description: 'Add or remove allowances paid to an employee.',
+      },
+      {
+        key: 'deductions.manage',
+        name: 'Assign Employee Deductions / Taxes',
+        description: 'Attach or remove custom taxes/deductions on an employee.',
+      },
     ],
   },
   {
     module: 'PAYROLL',
     permissions: [
-      { key: 'payroll.create',  name: 'Payroll Create'  },
-      { key: 'payroll.read',    name: 'Payroll Read'    },
-      { key: 'payroll.read_all', name: 'Payroll Read (All Locations)' },
-      { key: 'payroll.manage',  name: 'Payroll Manage'  },
-      { key: 'payroll.approve', name: 'Payroll Approve' },
-      { key: 'payroll.reports', name: 'Payroll Reports' },
+      {
+        key: 'payroll.create',
+        name: 'Generate Payroll Batch',
+        description: 'Create a new payroll batch for a date range.',
+      },
+      {
+        key: 'payroll.read',
+        name: 'View Payroll Batches',
+        description: 'See payroll batches for your working location.',
+      },
+      {
+        key: 'payroll.read_all',
+        name: 'View Payroll (All Branches)',
+        description: 'See payroll batches across every working location.',
+      },
+      {
+        key: 'payroll.manage',
+        name: 'Run Payroll Calculation',
+        description: 'Recalculate or adjust items within a payroll batch.',
+      },
+      {
+        key: 'payroll.approve',
+        name: 'Approve/Reject Payroll (Both Steps)',
+        description:
+          'Grants BOTH the initial and final approval steps below. Prefer granting the specific step instead.',
+      },
+      {
+        key: 'payroll.approve_initial',
+        name: 'Initial Payroll Approval',
+        description:
+          'First review step. Normally the branch manager. Sends the batch on for final approval.',
+      },
+      {
+        key: 'payroll.approve_final',
+        name: 'Final Payroll Approval',
+        description:
+          'Last, binding approval step for every branch. HR at headquarters approves; SUPER_ADMIN is the fallback only if headquarters has no active HR.',
+      },
+      {
+        key: 'payroll.reports',
+        name: 'View Payroll Reports',
+        description: 'See payroll summary reports and exports.',
+      },
     ],
   },
   {
     module: 'NOTIFICATIONS',
     permissions: [
-      { key: 'notifications.read',   name: 'Notifications Read'   },
-      { key: 'notifications.manage', name: 'Notifications Manage' },
+      {
+        key: 'notifications.read',
+        name: 'View Notifications',
+        description: 'See in-app notifications addressed to you or your role.',
+      },
+      {
+        key: 'notifications.manage',
+        name: 'Manage Notification Settings',
+        description: 'Configure system-wide notification behavior.',
+      },
     ],
   },
   {
     module: 'AUDIT',
     permissions: [
-      { key: 'audit.view', name: 'Audit Logs View' },
+      {
+        key: 'audit.view',
+        name: 'View Audit Logs',
+        description: 'See the audit trail for your working location.',
+      },
+      {
+        key: 'audit.read_all',
+        name: 'View Audit Logs (All Branches)',
+        description: 'See the audit trail across every working location.',
+      },
     ],
   },
   {
     module: 'IKIMINA',
     permissions: [
-      { key: 'ikimina.manage',   name: 'Ikimina Manage' },
-      { key: 'ikimina.read',     name: 'Ikimina Read'   },
-      { key: 'ikimina.read_all', name: 'Ikimina Read (All Locations)' },
+      {
+        key: 'ikimina.manage',
+        name: 'Register/Edit Savings Plan',
+        description:
+          'Enroll monthly employees in Ikimina and edit their contribution.',
+      },
+      {
+        key: 'ikimina.read',
+        name: 'View Savings Plans & Stats',
+        description:
+          'See Ikimina memberships and contribution totals for your working location.',
+      },
+      {
+        key: 'ikimina.read_all',
+        name: 'View Savings (All Branches)',
+        description:
+          'See Ikimina memberships across every working location, sorted by branch.',
+      },
     ],
   },
   {
     module: 'SYSTEM_CONFIG',
     permissions: [
-      { key: 'system-config.manage', name: 'System Config Manage' },
+      {
+        key: 'system-config.manage',
+        name: 'Manage System Settings',
+        description:
+          'Change global settings like the overtime rate and default work hours.',
+      },
     ],
   },
 ];
 
 /**
- * Registry used by PrismaService's query scoping extension.
- *
- * Every Prisma model here is automatically filtered to the caller's
- * working_location_id UNLESS the caller holds the listed
- * `readAllPermission` — in which case the filter is skipped entirely for
- * that model. SUPER_ADMIN always skips every filter, independent of this
- * table.
- *
- * `locationField` names the working_location_id column on the model
- * itself — this is the column the Prisma extension actually filters on.
- * `departmentField`, where present, records that the model also carries a
- * denormalized department_id for filtering/reporting at the service layer
- * (e.g. a future "<module>.read_department_only" tier); it is NOT
- * currently auto-enforced by the Prisma extension, only working_location
- * scoping is.
- *
- * Models without a direct working_location_id column don't belong here —
- * filtering must happen at the service layer via an explicit
- * employee-relation join instead (the Prisma extension only rewrites a
- * model's own `where`, it can't safely inject filters through relations
- * for every operation shape).
- *
- * Adding a new scoped model: add its row here, add the matching
- * `working_location_id` column to the model in schema.prisma (denormalized
- * from the owning employee at write-time is the standard pattern used by
- * time_records/transactions/ikimina_memberships), and add a
- * `<module>.read_all` permission above if one doesn't already fit.
+ * Registry used by PrismaService's query scoping extension: every model
+ * listed here is auto-filtered to the caller's working_location_id unless
+ * they hold `readAllPermission` (SUPER_ADMIN always skips the filter).
+ * `locationField` is the actual column filtered on. `departmentField` is
+ * only a denormalized column for service-layer use - it is NOT enforced
+ * by the Prisma extension. Models without their own working_location_id
+ * column don't belong here; scope those at the service layer instead.
  */
 export interface ModuleScopeConfig {
   readAllPermission: string;
@@ -198,54 +411,36 @@ export const MODULE_SCOPE_CONFIG: Record<string, ModuleScopeConfig> = {
 };
 
 /** Flat list of all valid permission keys. Used by guards. */
-export const ALL_PERMISSION_KEYS: string[] = PERMISSION_MODULES.flatMap(
-  (m) => m.permissions.map((p) => p.key),
+export const ALL_PERMISSION_KEYS: string[] = PERMISSION_MODULES.flatMap((m) =>
+  m.permissions.map((p) => p.key),
 );
 
 /**
- * Implied permissions — if a user has key A, they automatically get keys B, C.
- * Guards expand this set before checking.
- *
- * "read_all" permissions follow a consistent module-scoping pattern (see
- * WorkingLocationScopeInterceptor / PrismaService): holding "<module>.read_all"
- * lifts the default working-location filter for that module, so a user can
- * see records from every working_location instead of only their own. It
- * always implies the module's base "<module>.read" so granting it alone is
- * sufficient — you never need to grant both. SUPER_ADMIN bypasses all
- * scoping regardless of these permissions.
+ * Implied permissions - if a user has key A, they automatically get keys B, C.
+ * Guards expand this set before checking. "<module>.read_all" always implies
+ * "<module>.read", so granting read_all alone is enough to also get read.
  */
 export const IMPLIED_PERMISSIONS: Record<string, string[]> = {
-  'employees.create': [
-    'employees.read',
-    'employees.update',
-    'employees.suspend',
-    'employees.transfer',
-  ],
   'employees.read_all': ['employees.read'],
-  'attendance.create': [
-    'attendance.read',
-    'attendance.update',
-    'attendance.approve',
-  ],
   'attendance.read_all': ['attendance.read'],
-  'payroll.create':  ['payroll.read', 'payroll.manage'],
-  'payroll.manage':  ['payroll.read', 'payroll.create', 'payroll.approve'],
+  'attendance.create': ['attendance.read'],
+  'payroll.create': ['payroll.read', 'payroll.manage'],
+  'payroll.manage': ['payroll.read'],
   'payroll.read_all': ['payroll.read'],
-  'payment-structures.create': [
-    'payment-structures.read',
-    'payment-structures.update',
-    'payment-structures.delete',
+  'payroll.approve': [
+    'payroll.approve_initial',
+    'payroll.approve_final',
+    'payroll.read',
   ],
+  'payroll.approve_initial': ['payroll.read'],
+  'payroll.approve_final': ['payroll.read'],
   'payment-structures.read_all': ['payment-structures.read'],
-  'users.create': [
-    'users.read',
-    'users.update',
-    'users.approve',
-    'users.suspend',
-  ],
+  'deductions.manage': ['payment-structures.read'],
   'users.read_all': ['users.read'],
+  'users.create': ['users.read'],
   'ikimina.manage': ['ikimina.read'],
   'ikimina.read_all': ['ikimina.read'],
+  'audit.read_all': ['audit.view'],
   'branches.manage': ['departments.manage', 'branch-manager.manage'],
 };
 
@@ -256,39 +451,95 @@ export const IMPLIED_PERMISSIONS: Record<string, string[]> = {
  */
 export const BASELINE_ROLE_PERMISSIONS: Record<string, string[]> = {
   BRANCH_MANAGER: [
-    'users.read', 'users.create', 'users.update', 'users.approve',
-    'users.suspend', 'users.transfer',
-    'employees.create', 'employees.read', 'employees.update',
-    'employees.approve', 'employees.transfer', 'employees.transfer_approve', 'employees.suspend',
-    'attendance.create', 'attendance.read', 'attendance.update', 'attendance.approve',
-    'payment-structures.create', 'payment-structures.read',
-    'payment-structures.update', 'payment-structures.delete',
+    'users.read',
+    'users.create',
+    'users.update',
+    'users.approve',
+    'users.suspend',
+    'users.transfer',
+    'roles.manage_own_location',
+    'permissions.read',
+    'permissions.assign',
+    'employees.create',
+    'employees.read',
+    'employees.update',
+    'employees.approve',
+    'employees.transfer',
+    'employees.transfer_approve',
+    'employees.suspend',
+    'attendance.create',
+    'attendance.read',
+    'attendance.update',
+    'attendance.approve',
+    'payment-structures.create',
+    'payment-structures.read',
+    'payment-structures.update',
+    'payment-structures.delete',
     'allowances.manage',
-    'payroll.create', 'payroll.read', 'payroll.manage',
-    'payroll.approve', 'payroll.reports',
-    'notifications.read', 'notifications.manage',
-    'audit.view', 'system-config.manage',
+    'deductions.manage',
+    'payroll.create',
+    'payroll.read',
+    'payroll.manage',
+    // Branch managers do the FIRST approval step only. Final approval
+    // belongs to HR at headquarters (see resolveFinalApprovalAuthority()).
+    'payroll.approve_initial',
+    'payroll.reports',
+    'ikimina.manage',
+    'ikimina.read',
+    'notifications.read',
+    'notifications.manage',
+    'audit.view',
+    // system-config.manage is deliberately NOT granted here - overtime
+    // settings are a single global row with no per-branch column, so
+    // editing it would change company-wide behavior, not just this branch.
   ],
   ACCOUNTANT: [
-    'employees.read', 'attendance.read',
-    'payment-structures.create', 'payment-structures.read',
-    'payment-structures.update', 'allowances.manage',
-    'payroll.create', 'payroll.read', 'payroll.manage', 'payroll.reports',
+    'employees.read',
+    'attendance.read',
+    'payment-structures.create',
+    'payment-structures.read',
+    'payment-structures.update',
+    'allowances.manage',
+    'deductions.manage',
+    'payroll.create',
+    'payroll.read',
+    'payroll.manage',
+    'payroll.reports',
     'notifications.read',
   ],
   HR: [
-    'employees.create', 'employees.read', 'employees.update', 'employees.suspend',
-    'payment-structures.create', 'payment-structures.read', 'payment-structures.update',
+    'employees.create',
+    'employees.read',
+    'employees.update',
+    'employees.suspend',
+    'payment-structures.create',
+    'payment-structures.read',
+    'payment-structures.update',
+    'deductions.manage',
     'notifications.read',
+    // HR at headquarters gives the FINAL payroll approval for every branch;
+    // SUPER_ADMIN is the fallback only if HQ has no active HR. See
+    // PayrollService.resolveFinalApprovalAuthority().
+    'payroll.approve_final',
+    'payroll.reports',
   ],
   ATTENDANT: [
     'employees.read',
-    'attendance.create', 'attendance.read', 'attendance.update',
+    'attendance.create',
+    'attendance.read',
+    'attendance.update',
     'notifications.read',
   ],
   FINANCE: [
-    'employees.read', 'attendance.read',
-    'payment-structures.create', 'payment-structures.read', 'payment-structures.update',
-    'payroll.create', 'payroll.read', 'payroll.manage', 'payroll.reports',
+    'employees.read',
+    'attendance.read',
+    'payment-structures.create',
+    'payment-structures.read',
+    'payment-structures.update',
+    'deductions.manage',
+    'payroll.create',
+    'payroll.read',
+    'payroll.manage',
+    'payroll.reports',
   ],
 };

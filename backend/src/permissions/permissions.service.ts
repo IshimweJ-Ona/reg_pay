@@ -1,6 +1,6 @@
 import {
   BadRequestException,
-  ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
   Inject,
@@ -43,6 +43,7 @@ export class PermissionsService {
     const role = await this.prisma.roles.findUniqueOrThrow({
       where: { id: roleId },
     });
+    this.ensureActorCanManageRole(actor, role);
     const keys = (role.permission_keys as string[]) ?? [];
     if (!keys.includes(permissionKey)) {
       keys.push(permissionKey);
@@ -53,7 +54,7 @@ export class PermissionsService {
     }
 
     await this.notifyUsersWithRole(roleId);
-    await this.cacheManager.del('roles:all');
+    await this.clearRoleCaches(role.working_location_id);
 
     return {
       message: 'Permission assigned to role.',
@@ -66,6 +67,7 @@ export class PermissionsService {
 
     const role = await this.prisma.roles.findUnique({ where: { id: roleId } });
     if (!role) throw new NotFoundException('Role not found.');
+    this.ensureActorCanManageRole(actor, role);
 
     const keys = (role.permission_keys as string[]) ?? [];
     if (keys.includes(permissionKey)) {
@@ -77,7 +79,7 @@ export class PermissionsService {
     }
 
     await this.notifyUsersWithRole(roleId);
-    await this.cacheManager.del('roles:all');
+    await this.clearRoleCaches(role.working_location_id);
 
     return { message: 'Permission removed from role.' };
   }
@@ -192,6 +194,36 @@ export class PermissionsService {
     }
   }
 
+  private async clearRoleCaches(locationId?: bigint | null) {
+    const cacheKeys = new Set(['roles:all', 'users:all', 'users:pending']);
+    if (locationId) {
+      cacheKeys.add(`roles:branch:${locationId.toString()}`);
+    }
+
+    try {
+      const store = (this.cacheManager as any).store;
+      if (store && typeof store.keys === 'function') {
+        const keys = await store.keys();
+        for (const key of keys) {
+          if (
+            typeof key === 'string' &&
+            (key.startsWith('users:all') ||
+              key.startsWith('users:pending') ||
+              key.startsWith('roles:branch:'))
+          ) {
+            cacheKeys.add(key);
+          }
+        }
+      }
+    } catch {
+      // Exact-key fallback below still works for stores without key iteration.
+    }
+
+    await Promise.all(
+      Array.from(cacheKeys).map((key) => this.cacheManager.del(key)),
+    );
+  }
+
   private async ensureRoleAndPermission(roleId: bigint, permissionKey: string) {
     const role = await this.prisma.roles.findUnique({
       where: { id: roleId },
@@ -223,6 +255,39 @@ export class PermissionsService {
 
   private isSystemAdmin(actor: CurrentUserType) {
     return actor.roles.some((role) => ['SUPER_ADMIN'].includes(role));
+  }
+
+  private isLocationScopedRoleManager(actor: CurrentUserType) {
+    return (
+      !this.isSystemAdmin(actor) &&
+      !actor.permissions.includes('roles.manage') &&
+      actor.permissions.includes('roles.manage_own_location')
+    );
+  }
+
+  /**
+   * Mirrors RolesService's own branch-ownership check: a roles.manage_own_location
+   * actor may only assign/revoke permissions on a role that belongs to their
+   * own branch, never a global role or another branch's role.
+   */
+  private ensureActorCanManageRole(
+    actor: CurrentUserType,
+    role: { working_location_id: bigint | null },
+  ) {
+    if (!this.isLocationScopedRoleManager(actor)) return;
+
+    const ownLocation = actor.working_location_id
+      ? BigInt(actor.working_location_id)
+      : null;
+    if (
+      !role.working_location_id ||
+      !ownLocation ||
+      role.working_location_id !== ownLocation
+    ) {
+      throw new ForbiddenException(
+        'You can only assign or revoke permissions on roles that belong to your own branch.',
+      );
+    }
   }
 
   private async ensureActorCanGrantUserPermission(

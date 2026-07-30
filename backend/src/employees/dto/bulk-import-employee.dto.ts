@@ -1,4 +1,12 @@
-import { IsArray, IsOptional, IsString, IsIn, ValidateNested, MinLength, MaxLength } from 'class-validator';
+import {
+  IsArray,
+  IsOptional,
+  IsString,
+  IsIn,
+  ValidateNested,
+  MinLength,
+  MaxLength,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class BulkImportEmployeeItem {

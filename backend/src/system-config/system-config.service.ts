@@ -1,4 +1,9 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { deduction_types_deduction_mode } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateConfigDto } from './dto/update-config.dto';
 import { generateUUID } from '../common/utils/uuid.util';
@@ -80,14 +85,16 @@ export class SystemConfigService {
 
     const uniqueTaxes: Record<string, any> = {};
     taxes.forEach((t) => {
-      const key = this.isPitTaxName(t.name) ? PIT_DISPLAY_NAME : t.name;
+      const isPit = this.isPitTaxName(t.name);
+      const key = isPit ? PIT_DISPLAY_NAME : t.name.trim();
       if (!uniqueTaxes[key]) {
         uniqueTaxes[key] = {
           ...t,
           id: t.id.toString(),
           name: key,
           rate: Number(t.rate),
-          is_automatic: this.isPitTaxName(t.name),
+          is_automatic: isPit,
+          applies_to: isPit ? 'MONTHLY_EMPLOYEES' : 'EMPLOYEE_ASSIGNED',
         };
       }
     });
@@ -95,6 +102,18 @@ export class SystemConfigService {
     if (!Object.values(uniqueTaxes).some((tax: any) => tax.is_automatic)) {
       uniqueTaxes[PIT_DISPLAY_NAME] = this.defaultPitTax();
     }
+
+    await Promise.all(
+      Object.values(uniqueTaxes)
+        .filter((tax: any) => !tax.is_automatic)
+        .map((tax: any) =>
+          this.upsertDeductionTypeForTax(
+            this.prisma,
+            tax.name,
+            Number(tax.rate),
+          ),
+        ),
+    );
 
     return Object.values(uniqueTaxes);
   }
@@ -117,9 +136,37 @@ export class SystemConfigService {
             name: PIT_DISPLAY_NAME,
             rate: Number(pitTax.rate),
             is_automatic: true,
+            applies_to: 'MONTHLY_EMPLOYEES',
           },
         ]
       : [this.defaultPitTax()];
+  }
+
+  async findEmployeeAssignedMonthlyTaxesAtDate(date: Date) {
+    const taxes = await this.prisma.monthly_taxes.findMany({
+      where: {
+        is_active: true,
+        effective_from: { lte: date },
+      },
+      orderBy: [{ effective_from: 'desc' }, { created_at: 'desc' }],
+    });
+
+    const uniqueTaxes: Record<string, any> = {};
+    taxes.forEach((tax) => {
+      if (this.isPitTaxName(tax.name)) return;
+      const key = tax.name.trim();
+      if (uniqueTaxes[key]) return;
+      uniqueTaxes[key] = {
+        ...tax,
+        id: tax.id.toString(),
+        name: key,
+        rate: Number(tax.rate),
+        is_automatic: false,
+        applies_to: 'EMPLOYEE_ASSIGNED',
+      };
+    });
+
+    return Object.values(uniqueTaxes);
   }
 
   async updateMonthlyTax(name: string, rate: number) {
@@ -131,7 +178,9 @@ export class SystemConfigService {
     }
 
     if (!Number.isFinite(numericRate) || numericRate < 0 || numericRate > 100) {
-      throw new BadRequestException('Tax rate must be a number between 0 and 100.');
+      throw new BadRequestException(
+        'Tax rate must be a number between 0 and 100.',
+      );
     }
 
     const now = dayjs().tz(RWANDA_TIMEZONE);
@@ -143,15 +192,23 @@ export class SystemConfigService {
       effectiveFrom = now.add(1, 'month').startOf('month').toDate();
     }
 
-    const tax = await this.prisma.monthly_taxes.create({
-      data: {
-        uuid: generateUUID(),
-        name: this.isPitTaxName(trimmedName) ? PIT_DISPLAY_NAME : trimmedName,
-        rate: numericRate,
-        effective_from: effectiveFrom,
-        is_active: true,
-        updated_at: new Date(),
-      },
+    const tax = await this.prisma.$transaction(async (tx) => {
+      const createdTax = await tx.monthly_taxes.create({
+        data: {
+          uuid: generateUUID(),
+          name: this.isPitTaxName(trimmedName) ? PIT_DISPLAY_NAME : trimmedName,
+          rate: numericRate,
+          effective_from: effectiveFrom,
+          is_active: true,
+          updated_at: new Date(),
+        },
+      });
+
+      if (!this.isPitTaxName(createdTax.name)) {
+        await this.upsertDeductionTypeForTax(tx, createdTax.name, numericRate);
+      }
+
+      return createdTax;
     });
 
     return {
@@ -159,6 +216,9 @@ export class SystemConfigService {
       id: tax.id.toString(),
       rate: Number(tax.rate),
       is_automatic: this.isPitTaxName(tax.name),
+      applies_to: this.isPitTaxName(tax.name)
+        ? 'MONTHLY_EMPLOYEES'
+        : 'EMPLOYEE_ASSIGNED',
     };
   }
 
@@ -173,23 +233,27 @@ export class SystemConfigService {
       id: tax.id.toString(),
       rate: Number(tax.rate),
       is_automatic: this.isPitTaxName(tax.name),
+      applies_to: this.isPitTaxName(tax.name)
+        ? 'MONTHLY_EMPLOYEES'
+        : 'EMPLOYEE_ASSIGNED',
     };
   }
 
-  
   /**
-   * Flat bonus (RWF) paid for each day an employee's hours_worked exceeds
-   * getDefaultWorkHours(). Configurable via System Config, key
-   * OVERTIME_RATE_PER_HOUR (kept for backward compatibility with existing
-   * config rows even though it's now a flat per-day amount, not a
-   * per-hour rate).
+   * Hourly overtime rate (RWF) paid for each overtime hour entered in
+   * attendance. Configurable via System Config key OVERTIME_RATE_PER_HOUR.
    */
   async getOvertimeBonusPerDay(): Promise<number> {
     const config = await this.prisma.system_config.findUnique({
       where: { key: 'OVERTIME_RATE_PER_HOUR' },
     });
 
-    if (!config || config.value === null || config.value === undefined || config.value === '') {
+    if (
+      !config ||
+      config.value === null ||
+      config.value === undefined ||
+      config.value === ''
+    ) {
       return DEFAULT_OVERTIME_BONUS_PER_DAY;
     }
 
@@ -200,16 +264,21 @@ export class SystemConfigService {
   }
 
   /**
-   * Default working hours per day. A day where hours_worked exceeds this
-   * threshold counts as an overtime day. Configurable via System Config,
-   * key DEFAULT_WORK_HOURS.
+   * Legacy default working hours per day. Kept for backward compatibility
+   * with older total-hours calculations; new attendance stores overtime_hours
+   * directly.
    */
   async getDefaultWorkHours(): Promise<number> {
     const config = await this.prisma.system_config.findUnique({
       where: { key: 'DEFAULT_WORK_HOURS' },
     });
 
-    if (!config || config.value === null || config.value === undefined || config.value === '') {
+    if (
+      !config ||
+      config.value === null ||
+      config.value === undefined ||
+      config.value === ''
+    ) {
       return DEFAULT_WORK_HOURS_PER_DAY;
     }
 
@@ -228,6 +297,31 @@ export class SystemConfigService {
     );
   }
 
+  private async upsertDeductionTypeForTax(
+    tx: { deduction_types: { upsert: (args: any) => Promise<any> } },
+    name: string,
+    rate: number,
+  ) {
+    await tx.deduction_types.upsert({
+      where: { name },
+      update: {
+        deduction_mode: deduction_types_deduction_mode.PERCENTAGE,
+        amount: '0',
+        percentage_value: rate,
+        updated_at: new Date(),
+      },
+      create: {
+        uuid: generateUUID(),
+        name,
+        deduction_mode: deduction_types_deduction_mode.PERCENTAGE,
+        amount: '0',
+        percentage_value: rate,
+        is_mandatory: false,
+        updated_at: new Date(),
+      },
+    });
+  }
+
   private defaultPitTax() {
     return {
       id: null,
@@ -239,6 +333,7 @@ export class SystemConfigService {
       is_automatic: true,
       created_at: null,
       updated_at: null,
+      applies_to: 'MONTHLY_EMPLOYEES',
     };
   }
 }

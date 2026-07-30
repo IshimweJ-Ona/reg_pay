@@ -1,13 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { payment_structures_payroll_frequency } from '@prisma/client';
-import {
-  IsDateString,
-  IsDecimal,
-  IsEnum,
-  IsInt,
-  IsOptional,
-  Min,
-} from 'class-validator';
+import { IsDateString, IsDecimal, IsEnum, IsOptional } from 'class-validator';
 
 export class UpdatePaymentStructureDto {
   @ApiPropertyOptional({
@@ -50,8 +43,6 @@ export class UpdatePaymentStructureDto {
   @IsOptional()
   @IsDecimal()
   tax_percentage?: string;
-
-
 
   @ApiPropertyOptional({
     example: '2024-12-31',

@@ -1,11 +1,9 @@
 import { person_gender } from '@prisma/client';
 import {
   IsDateString,
-  IsEmail,
   IsEnum,
   IsNotEmpty,
   IsOptional,
-  IsPhoneNumber,
   IsString,
   Matches,
 } from 'class-validator';
@@ -155,8 +153,6 @@ export class CreateEmployeeDto {
   @IsOptional()
   @IsString()
   tax_percentage?: string;
-
-
 
   @ApiPropertyOptional({
     example: 'Transport Allowance',

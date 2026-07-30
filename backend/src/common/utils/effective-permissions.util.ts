@@ -2,21 +2,53 @@ import { IMPLIED_PERMISSIONS } from '../constants/permissions.constants';
 import type { CurrentUserType } from '../../auth/types/current-user.type';
 
 /**
- * Computes a user's *effective* permission set: their raw permissions,
- * expanded through IMPLIED_PERMISSIONS, then adjusted by any per-user
- * permission_overrides from the JWT payload.
- *
- * This is the single source of truth for "what can this user actually do" —
- * used by PermissionsGuard (route-level checks) AND by
- * WorkingLocationScopeInterceptor (data-scoping checks), so the two systems
- * can never disagree about what a user is allowed to see.
- *
- * SUPER_ADMIN is intentionally NOT special-cased here — callers check
- * `user.roles.includes('SUPER_ADMIN')` first and skip permission logic
- * entirely, since SUPER_ADMIN bypasses all permission and scope checks.
+ * Shape returned by Prisma for a user's roles/direct-permissions relations,
+ * loose enough to accept the `select`/`include` variants used across
+ * auth.service.ts and jwt.strategy.ts.
+ */
+export type UserPermissionRelations = {
+  user_roles?: Array<{ roles?: { permission_keys?: unknown } | null }> | null;
+  user_permissions?: Array<{ permission_key: string }> | null;
+};
+
+/**
+ * Builds a user's *raw* (pre-implied, pre-override) permission key set from
+ * their role assignments and direct per-user grants. This is the single
+ * place both login/refresh (auth.service.ts) and per-request authentication
+ * (jwt.strategy.ts) read from, so the two can never drift out of sync.
+ */
+export function buildRawPermissionKeys(
+  user: UserPermissionRelations,
+): string[] {
+  const keys = new Set<string>();
+
+  for (const userRole of user.user_roles ?? []) {
+    const rolePermissionKeys =
+      (userRole.roles?.permission_keys as string[] | undefined) ?? [];
+    for (const key of rolePermissionKeys) {
+      keys.add(key);
+    }
+  }
+
+  for (const userPermission of user.user_permissions ?? []) {
+    keys.add(userPermission.permission_key);
+  }
+
+  return Array.from(keys);
+}
+
+/**
+ * Computes a user's effective permission set: raw permissions expanded
+ * through IMPLIED_PERMISSIONS, then adjusted by permission_overrides.
+ * Shared by PermissionsGuard and WorkingLocationScopeInterceptor so both
+ * agree on what a user can do. SUPER_ADMIN is handled by callers instead
+ * (they check `user.roles.includes('SUPER_ADMIN')` and skip this entirely).
  */
 export function computeEffectivePermissions(
-  user: Pick<CurrentUserType, 'permissions' | 'permission_overrides'> | undefined | null,
+  user:
+    | Pick<CurrentUserType, 'permissions' | 'permission_overrides'>
+    | undefined
+    | null,
 ): Set<string> {
   const effective = new Set<string>(user?.permissions ?? []);
 
@@ -38,7 +70,10 @@ export function computeEffectivePermissions(
 }
 
 export function hasEffectivePermission(
-  user: Pick<CurrentUserType, 'permissions' | 'permission_overrides'> | undefined | null,
+  user:
+    | Pick<CurrentUserType, 'permissions' | 'permission_overrides'>
+    | undefined
+    | null,
   permission: string,
 ): boolean {
   return computeEffectivePermissions(user).has(permission);

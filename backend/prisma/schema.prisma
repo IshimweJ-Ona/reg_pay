@@ -382,10 +382,28 @@ model notifications {
   updated_at                           DateTime
   users_notifications_sender_idTousers users?   @relation("notifications_sender_idTousers", fields: [sender_id], references: [id], map: "Notifications_sender_id_fkey")
   users_notifications_user_idTousers   users?   @relation("notifications_user_idTousers", fields: [user_id], references: [id], map: "Notifications_user_id_fkey")
+  notification_dismissals              notification_dismissals[]
 
   @@index([is_read], map: "idx_notification_read")
   @@index([sender_id], map: "idx_notification_sender")
   @@index([user_id], map: "idx_notification_user")
+}
+
+// A notification row can be shared across many recipients (target_role /
+// target_department_id / user_id-null broadcasts), so "clearing" it for one
+// user can't be a flag on the notification itself - that would hide it for
+// everyone it targets. This is a per-user "hide from my list" marker; the
+// underlying notification row is never touched or deleted by it.
+model notification_dismissals {
+  id              BigInt        @id @default(autoincrement())
+  notification_id BigInt
+  user_id         BigInt
+  dismissed_at    DateTime      @default(now())
+  notifications   notifications @relation(fields: [notification_id], references: [id], map: "Notification_dismissals_notification_id_fkey")
+  users           users         @relation(fields: [user_id], references: [id], map: "Notification_dismissals_user_id_fkey")
+
+  @@unique([notification_id, user_id], map: "Notification_dismissals_notification_id_user_id_key")
+  @@index([user_id], map: "idx_notification_dismissal_user")
 }
 
 model payment_batch_items {
@@ -426,6 +444,8 @@ model payment_batches {
   status                                    payment_batches_status
   current_approval_step                     Int                              @default(1)
   rejected_reason                           String?                          @db.Text
+  description                               String?                          @db.Text
+  attachments                               Json?
   submitted_by                              BigInt
   approved_by                               BigInt?
   submitted_at                              DateTime?
@@ -541,7 +561,7 @@ model time_records {
   uuid              String                         @unique(map: "Time_records_uuid_key") @db.Char(36)
   employee_id       BigInt
   attendance_date   DateTime                       @db.Date
-  hours_worked      Decimal                        @default(0.00) @db.Decimal(5, 2)
+  overtime_hours    Decimal                        @default(0.00) @db.Decimal(5, 2)
   attendance_status time_records_attendance_status
   approved_by       BigInt?
   working_location_id BigInt?
@@ -739,6 +759,7 @@ model users {
   employees                                                             employees[]
   notifications_notifications_sender_idTousers                          notifications[]                  @relation("notifications_sender_idTousers")
   notifications_notifications_user_idTousers                            notifications[]                  @relation("notifications_user_idTousers")
+  notification_dismissals                                               notification_dismissals[]
   payment_batch_items                                                   payment_batch_items[]
   payment_batches_payment_batches_approved_byTousers                    payment_batches[]                @relation("payment_batches_approved_byTousers")
   payment_batches_payment_batches_submitted_byTousers                   payment_batches[]                @relation("payment_batches_submitted_byTousers")

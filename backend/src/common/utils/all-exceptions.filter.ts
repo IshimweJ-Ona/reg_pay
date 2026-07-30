@@ -51,7 +51,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
       }
     }
 
-    if (httpStatus >= HttpStatus.INTERNAL_SERVER_ERROR) {
+    if (Number(httpStatus) >= Number(HttpStatus.INTERNAL_SERVER_ERROR)) {
       message =
         'Something went wrong on the server. Please try again or contact support if the problem continues.';
       details = undefined;
@@ -81,7 +81,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
   private resolveHttpMessage(exception: any, status: number): string {
     if (!(exception instanceof HttpException)) {
-      return status >= HttpStatus.INTERNAL_SERVER_ERROR
+      return Number(status) >= Number(HttpStatus.INTERNAL_SERVER_ERROR)
         ? 'Something went wrong on the server. Please try again or contact support if the problem continues.'
         : 'The request could not be completed.';
     }
@@ -109,7 +109,9 @@ export class AllExceptionsFilter implements ExceptionFilter {
       }
     }
 
-    return this.toPlainMessage(exception.message || 'The request could not be completed.');
+    return this.toPlainMessage(
+      exception.message || 'The request could not be completed.',
+    );
   }
 
   private resolveSafeDetails(exception: any) {
@@ -126,7 +128,9 @@ export class AllExceptionsFilter implements ExceptionFilter {
       return {
         row: error.row,
         employee_id: error.employee_id,
-        message: this.toPlainMessage(error.message ?? 'Please review this row.'),
+        message: this.toPlainMessage(
+          error.message ?? 'Please review this row.',
+        ),
       };
     });
   }
@@ -153,7 +157,24 @@ export class AllExceptionsFilter implements ExceptionFilter {
     const fallback = 'The request could not be completed.';
     if (value === null || value === undefined) return fallback;
 
-    const text = String(value).replace(/\s+/g, ' ').trim();
-    return text || fallback;
+    let text = fallback;
+    switch (typeof value) {
+      case 'string':
+        text = value;
+        break;
+      case 'number':
+      case 'boolean':
+      case 'bigint':
+        text = value.toString();
+        break;
+      case 'symbol':
+        text = value.description ?? fallback;
+        break;
+      case 'object':
+        text = JSON.stringify(value) ?? fallback;
+        break;
+    }
+    const normalized = text.replace(/\s+/g, ' ').trim();
+    return normalized || fallback;
   }
 }

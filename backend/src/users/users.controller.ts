@@ -15,8 +15,6 @@ import {
   ApiBearerAuth,
   ApiOperation,
   ApiResponse,
-  ApiQuery,
-  ApiParam,
 } from '@nestjs/swagger';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
@@ -33,6 +31,7 @@ import { RegisterDto } from '../auth/dto/register.dto';
 import { ApproveUserDto } from './dto/approve-user.dto';
 import { AssignUserRolesDto } from './dto/assign-user-roles.dto';
 import { RejectUserDto } from './dto/reject-user.dto';
+import { UpdateUserDto } from './dto/update-user.dto';
 import { UpdateUserPermissionOverrideDto } from './dto/update-user-permission-override.dto';
 import { UsersService } from './users.service';
 
@@ -80,8 +79,15 @@ export class UsersController {
     @CurrentUser() actor: CurrentUserType,
     @Query('q') q?: string,
     @Query('status') status?: string,
+    @Query('working_location_id') workingLocationId?: string,
+    @Query('department_id') departmentId?: string,
   ) {
-    return this.usersService.findAll(actor, { q, status });
+    return this.usersService.findAll(actor, {
+      q,
+      status,
+      working_location_id: workingLocationId,
+      department_id: departmentId,
+    });
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
@@ -98,6 +104,24 @@ export class UsersController {
   })
   findPending(@CurrentUser() actor: CurrentUserType, @Query('q') q?: string) {
     return this.usersService.findPendingApproval(actor, q);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
+  @Permissions('users.update')
+  @Patch(':uuid')
+  @ApiOperation({
+    summary: 'Update user assignment',
+    description:
+      "Updates an active user's working location and department assignment.",
+  })
+  @ApiResponse({ status: 200, description: 'User assignment updated.' })
+  @ApiResponse({ status: 404, description: 'User not found.' })
+  updateUser(
+    @Param('uuid') uuid: string,
+    @Body() dto: UpdateUserDto,
+    @CurrentUser() actor: CurrentUserType,
+  ) {
+    return this.usersService.updateUser(uuid, dto, actor);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
@@ -214,7 +238,7 @@ export class UsersController {
     FilesInterceptor('images', 50, {
       storage: diskStorage({
         destination: './uploads/profiles',
-        filename: (req, file, cb) => {
+        filename: (_req, file, cb) => {
           const uniqueSuffix =
             Date.now() + '-' + Math.round(Math.random() * 1e9);
           cb(

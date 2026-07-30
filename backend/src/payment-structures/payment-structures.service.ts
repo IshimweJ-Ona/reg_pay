@@ -4,13 +4,21 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { audit_logs_activity_type, audit_logs_action, payment_structures_payroll_frequency } from '@prisma/client';
+import {
+  audit_logs_activity_type,
+  audit_logs_action,
+  payment_structures_payroll_frequency,
+} from '@prisma/client';
 import type { CurrentUserType } from '../auth/types/current-user.type';
 import { hasEffectivePermission } from '../common/utils/effective-permissions.util';
 import { generateUUID } from '../common/utils/uuid.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { calculateRwandaPaye } from '../common/utils/tax.util';
-import { calculateCustomContractTotal, getContractDays } from '../common/utils/payroll-calc.util';
+import {
+  calculateCustomContractTotal,
+  calculateMonthlyDailyRate,
+  getContractDays,
+} from '../common/utils/payroll-calc.util';
 
 // DTOs
 import { CreatePaymentStructureDto } from './dto/create-payment-structure.dto';
@@ -132,6 +140,10 @@ export class PaymentStructuresService {
       dto.daily_rate,
       dto.basic_salary,
     );
+    const dailyRate =
+      dto.payroll_frequency === payment_structures_payroll_frequency.MONTHLY
+        ? calculateMonthlyDailyRate(basicSalary).toString()
+        : dto.daily_rate;
 
     const structure = await this.prisma.$transaction(async (tx) => {
       await tx.payment_structures.updateMany({
@@ -145,7 +157,7 @@ export class PaymentStructuresService {
           employee_id: employeeId,
           payroll_frequency: dto.payroll_frequency,
           basic_salary: basicSalary,
-          daily_rate: dto.daily_rate,
+          daily_rate: dailyRate,
           overtime_rate: dto.overtime_rate ?? '0',
           tax_percentage: dto.tax_percentage,
           custom_work_days: null,
@@ -183,7 +195,8 @@ export class PaymentStructuresService {
     const employee = await this.ensureEmployee(existing.employee_id);
     this.ensureActorCanManageEmployee(actor, employee);
 
-    const effectiveFrequency = dto.payroll_frequency ?? existing.payroll_frequency;
+    const effectiveFrequency =
+      dto.payroll_frequency ?? existing.payroll_frequency;
     const effectiveDailyRate = dto.daily_rate ?? existing.daily_rate.toString();
 
     // Recompute the CUSTOM contract total whenever the frequency, daily
@@ -197,14 +210,22 @@ export class PaymentStructuresService {
             effectiveDailyRate,
             dto.basic_salary ?? existing.basic_salary.toString(),
           )
-        : dto.basic_salary;
+        : effectiveFrequency === payment_structures_payroll_frequency.MONTHLY
+          ? (dto.basic_salary ?? existing.basic_salary.toString())
+          : dto.basic_salary;
+    const dailyRate =
+      effectiveFrequency === payment_structures_payroll_frequency.MONTHLY
+        ? calculateMonthlyDailyRate(
+            basicSalary ?? existing.basic_salary.toString(),
+          ).toString()
+        : dto.daily_rate;
 
     const updated = await this.prisma.payment_structures.update({
       where: { id: existing.id },
       data: {
         payroll_frequency: dto.payroll_frequency,
         basic_salary: basicSalary,
-        daily_rate: dto.daily_rate,
+        daily_rate: dailyRate,
         overtime_rate: dto.overtime_rate,
         tax_percentage: dto.tax_percentage,
         custom_work_days: null,
@@ -300,7 +321,8 @@ export class PaymentStructuresService {
             ...structure.employees,
             id: structure.employees.id.toString(),
             created_by: structure.employees.created_by?.toString() ?? null,
-            department_id: structure.employees.department_id?.toString() ?? null,
+            department_id:
+              structure.employees.department_id?.toString() ?? null,
             working_location_id:
               structure.employees.working_location_id?.toString() ?? null,
             employment_category_id:
@@ -592,7 +614,10 @@ export class PaymentStructuresService {
     return this.serializeAllowance(updated);
   }
 
-  async findEmployeeDeductions(employeeIdInput: string, actor: CurrentUserType) {
+  async findEmployeeDeductions(
+    employeeIdInput: string,
+    actor: CurrentUserType,
+  ) {
     const employeeId = this.toBigInt(employeeIdInput, 'employee_id');
     const employee = await this.ensureEmployee(employeeId);
     this.ensureActorCanReadEmployee(actor, employee);
@@ -734,13 +759,19 @@ export class PaymentStructuresService {
 
     const contractDays =
       employee.contract_start_date && employee.contract_end_date
-        ? getContractDays(employee.contract_start_date, employee.contract_end_date)
+        ? getContractDays(
+            employee.contract_start_date,
+            employee.contract_end_date,
+          )
         : 0;
 
     const canReceive =
-      structure.payroll_frequency === payment_structures_payroll_frequency.MONTHLY ||
-      ((structure.payroll_frequency === payment_structures_payroll_frequency.CUSTOM ||
-        structure.payroll_frequency === payment_structures_payroll_frequency.DAILY) &&
+      structure.payroll_frequency ===
+        payment_structures_payroll_frequency.MONTHLY ||
+      ((structure.payroll_frequency ===
+        payment_structures_payroll_frequency.CUSTOM ||
+        structure.payroll_frequency ===
+          payment_structures_payroll_frequency.DAILY) &&
         contractDays > 21);
 
     if (!canReceive) {

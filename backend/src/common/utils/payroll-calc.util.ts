@@ -1,62 +1,77 @@
 export const DEFAULT_OVERTIME_BONUS_PER_DAY = 2500;
 export const DEFAULT_WORK_HOURS_PER_DAY = 8;
+export const DEFAULT_MONTHLY_WORK_DAYS = 26;
 
-/** @deprecated kept as an alias so older imports don't break at compile time. */
+/** Kept as an alias so older imports don't break at compile time. */
 export const DEFAULT_OVERTIME_RATE_PER_HOUR = DEFAULT_OVERTIME_BONUS_PER_DAY;
 
 /**
- * Overtime is no longer a manually entered value. It is derived from
- * attendance: any day where hours_worked exceeds the configured default
- * work hours (8 by default) counts as one "overtime day", and each
- * overtime day earns a single flat bonus (2,500 RWF by default) —
- * regardless of how many hours over the threshold were worked.
+ * Legacy helpers for old total-hours attendance records. New attendance rows
+ * store overtime_hours directly.
  */
 export function countOvertimeDays(
-    dailyHoursWorked: number[],
-    defaultWorkHours: number = DEFAULT_WORK_HOURS_PER_DAY,
+  dailyHoursWorked: number[],
+  defaultWorkHours: number = DEFAULT_WORK_HOURS_PER_DAY,
 ): number {
-    return dailyHoursWorked.filter((hours) => hours > defaultWorkHours).length;
+  return dailyHoursWorked.filter((hours) => hours > defaultWorkHours).length;
+}
+
+export function countOvertimeHours(
+  dailyHoursWorked: number[],
+  defaultWorkHours: number = DEFAULT_WORK_HOURS_PER_DAY,
+): number {
+  return dailyHoursWorked.reduce(
+    (sum, hours) =>
+      sum + (hours > defaultWorkHours ? hours - defaultWorkHours : 0),
+    0,
+  );
 }
 
 export function calculateOvertimeBonus(
-    overtimeDays: number,
-    bonusPerDay: number = DEFAULT_OVERTIME_BONUS_PER_DAY,
+  overtimeDays: number,
+  bonusPerDay: number = DEFAULT_OVERTIME_BONUS_PER_DAY,
 ): number {
-    if (!overtimeDays || overtimeDays <= 0) return 0;
-    return overtimeDays * bonusPerDay;
+  if (!overtimeDays || overtimeDays <= 0) return 0;
+  return overtimeDays * bonusPerDay;
 }
 
-/** @deprecated Use calculateOvertimeBonus(countOvertimeDays(...)) instead. */
 export function calculateOvertimePay(
-    overtimeHours: number,
-    ratePerHour: number = DEFAULT_OVERTIME_BONUS_PER_DAY,
+  overtimeHours: number,
+  ratePerHour: number = DEFAULT_OVERTIME_BONUS_PER_DAY,
 ): number {
-    if (!overtimeHours || overtimeHours <= 0) return 0;
-    return overtimeHours * ratePerHour;
+  if (!overtimeHours || overtimeHours <= 0) return 0;
+  return overtimeHours * ratePerHour;
 }
 
+export function calculateMonthlyDailyRate(
+  monthlySalary: number | string,
+  workingDays: number = DEFAULT_MONTHLY_WORK_DAYS,
+): number {
+  const salary = Number(monthlySalary);
+  if (!Number.isFinite(salary) || salary <= 0 || workingDays <= 0) return 0;
+  return Number((salary / workingDays).toFixed(2));
+}
 
 export function getContractDays(
-    contractStartDate: Date | string,
-    contractEndDate: Date | string,
+  contractStartDate: Date | string,
+  contractEndDate: Date | string,
 ): number {
-    const start = new Date(contractStartDate);
-    const end = new Date(contractEndDate);
-    start.setHours(0, 0, 0, 0);
-    end.setHours(0, 0, 0, 0);
+  const start = new Date(contractStartDate);
+  const end = new Date(contractEndDate);
+  start.setHours(0, 0, 0, 0);
+  end.setHours(0, 0, 0, 0);
 
-    const diffMs = end.getTime() - start.getTime();
-    const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24)) + 1;
+  const diffMs = end.getTime() - start.getTime();
+  const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24)) + 1;
 
-    return diffDays > 0 ? diffDays : 0;
+  return diffDays > 0 ? diffDays : 0;
 }
 
-
 export function calculateCustomContractTotal(
-    dailyRate: number,
-    contractStartDate: Date | string,
-    contractEndDate: Date | string,
+  dailyRate: number,
+  contractStartDate: Date | string,
+  contractEndDate: Date | string,
 ): number {
-    const days = getContractDays(contractStartDate, contractEndDate);
-    return dailyRate * days;
+  const days = getContractDays(contractStartDate, contractEndDate);
+  return dailyRate * days;
 }

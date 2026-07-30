@@ -5,11 +5,7 @@
  */
 export function normalizeName(name: string): string {
   if (!name) return '';
-  return name
-    .toLowerCase()
-    .replace(/[_\-\.]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return name.toLowerCase().replace(/[_.-]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 /**

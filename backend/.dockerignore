@@ -4,3 +4,6 @@ dist
 npm-debug.log
 coverage
 uploads
+*.log
+*.tsbuildinfo
+test
