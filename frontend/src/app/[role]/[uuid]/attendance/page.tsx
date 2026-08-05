@@ -5,12 +5,16 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow 
 } from "@/components/ui/table";
 import ExcelJS from 'exceljs';
-import { Search, Download, UserCheck, Clock, Upload, History } from 'lucide-react';
+import { SearchMd, Download01, UserCheck01, Clock, Upload01, ClockRewind, UploadCloud01 } from '@untitledui/icons';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { PageHeader } from '@/components/layout/page-header';
+import { StatCard } from '@/components/ui/stat-card';
+import { StatusBadge } from '@/components/ui/status-badge';
 import { getTimeRecords, bulkCreateTimeRecords, getTodayAttendance } from '@/api/attendance';
 import { getEmployees } from '@/api/employees';
+import { getWorkingLocations, WorkingLocation } from '@/api/working_locations';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { exportToCSV, exportToExcel } from '@/lib/export-utils';
@@ -74,6 +78,8 @@ export default function AttendanceMonitoringPage() {
   const [historyEmployeeId, setHistoryEmployeeId] = useState('all');
   const [historyLoadedRange, setHistoryLoadedRange] = useState<{ from: string; to: string; label: string } | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [workingLocations, setWorkingLocations] = useState<WorkingLocation[]>([]);
+  const [selectedLocationId, setSelectedLocationId] = useState('');
   const { toast } = useToast();
   const { user, hasPermission } = useAuth();
   const { startSync, syncState, pendingSync, setPendingSync } = useAttendanceSync();
@@ -81,6 +87,11 @@ export default function AttendanceMonitoringPage() {
   const canCreateAttendance = hasPermission('attendance.create');
   const canUpdateAttendance = hasPermission('attendance.update');
   const canLogAttendance = canCreateAttendance || canUpdateAttendance;
+  const canViewAllLocations = hasPermission('branches.read_all');
+
+  // Which location's attendance we're scoped to right now: the explicitly
+  // chosen one (cross-location roles), else the signed-in user's own location.
+  const activeLocationParam = selectedLocationId || user?.location;
 
   const todayStr = getRwandaTime().format('YYYY-MM-DD');
 
@@ -98,7 +109,7 @@ export default function AttendanceMonitoringPage() {
         getTimeRecords({
           start_date: fiveDaysAgo.format('YYYY-MM-DD'),
           end_date: yesterday.format('YYYY-MM-DD'),
-          working_location_id: user?.location,
+          working_location_id: activeLocationParam,
         }).catch((err) => {
           console.error('Failed to load time records:', err);
           return [];
@@ -107,7 +118,7 @@ export default function AttendanceMonitoringPage() {
           console.error('Failed to load employees:', err);
           return { employees: [] };
         }),
-        getTodayAttendance(user?.location, activeTab === 'ALL' ? undefined : activeTab).catch((err) => {
+        getTodayAttendance(activeLocationParam, activeTab === 'ALL' ? undefined : activeTab).catch((err) => {
           console.error('Failed to load today attendance:', err);
           return [];
         })
@@ -153,6 +164,28 @@ export default function AttendanceMonitoringPage() {
 
     return () => clearInterval(interval);
   }, []);
+
+  // Cross-location roles get an explicit location picker; everyone else stays
+  // implicitly scoped to their own location (current behavior, unchanged).
+  useEffect(() => {
+    if (!canViewAllLocations) return;
+    getWorkingLocations()
+      .then((data) => {
+        const locations: WorkingLocation[] = data.working_locations || data || [];
+        setWorkingLocations(locations);
+        const ownLocation = locations.find((loc) => loc.name === user?.location);
+        if (ownLocation) setSelectedLocationId(ownLocation.uuid);
+      })
+      .catch((err) => console.error('Failed to load working locations:', err));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canViewAllLocations]);
+
+  // Re-fetch the Daily Logger / "today" data whenever the selected location changes.
+  useEffect(() => {
+    if (!selectedLocationId) return;
+    fetchData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedLocationId]);
 
   const handleSync = async () => {
     const logs = Object.values(pendingSync);
@@ -821,7 +854,7 @@ export default function AttendanceMonitoringPage() {
       const recs = await getTimeRecords({
         start_date: range.from.format('YYYY-MM-DD'),
         end_date: range.to.format('YYYY-MM-DD'),
-        working_location_id: user?.location,
+        working_location_id: activeLocationParam,
         employee_id: historyEmployeeId !== 'all' ? historyEmployeeId : undefined,
       });
       const sorted = (Array.isArray(recs) ? recs : [])
@@ -929,64 +962,75 @@ export default function AttendanceMonitoringPage() {
 
   return (
     <div className="space-y-8">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-headline font-bold">Attendance Systems</h1>
-          <p className="text-muted-foreground">High-performance workforce logging & historical audit.</p>
-        </div>
-        <div className="flex gap-2 items-center">
-          <AttendanceSyncPopover />
-          <PermissionGate permission="attendance.create">
+      <PageHeader
+        title="Attendance Systems"
+        description="High-performance workforce logging & historical audit."
+        actions={
+          <>
+            {canViewAllLocations && (
+              <Select value={selectedLocationId} onValueChange={setSelectedLocationId}>
+                <SelectTrigger className="h-11 w-[220px] bg-card">
+                  <SelectValue placeholder="Select working location" />
+                </SelectTrigger>
+                <SelectContent>
+                  {workingLocations.map((loc) => (
+                    <SelectItem key={loc.uuid} value={loc.uuid}>{loc.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+            <AttendanceSyncPopover />
+            <PermissionGate permission="attendance.create">
+              <Button
+                variant="outline"
+                onClick={() => setIsImportOpen(true)}
+                className="h-11 border-dashed"
+              >
+                <Upload01 className="mr-2 h-4 w-4" size={16} /> Bulk Import
+              </Button>
+            </PermissionGate>
             <Button
-              variant="outline"
-              onClick={() => setIsImportOpen(true)}
-              className="h-11 border-dashed"
+              variant={viewMode === 'LOG' ? 'default' : 'outline'}
+              onClick={() => setViewMode('LOG')}
+              className="h-11"
             >
-              <Upload className="mr-2 h-4 w-4" /> Bulk Import
+              <UserCheck01 className="mr-2 h-4 w-4" size={16} /> Daily Logger
             </Button>
-          </PermissionGate>
-          <Button
-            variant={viewMode === 'LOG' ? 'default' : 'outline'}
-            onClick={() => setViewMode('LOG')}
-            className="h-11"
-          >
-            <UserCheck className="mr-2 h-4 w-4" /> Daily Logger
-          </Button>
-          <Button
-            variant={viewMode === 'HISTORY' ? 'default' : 'outline'}
-            onClick={() => setViewMode('HISTORY')}
-            className="h-11"
-          >
-            <History className="mr-2 h-4 w-4" /> Attendance History
-          </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" className="h-11 shadow-sm"><Download className="mr-2 h-4 w-4" /> Export</Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent>
-              <DropdownMenuItem onClick={() => handleExportClick('csv')}>CSV</DropdownMenuItem>
-              <DropdownMenuItem onClick={() => handleExportClick('excel')}>Excel</DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </div>
+            <Button
+              variant={viewMode === 'HISTORY' ? 'default' : 'outline'}
+              onClick={() => setViewMode('HISTORY')}
+              className="h-11"
+            >
+              <ClockRewind className="mr-2 h-4 w-4" size={16} /> Attendance History
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" className="h-11 shadow-sm"><Download01 className="mr-2 h-4 w-4" size={16} /> Export</Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent>
+                <DropdownMenuItem onClick={() => handleExportClick('csv')}>CSV</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleExportClick('excel')}>Excel</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </>
+        }
+      />
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div className="bg-white p-6 rounded-3xl border shadow-sm flex items-center gap-4">
-          <div className="h-12 w-12 rounded-2xl bg-amber-50 flex items-center justify-center">
-            <Clock className="h-6 w-6 text-amber-600" />
-          </div>
-          <div>
-            <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Pending</p>
-            <p className="text-2xl font-bold">{filteredEmployees.length - Object.keys(todayRecordsMap).length}</p>
-          </div>
-        </div>
-        <div className="bg-slate-900 text-white p-6 rounded-3xl shadow-lg flex items-center gap-4">
+        <StatCard
+          icon={<Clock className="h-6 w-6" size={24} />}
+          label="Pending"
+          value={filteredEmployees.length - Object.keys(todayRecordsMap).length}
+          tone="warning"
+        />
+        {/* Dark hero treatment doesn't fit StatCard's light-card look, so it stays a
+            custom card using the accent token directly instead of being forced into StatCard. */}
+        <div className="bg-accent text-accent-foreground p-6 rounded-3xl shadow-lg flex items-center gap-4">
             <div className="h-12 w-12 rounded-2xl bg-white/10 flex items-center justify-center">
-                <History className="h-6 w-6 text-primary" />
+                <UploadCloud01 className="h-6 w-6 text-primary" size={24} />
             </div>
             <div>
-                <p className="text-xs font-bold text-white/50 uppercase tracking-widest">Unsynced</p>
+                <p className="text-xs font-bold text-accent-foreground/50 uppercase tracking-widest">Unsynced</p>
                 <div className="flex items-center gap-3">
                     <p className="text-2xl font-bold">{Object.keys(pendingSync).length}</p>
                     {Object.keys(pendingSync).length > 0 && (
@@ -1015,10 +1059,10 @@ export default function AttendanceMonitoringPage() {
           </TabsList>
 
           <div className="relative w-full md:w-72">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <SearchMd className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" size={16} />
             <Input
               placeholder="Filter by name..."
-              className="pl-10 h-11 bg-white border-none shadow-sm rounded-xl"
+              className="pl-10 h-11 bg-card border-none shadow-sm rounded-xl"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />
@@ -1026,10 +1070,10 @@ export default function AttendanceMonitoringPage() {
         </div>
 
         <TabsContent value={activeTab} className="m-0">
-          <div className="bg-white rounded-3xl border shadow-sm overflow-hidden">
+          <div className="bg-card rounded-3xl border shadow-sm overflow-hidden">
             {viewMode === 'LOG' ? (
               <Table>
-                <TableHeader className="bg-slate-50">
+                <TableHeader className="bg-muted">
                   <TableRow>
                     <TableHead className="font-bold">Personnel</TableHead>
                     <TableHead className="font-bold">Status Today</TableHead>
@@ -1058,7 +1102,7 @@ export default function AttendanceMonitoringPage() {
               </Table>
             ) : (
               <>
-              <div className="flex flex-wrap items-center gap-2 p-4 border-b bg-slate-50/50">
+              <div className="flex flex-wrap items-center gap-2 p-4 border-b bg-muted/50">
                 <span className="text-xs font-bold text-muted-foreground mr-1">Viewing:</span>
                 {([
                   ['LAST_5_DAYS', 'Last 5 Days'],
@@ -1087,7 +1131,7 @@ export default function AttendanceMonitoringPage() {
                 )}
                 <div className="w-full sm:w-64">
                   <Select value={historyEmployeeId} onValueChange={setHistoryEmployeeId}>
-                    <SelectTrigger className="h-8 bg-white text-xs">
+                    <SelectTrigger className="h-8 bg-card text-xs">
                       <SelectValue placeholder="All employees" />
                     </SelectTrigger>
                     <SelectContent>
@@ -1112,10 +1156,9 @@ export default function AttendanceMonitoringPage() {
               </div>
               <div className="overflow-x-auto">
               <Table>
-                <TableHeader className="bg-slate-50">
+                <TableHeader className="bg-muted">
                   <TableRow>
-                    <TableHead className="font-bold min-w-[100px]">Employee ID</TableHead>
-                    <TableHead className="font-bold sticky left-0 bg-slate-50 z-10 min-w-[180px]">Full Name</TableHead>
+                    <TableHead className="font-bold sticky left-0 bg-muted z-10 min-w-[180px]">Full Name</TableHead>
                     <TableHead className="font-bold min-w-[140px]">Department</TableHead>
                     {historyMatrix.dates.map((date) => (
                       <TableHead key={date} className="font-bold text-center whitespace-nowrap min-w-[60px]">
@@ -1127,19 +1170,18 @@ export default function AttendanceMonitoringPage() {
                 <TableBody>
                   {historyMatrix.rows.length > 0 ? historyMatrix.rows.map((row) => (
                     <TableRow key={row.employeeId} className="hover:bg-secondary/20 transition-colors">
-                      <TableCell className="font-mono text-xs text-muted-foreground">{row.employeeId}</TableCell>
-                      <TableCell className="font-semibold sticky left-0 bg-white z-10">{row.name}</TableCell>
+                      <TableCell className="font-semibold sticky left-0 bg-card z-10">{row.name}</TableCell>
                       <TableCell>{row.department}</TableCell>
                       {historyMatrix.dates.map((date) => {
                         const status = row.statuses[date];
                         return (
                           <TableCell key={date} className="text-center">
                             {status === 'PRESENT' ? (
-                              <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-emerald-500/10 text-emerald-600 font-bold text-xs">P</span>
+                              <StatusBadge tone="success" label={PRESENT_SYMBOL} className="px-1.5 py-0" />
                             ) : status === 'ABSENT' ? (
-                              <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-rose-500/10 text-rose-600 font-bold text-xs">A</span>
+                              <StatusBadge tone="destructive" label={ABSENT_SYMBOL} className="px-1.5 py-0" />
                             ) : (
-                              <span className="text-slate-300 text-xs">—</span>
+                              <span className="text-muted-foreground text-xs">—</span>
                             )}
                           </TableCell>
                         );
@@ -1147,7 +1189,7 @@ export default function AttendanceMonitoringPage() {
                     </TableRow>
                   )) : (
                     <TableRow>
-                      <TableCell colSpan={Math.max(4, 3 + historyMatrix.dates.length)} className="text-center py-20 text-muted-foreground italic">
+                      <TableCell colSpan={Math.max(3, 2 + historyMatrix.dates.length)} className="text-center py-20 text-muted-foreground italic">
                         No historical logs found for the selected range. Try a different preset or Load History again.
                       </TableCell>
                     </TableRow>
@@ -1168,10 +1210,10 @@ export default function AttendanceMonitoringPage() {
           setImportEmployeeType('ALL');
         }
       }}>
-        <DialogContent className="max-w-md bg-white rounded-3xl p-6 border shadow-lg">
+        <DialogContent className="max-w-md bg-card rounded-3xl p-6 border shadow-lg">
           <DialogHeader>
             <DialogTitle className="text-xl font-bold">Bulk Import Attendance</DialogTitle>
-            <DialogDescription className="text-sm text-slate-500">
+            <DialogDescription className="text-sm text-muted-foreground">
               Select a date range to generate a template, or upload a filled template — only rows/dates that changed will be imported.
             </DialogDescription>
           </DialogHeader>
@@ -1179,7 +1221,7 @@ export default function AttendanceMonitoringPage() {
           <div className="space-y-4 my-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-600">Date From</label>
+                <label className="text-xs font-semibold text-muted-foreground">Date From</label>
                 <Input
                   type="date"
                   value={importDateFrom}
@@ -1188,7 +1230,7 @@ export default function AttendanceMonitoringPage() {
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-600">Date To</label>
+                <label className="text-xs font-semibold text-muted-foreground">Date To</label>
                 <Input
                   type="date"
                   value={importDateTo}
@@ -1198,11 +1240,11 @@ export default function AttendanceMonitoringPage() {
               </div>
             </div>
 
-            <div className="space-y-2 bg-slate-50 p-4 rounded-2xl border border-slate-100">
+            <div className="space-y-2 bg-muted p-4 rounded-2xl border border-border">
               <div className="flex justify-between items-center">
                 <div className="space-y-0.5">
-                  <p className="text-xs font-bold text-slate-800">1. Download Template</p>
-                  <p className="text-[10px] text-slate-500">
+                  <p className="text-xs font-bold text-foreground">1. Download Template</p>
+                  <p className="text-[10px] text-muted-foreground">
                     {templateEmployees.length} {importEmployeeType === 'ALL' ? '' : importEmployeeType.toLowerCase() + ' '}employee(s) and selected dates.
                   </p>
                 </div>
@@ -1214,13 +1256,13 @@ export default function AttendanceMonitoringPage() {
                   disabled={!importDateFrom || !importDateTo}
                   className="h-9 rounded-xl font-semibold text-xs"
                 >
-                  <Download className="mr-1 h-3.5 w-3.5" /> Download
+                  <Download01 className="mr-1 h-3.5 w-3.5" size={14} /> Download
                 </Button>
               </div>
               <div className="space-y-1">
-                <label className="text-[10px] font-semibold text-slate-600">Employee Type</label>
+                <label className="text-[10px] font-semibold text-muted-foreground">Employee Type</label>
                 <Select value={importEmployeeType} onValueChange={(value) => setImportEmployeeType(value as typeof importEmployeeType)}>
-                  <SelectTrigger className="h-9 rounded-xl bg-white text-xs">
+                  <SelectTrigger className="h-9 rounded-xl bg-card text-xs">
                     <SelectValue placeholder="Employee type" />
                   </SelectTrigger>
                   <SelectContent>
@@ -1234,19 +1276,19 @@ export default function AttendanceMonitoringPage() {
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-xs font-bold text-slate-800">2. Upload Template File</label>
+              <label className="text-xs font-bold text-foreground">2. Upload Template File</label>
               <div
-                className="border-2 border-dashed border-slate-200 hover:border-slate-300 transition-colors rounded-2xl p-6 text-center cursor-pointer bg-slate-50/50"
+                className="border-2 border-dashed border-border hover:border-muted-foreground/30 transition-colors rounded-2xl p-6 text-center cursor-pointer bg-muted/50"
                 onClick={() => {
                   const el = document.getElementById('dialog-file-input');
                   el?.click();
                 }}
               >
-                <Upload className="mx-auto h-8 w-8 text-slate-400 mb-2" />
-                <p className="text-xs text-slate-600 font-medium">
+                <Upload01 className="mx-auto h-8 w-8 text-muted-foreground mb-2" size={32} />
+                <p className="text-xs text-foreground font-medium">
                   {importFile ? importFile.name : 'Click to select Excel/CSV file'}
                 </p>
-                <p className="text-[10px] text-slate-400 mt-1">Maximum size 5MB · Only changed rows/dates get imported</p>
+                <p className="text-[10px] text-muted-foreground mt-1">Maximum size 5MB · Only changed rows/dates get imported</p>
                 <input
                   id="dialog-file-input"
                   type="file"
@@ -1275,7 +1317,7 @@ export default function AttendanceMonitoringPage() {
             <Button
               onClick={handleImportUpload}
               disabled={!importFile || employees.length === 0}
-              className="h-10 rounded-xl text-xs font-semibold px-6 bg-slate-900 text-white hover:bg-slate-800"
+              className="h-10 rounded-xl text-xs font-semibold px-6 bg-primary hover:bg-primary/90"
             >
               Upload & Import
             </Button>
@@ -1287,10 +1329,10 @@ export default function AttendanceMonitoringPage() {
         setIsExportDialogOpen(open);
         if (!open) { setExportType(null); setExportDateFrom(''); setExportDateTo(''); }
       }}>
-        <DialogContent className="max-w-md bg-white rounded-3xl p-6 border shadow-lg">
+        <DialogContent className="max-w-md bg-card rounded-3xl p-6 border shadow-lg">
           <DialogHeader>
             <DialogTitle className="text-xl font-bold">Export Attendance History</DialogTitle>
-            <DialogDescription className="text-sm text-slate-500">
+            <DialogDescription className="text-sm text-muted-foreground">
               Choose the period you want to export.
             </DialogDescription>
           </DialogHeader>
@@ -1334,7 +1376,7 @@ export default function AttendanceMonitoringPage() {
             {exportPreset === 'CUSTOM' && (
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
-                  <label className="text-xs font-semibold text-slate-600">Date From</label>
+                  <label className="text-xs font-semibold text-muted-foreground">Date From</label>
                   <Input
                     type="date"
                     value={exportDateFrom}
@@ -1343,7 +1385,7 @@ export default function AttendanceMonitoringPage() {
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-xs font-semibold text-slate-600">Date To</label>
+                  <label className="text-xs font-semibold text-muted-foreground">Date To</label>
                   <Input
                     type="date"
                     value={exportDateTo}
@@ -1356,7 +1398,7 @@ export default function AttendanceMonitoringPage() {
 
             {exportPreset === 'SINGLE_DAY' && (
               <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-600">Date</label>
+                <label className="text-xs font-semibold text-muted-foreground">Date</label>
                 <Input
                   type="date"
                   value={exportDateFrom}
@@ -1367,7 +1409,7 @@ export default function AttendanceMonitoringPage() {
             )}
 
             {(exportPreset === 'LAST_MONTH' || exportPreset === 'LAST_YEAR') && (
-              <p className="text-xs text-slate-500 bg-slate-50 rounded-xl p-3">
+              <p className="text-xs text-muted-foreground bg-muted rounded-xl p-3">
                 {exportPreset === 'LAST_MONTH'
                   ? `Exporting: ${dayjs().subtract(1, 'month').format('MMMM YYYY')}`
                   : `Exporting: ${dayjs().subtract(1, 'year').format('YYYY')}`}
@@ -1386,7 +1428,7 @@ export default function AttendanceMonitoringPage() {
             <Button
               onClick={performHistoryExport}
               disabled={loading}
-              className="h-10 rounded-xl text-xs font-semibold px-6 bg-slate-900 text-white hover:bg-slate-800"
+              className="h-10 rounded-xl text-xs font-semibold px-6 bg-primary hover:bg-primary/90"
             >
               {loading ? 'Exporting...' : 'Export'}
             </Button>
@@ -1420,15 +1462,16 @@ function AttendanceRow({
     <TableRow className="hover:bg-secondary/10 transition-colors">
       <TableCell>
         <div className="flex flex-col">
-          <span className="font-bold text-slate-800">{employee.first_name} {employee.last_name}</span>
+          <span className="font-bold text-foreground">{employee.first_name} {employee.last_name}</span>
           <span className="text-[10px] text-muted-foreground uppercase">{employee.employment_category?.name || 'DAILY'}</span>
         </div>
       </TableCell>
       <TableCell>
         {record ? (
-          <Badge className={record.attendance_status === 'PRESENT' ? 'bg-emerald-500/10 text-emerald-600' : 'bg-rose-500/10 text-rose-600'}>
-            {record.attendance_status}
-          </Badge>
+          <StatusBadge
+            tone={record.attendance_status === 'PRESENT' ? 'success' : 'destructive'}
+            label={record.attendance_status}
+          />
         ) : (
           <Badge variant="outline" className="text-muted-foreground border-dashed">Awaiting</Badge>
         )}
@@ -1442,10 +1485,10 @@ function AttendanceRow({
             value={overtimeHours}
             onChange={(e) => setOvertimeHours(e.target.value === '' ? '' : Number(e.target.value))}
             disabled={!canLogAttendance}
-            className="w-24 h-9 text-xs font-mono rounded-lg border-slate-200"
+            className="w-24 h-9 text-xs font-mono rounded-lg border-border"
           />
           {hasOvertime && (
-            <Badge className="bg-amber-500/10 text-amber-600 text-[10px] whitespace-nowrap">Overtime</Badge>
+            <StatusBadge tone="warning" label="Overtime" className="text-[10px] whitespace-nowrap" />
           )}
         </div>
       </TableCell>
@@ -1456,7 +1499,7 @@ function AttendanceRow({
               type="button"
               size="sm"
               variant="outline"
-              className={`h-9 rounded-xl font-bold text-xs ${record?.attendance_status === 'PRESENT' ? 'bg-emerald-600 text-white' : 'hover:bg-emerald-50 text-emerald-600 border-emerald-100'}`}
+              className={`h-9 rounded-xl font-bold text-xs ${record?.attendance_status === 'PRESENT' ? 'bg-success text-success-foreground border-success' : 'hover:bg-success/10 text-success border-success/20'}`}
               onClick={(e) => { e.preventDefault(); onMark(employee.id, 'PRESENT', overtimeHours || undefined); }}
             >
               Present
@@ -1465,7 +1508,7 @@ function AttendanceRow({
               type="button"
               size="sm"
               variant="outline"
-              className={`h-9 rounded-xl font-bold text-xs ${record?.attendance_status === 'ABSENT' ? 'bg-rose-600 text-white' : 'hover:bg-rose-50 text-rose-600 border-rose-100'}`}
+              className={`h-9 rounded-xl font-bold text-xs ${record?.attendance_status === 'ABSENT' ? 'bg-destructive text-destructive-foreground border-destructive' : 'hover:bg-destructive/10 text-destructive border-destructive/20'}`}
               onClick={(e) => { e.preventDefault(); onMark(employee.id, 'ABSENT'); }}
             >
               Absent

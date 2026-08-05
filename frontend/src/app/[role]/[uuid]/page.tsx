@@ -2,7 +2,20 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Users, FileCheck, AlertCircle, Activity, Clock, ShieldAlert, Bell, FileText, Calendar, ChevronRight, Plus, MapPin } from 'lucide-react';
+import {
+  Users01 as Users,
+  FileCheck01 as FileCheck,
+  AlertCircle,
+  Activity,
+  Clock,
+  Shield01 as ShieldAlert,
+  Bell01 as Bell,
+  File02 as FileText,
+  Calendar,
+  ChevronRight,
+  Plus,
+  MarkerPin01 as MapPin,
+} from '@untitledui/icons';
 import {
   ResponsiveContainer,
   BarChart,
@@ -11,10 +24,8 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip as RechartsTooltip,
-  PieChart,
-  Pie,
-  Cell,
   Legend,
+  LabelList,
 } from 'recharts';
 import { useAuth } from '@/context/auth-context';
 import { getEmployees } from '@/api/employees';
@@ -28,8 +39,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
 import { PermissionGate } from '@/components/auth/permission-gate';
-
-const CHART_COLORS = ['#2563eb', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#84cc16'];
+import { PageHeader } from '@/components/layout/page-header';
+import { StatCard, StatCardTone } from '@/components/ui/stat-card';
+import { StatusBadge } from '@/components/ui/status-badge';
 
 function formatRwfCompact(value: number): string {
   if (!Number.isFinite(value)) return '0';
@@ -150,7 +162,9 @@ export default function DashboardPage() {
           : ((emp as any).department?.name ?? (emp as any).department ?? 'Unassigned');
       counts.set(name, (counts.get(name) ?? 0) + 1);
     }
-    return Array.from(counts.entries()).map(([name, value]) => ({ name, value }));
+    return Array.from(counts.entries())
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
   }, [filteredEmployees, selectedLocationId, canViewAllLocations]);
 
   const pendingApprovalBatches = filteredBatches.filter((b) =>
@@ -164,25 +178,25 @@ export default function DashboardPage() {
     return (
       <div className="space-y-8 max-w-4xl mx-auto py-12">
         <div className="text-center space-y-4">
-          <div className="mx-auto w-24 h-24 bg-amber-50 rounded-full flex items-center justify-center mb-6 border border-amber-100 shadow-inner">
-            <Clock className="h-12 w-12 text-amber-500 animate-pulse" />
+          <div className="mx-auto w-24 h-24 bg-warning/10 rounded-full flex items-center justify-center mb-6 border border-warning/20 shadow-inner">
+            <Clock className="h-12 w-12 text-warning animate-pulse" size={48} />
           </div>
-          <h1 className="text-4xl font-headline font-bold text-slate-900">Registration Pending</h1>
+          <h1 className="text-4xl font-headline font-bold text-foreground">Registration Pending</h1>
           <p className="text-lg text-muted-foreground">Welcome to REG, <span className="text-primary font-bold">{user.name}</span>. Your account is currently in the review queue.</p>
         </div>
-        <Card className="border-2 border-dashed border-amber-200 bg-amber-50/20 shadow-none">
+        <Card className="border-2 border-dashed border-warning/30 bg-warning/5 shadow-none">
           <CardContent className="py-10 px-10 text-center">
             <div className="flex flex-col items-center gap-6">
-              <ShieldAlert className="h-14 w-14 text-amber-400" />
+              <ShieldAlert className="h-14 w-14 text-warning" size={56} />
               <div className="space-y-2">
-                <p className="font-bold text-xl text-slate-800">Identity Verification Required</p>
+                <p className="font-bold text-xl text-foreground">Identity Verification Required</p>
                 <p className="text-muted-foreground max-w-md mx-auto">
                   Administrators must verify your corporate role and assign functional permissions.
                 </p>
               </div>
               <div className="mt-4 flex gap-4">
-                <Button variant="outline" className="h-11 px-8 rounded-xl border-amber-200 hover:bg-amber-50">Support Desk</Button>
-                <Button variant="default" className="h-11 px-8 rounded-xl bg-amber-600 hover:bg-amber-700 shadow-lg shadow-amber-600/20" onClick={() => window.location.reload()}>Refresh Status</Button>
+                <Button variant="outline" className="h-11 px-8 rounded-xl border-warning/30 hover:bg-warning/10">Support Desk</Button>
+                <Button variant="default" className="h-11 px-8 rounded-xl bg-warning hover:bg-warning/90 text-warning-foreground shadow-lg shadow-warning/20" onClick={() => window.location.reload()}>Refresh Status</Button>
               </div>
             </div>
           </CardContent>
@@ -195,21 +209,17 @@ export default function DashboardPage() {
   if (!isManagement) {
     return (
       <div className="space-y-10 max-w-[1800px] mx-auto">
-        <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 border-b pb-8">
-          <div>
-            <div className="flex items-center gap-3 mb-2">
-              <h1 className="text-4xl font-headline font-bold text-slate-900 tracking-tight">Enterprise Console</h1>
-              <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/20 px-3">Authenticated</Badge>
-            </div>
-            <p className="text-muted-foreground text-lg">Welcome back, <span className="font-semibold text-slate-700">{user?.name}</span>. Your operational modules are active below.</p>
-          </div>
-        </div>
+        <PageHeader
+          title="Enterprise Console"
+          description={`Welcome back, ${user?.name}. Your operational modules are active below.`}
+          actions={<StatusBadge tone="success" label="Authenticated" />}
+        />
 
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
           <div className="lg:col-span-3 space-y-8">
             <section>
               <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-[0.2em] mb-6 flex items-center gap-2">
-                <Activity className="h-4 w-4" /> Core Operations
+                <Activity className="h-4 w-4" size={16} /> Core Operations
               </h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <PermissionGate permission="payroll.read">
@@ -217,8 +227,8 @@ export default function DashboardPage() {
                     <div className="h-1.5 bg-primary w-full" />
                     <CardHeader>
                       <div className="flex items-center justify-between mb-2">
-                        <div className="h-12 w-12 rounded-2xl bg-primary/10 flex items-center justify-center text-primary group-hover:bg-primary group-hover:text-white transition-colors duration-300 shadow-sm">
-                          <FileText className="h-6 w-6" />
+                        <div className="h-12 w-12 rounded-2xl bg-primary/10 flex items-center justify-center text-primary group-hover:bg-primary group-hover:text-primary-foreground transition-colors duration-300 shadow-sm">
+                          <FileText className="h-6 w-6" size={24} />
                         </div>
                         <Badge variant="secondary" className="font-bold">PAYROLL</Badge>
                       </div>
@@ -227,9 +237,9 @@ export default function DashboardPage() {
                     </CardHeader>
                     <CardContent className="space-y-4">
                       <Link href={`${basePath}/payroll`} className="w-full">
-                        <Button className="w-full justify-between h-11 bg-slate-900 hover:bg-slate-800 rounded-xl" size="sm">
+                        <Button className="w-full justify-between h-11 bg-accent text-accent-foreground hover:bg-accent/90 rounded-xl" size="sm">
                           <span className="flex items-center gap-2">Access Payroll Module</span>
-                          <ChevronRight className="h-4 w-4 opacity-50" />
+                          <ChevronRight className="h-4 w-4 opacity-50" size={16} />
                         </Button>
                       </Link>
                     </CardContent>
@@ -238,11 +248,11 @@ export default function DashboardPage() {
 
                 <PermissionGate permission="attendance.read">
                   <Card className="border-none shadow-sm hover:shadow-xl transition-all duration-300 overflow-hidden group">
-                    <div className="h-1.5 bg-emerald-500 w-full" />
+                    <div className="h-1.5 bg-success w-full" />
                     <CardHeader>
                       <div className="flex items-center justify-between mb-2">
-                        <div className="h-12 w-12 rounded-2xl bg-emerald-500/10 flex items-center justify-center text-emerald-600 group-hover:bg-emerald-500 group-hover:text-white transition-colors duration-300 shadow-sm">
-                          <Calendar className="h-6 w-6" />
+                        <div className="h-12 w-12 rounded-2xl bg-success/10 flex items-center justify-center text-success group-hover:bg-success group-hover:text-success-foreground transition-colors duration-300 shadow-sm">
+                          <Calendar className="h-6 w-6" size={24} />
                         </div>
                         <Badge variant="secondary" className="font-bold">PRESENCE</Badge>
                       </div>
@@ -251,9 +261,9 @@ export default function DashboardPage() {
                     </CardHeader>
                     <CardContent className="space-y-4">
                       <Link href={`${basePath}/attendance`} className="w-full">
-                        <Button className="w-full justify-between h-11 bg-slate-900 hover:bg-slate-800 rounded-xl" size="sm">
+                        <Button className="w-full justify-between h-11 bg-accent text-accent-foreground hover:bg-accent/90 rounded-xl" size="sm">
                           <span className="flex items-center gap-2">Enter Daily Log</span>
-                          <ChevronRight className="h-4 w-4 opacity-50" />
+                          <ChevronRight className="h-4 w-4 opacity-50" size={16} />
                         </Button>
                       </Link>
                     </CardContent>
@@ -263,13 +273,13 @@ export default function DashboardPage() {
             </section>
           </div>
           <div className="space-y-8">
-             <Card className="border-none shadow-sm bg-slate-900 text-white rounded-3xl overflow-hidden p-6 space-y-6">
+             <Card className="border-none shadow-sm bg-accent text-accent-foreground rounded-3xl overflow-hidden p-6 space-y-6">
                 <div className="flex items-center gap-3">
-                  <Bell className="h-5 w-5 text-primary" />
+                  <Bell className="h-5 w-5 text-primary" size={20} />
                   <h3 className="font-bold tracking-tight">System Alerts</h3>
                 </div>
                 <div className="space-y-4">
-                  <p className="text-sm text-white/60 italic">No critical alerts at this time.</p>
+                  <p className="text-sm text-accent-foreground/60 italic">No critical alerts at this time.</p>
                 </div>
              </Card>
           </div>
@@ -286,75 +296,59 @@ export default function DashboardPage() {
       label: 'Total Personnel',
       value: filteredEmployees.length,
       icon: Users,
-      color: 'text-blue-600',
-      bg: 'bg-blue-50',
+      tone: 'info' as StatCardTone,
     },
     canViewPayroll && {
       label: 'Approved Batches',
       value: filteredBatches.filter((b) => b.status === 'APPROVED').length,
       icon: FileCheck,
-      color: 'text-emerald-600',
-      bg: 'bg-emerald-50',
+      tone: 'success' as StatCardTone,
     },
     canViewPayroll && {
       label: 'Pending Batches',
       value: pendingApprovalBatches.length,
       icon: Clock,
-      color: 'text-amber-600',
-      bg: 'bg-amber-50',
+      tone: 'warning' as StatCardTone,
     },
     canApproveUsers && {
       label: 'Pending Registrations',
       value: pendingUsers.length,
       icon: AlertCircle,
-      color: 'text-rose-600',
-      bg: 'bg-rose-50',
+      tone: 'destructive' as StatCardTone,
     },
-  ].filter(Boolean) as Array<{ label: string; value: number; icon: any; color: string; bg: string }>;
+  ].filter(Boolean) as Array<{ label: string; value: number; icon: any; tone: StatCardTone }>;
 
   return (
     <div className="space-y-8">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-8 rounded-3xl shadow-sm border">
-        <div>
-          <h1 className="text-4xl font-headline font-bold text-slate-900 tracking-tight">Executive Dashboard</h1>
-          <p className="text-muted-foreground text-lg">Group-wide operational overview for REG Management.</p>
-        </div>
-        <div className="flex gap-3">
-          {canViewAllLocations && workingLocations.length > 0 && (
-            <Select value={selectedLocationId} onValueChange={setSelectedLocationId}>
-              <SelectTrigger className="h-12 w-[220px] bg-white">
-                <MapPin className="h-4 w-4 mr-1 text-muted-foreground" />
-                <SelectValue placeholder="All locations" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All working locations</SelectItem>
-                {workingLocations.map((loc: any) => (
-                  <SelectItem key={loc.id} value={loc.id}>{loc.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
-          <Button className="h-12 px-6 rounded-xl shadow-lg shadow-primary/20" onClick={() => router.push(`${basePath}/payroll/new`)}>
-            <Plus className="mr-2 h-4 w-4" /> New Payroll Batch
-          </Button>
-        </div>
-      </div>
+      <PageHeader
+        title="Executive Dashboard"
+        description="Group-wide operational overview for REG Management."
+        actions={
+          <>
+            {canViewAllLocations && workingLocations.length > 0 && (
+              <Select value={selectedLocationId} onValueChange={setSelectedLocationId}>
+                <SelectTrigger className="h-12 w-[220px] bg-card">
+                  <MapPin className="h-4 w-4 mr-1 text-muted-foreground" size={16} />
+                  <SelectValue placeholder="All locations" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All working locations</SelectItem>
+                  {workingLocations.map((loc: any) => (
+                    <SelectItem key={loc.id} value={loc.id}>{loc.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+            <Button className="h-12 px-6 rounded-xl shadow-lg shadow-primary/20" onClick={() => router.push(`${basePath}/payroll/new`)}>
+              <Plus className="mr-2 h-4 w-4" size={16} /> New Payroll Batch
+            </Button>
+          </>
+        }
+      />
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {stats.map((stat, i) => (
-          <Card key={i} className="border-none shadow-sm hover:shadow-md transition-shadow duration-300 overflow-hidden">
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div className={`p-3 rounded-2xl ${stat.bg} ${stat.color}`}>
-                  <stat.icon className="h-6 w-6" />
-                </div>
-              </div>
-              <div className="mt-4">
-                <p className="text-sm font-medium text-muted-foreground uppercase tracking-wider">{stat.label}</p>
-                <p className="text-3xl font-bold mt-1 tracking-tight text-slate-900">{stat.value}</p>
-              </div>
-            </CardContent>
-          </Card>
+          <StatCard key={i} icon={<stat.icon className="h-6 w-6" size={24} />} label={stat.label} value={stat.value} tone={stat.tone} />
         ))}
       </div>
 
@@ -372,7 +366,7 @@ export default function DashboardPage() {
                     : 'Most recent payroll batches for your working location.'}
                 </CardDescription>
               </div>
-              <div className="h-12 w-16 rounded-xl bg-emerald-50 flex items-center justify-center text-emerald-600 font-bold text-sm">
+              <div className="h-12 w-16 rounded-xl bg-success/10 flex items-center justify-center text-success font-bold text-sm">
                 RWF
               </div>
             </CardHeader>
@@ -380,19 +374,19 @@ export default function DashboardPage() {
               {payrollChartData.length > 0 ? (
                 <div className="h-[300px] w-full">
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={payrollChartData}>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                      <XAxis dataKey="name" tick={{ fontSize: 11 }} />
-                      <YAxis tickFormatter={formatRwfCompact} tick={{ fontSize: 11 }} />
-                      <RechartsTooltip formatter={(value) => formatRwfCompact(Number(value))} />
-                      <Legend />
-                      <Bar dataKey="gross" name="Gross" fill="#2563eb" radius={[6, 6, 0, 0]} />
-                      <Bar dataKey="net" name="Net" fill="#10b981" radius={[6, 6, 0, 0]} />
+                    <BarChart data={payrollChartData} barGap={6}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
+                      <XAxis dataKey="name" tick={{ fontSize: 11 }} tickLine={false} axisLine={{ stroke: 'hsl(var(--border))' }} />
+                      <YAxis tickFormatter={formatRwfCompact} tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
+                      <RechartsTooltip cursor={{ fill: 'hsl(var(--muted))' }} formatter={(value) => formatRwfCompact(Number(value))} />
+                      <Legend wrapperStyle={{ fontSize: 12 }} />
+                      <Bar dataKey="gross" name="Gross" fill="hsl(var(--primary))" radius={[6, 6, 0, 0]} maxBarSize={64} />
+                      <Bar dataKey="net" name="Net" fill="hsl(var(--info))" radius={[6, 6, 0, 0]} maxBarSize={64} />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
               ) : (
-                <div className="h-[300px] w-full bg-slate-50 rounded-2xl border border-dashed flex items-center justify-center text-muted-foreground italic">
+                <div className="h-[300px] w-full bg-muted rounded-2xl border border-dashed flex items-center justify-center text-muted-foreground italic">
                   No payroll batches yet.
                 </div>
               )}
@@ -402,35 +396,35 @@ export default function DashboardPage() {
 
         {hasCriticalActionsAccess && (
           <Card className="border-none shadow-sm rounded-3xl overflow-hidden">
-            <CardHeader className="bg-slate-900 text-white pb-6">
+            <CardHeader className="bg-accent text-accent-foreground pb-6">
               <CardTitle className="flex items-center gap-2">
-                <ShieldAlert className="h-5 w-5 text-amber-400" /> Critical Actions
+                <ShieldAlert className="h-5 w-5 text-warning" size={20} /> Critical Actions
               </CardTitle>
             </CardHeader>
             <CardContent className="pt-6">
               <div className="space-y-4">
                 {canApproveUsers && (
-                  <div className="p-4 rounded-2xl bg-amber-50 border border-amber-100 flex items-start gap-3">
-                    <AlertCircle className="h-5 w-5 text-amber-600 mt-0.5" />
+                  <div className="p-4 rounded-2xl bg-warning/10 border border-warning/20 flex items-start gap-3">
+                    <AlertCircle className="h-5 w-5 text-warning mt-0.5" size={20} />
                     <div className="flex-1">
-                      <p className="text-sm font-bold text-slate-900">Personnel Verification</p>
-                      <p className="text-xs text-slate-600 mt-1">
+                      <p className="text-sm font-bold text-foreground">Personnel Verification</p>
+                      <p className="text-xs text-muted-foreground mt-1">
                         {pendingUsers.length > 0
                           ? `${pendingUsers.length} registration${pendingUsers.length === 1 ? '' : 's'} awaiting approval.`
                           : 'No pending registrations right now.'}
                       </p>
                       {pendingUsers.length > 0 && (
-                        <Button variant="link" className="p-0 h-auto text-amber-600 font-bold text-xs mt-2" onClick={() => router.push(`${basePath}/users`)}>Review Queue</Button>
+                        <Button variant="link" className="p-0 h-auto text-warning font-bold text-xs mt-2" onClick={() => router.push(`${basePath}/users`)}>Review Queue</Button>
                       )}
                     </div>
                   </div>
                 )}
                 {canApprovePayroll && (
-                  <div className="p-4 rounded-2xl bg-blue-50 border border-blue-100 flex items-start gap-3">
-                    <Clock className="h-5 w-5 text-blue-600 mt-0.5" />
+                  <div className="p-4 rounded-2xl bg-info/10 border border-info/20 flex items-start gap-3">
+                    <Clock className="h-5 w-5 text-info mt-0.5" size={20} />
                     <div className="flex-1">
-                      <p className="text-sm font-bold text-slate-900">Batch Approval</p>
-                      <p className="text-xs text-slate-600 mt-1">
+                      <p className="text-sm font-bold text-foreground">Batch Approval</p>
+                      <p className="text-xs text-muted-foreground mt-1">
                         {pendingApprovalBatches.length > 0
                           ? `${pendingApprovalBatches.length} batch${pendingApprovalBatches.length === 1 ? '' : 'es'} awaiting your approval.`
                           : rejectedBatches.length > 0
@@ -438,7 +432,7 @@ export default function DashboardPage() {
                             : 'No batches awaiting approval.'}
                       </p>
                       {(pendingApprovalBatches.length > 0 || rejectedBatches.length > 0) && (
-                        <Button variant="link" className="p-0 h-auto text-blue-600 font-bold text-xs mt-2" onClick={() => router.push(`${basePath}/payroll`)}>Open Batches</Button>
+                        <Button variant="link" className="p-0 h-auto text-info font-bold text-xs mt-2" onClick={() => router.push(`${basePath}/payroll`)}>Open Batches</Button>
                       )}
                     </div>
                   </div>
@@ -453,7 +447,7 @@ export default function DashboardPage() {
         <Card className="border-none shadow-sm rounded-3xl">
           <CardHeader>
             <CardTitle className="text-xl font-bold flex items-center gap-2">
-              <MapPin className="h-5 w-5 text-primary" />
+              <MapPin className="h-5 w-5 text-primary" size={20} />
               {selectedLocationId === 'all'
                 ? 'Personnel by Working Location'
                 : `Personnel by Department · ${workingLocations.find((l) => l.id === selectedLocationId)?.name ?? ''}`}
@@ -461,25 +455,29 @@ export default function DashboardPage() {
             <CardDescription>Only visible to roles with cross-branch visibility (employees.read_all / SUPER_ADMIN).</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="h-[300px] w-full">
+            <div style={{ height: Math.max(280, locationBreakdown.length * 42) }} className="w-full">
               <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={locationBreakdown}
-                    dataKey="value"
-                    nameKey="name"
-                    cx="50%"
-                    cy="50%"
-                    outerRadius={100}
-                    label={(entry: any) => `${entry.name}: ${entry.value}`}
-                  >
-                    {locationBreakdown.map((entry, index) => (
-                      <Cell key={entry.name} fill={CHART_COLORS[index % CHART_COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <RechartsTooltip />
-                  <Legend />
-                </PieChart>
+                <BarChart
+                  data={locationBreakdown}
+                  layout="vertical"
+                  margin={{ top: 4, right: 32, bottom: 4, left: 4 }}
+                  barCategoryGap={10}
+                >
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
+                  <YAxis
+                    type="category"
+                    dataKey="name"
+                    width={160}
+                    tick={{ fontSize: 12 }}
+                    tickLine={false}
+                    axisLine={false}
+                  />
+                  <RechartsTooltip cursor={{ fill: 'hsl(var(--muted))' }} formatter={(value) => [value, 'Personnel']} />
+                  <Bar dataKey="value" name="Personnel" fill="hsl(var(--primary))" radius={[0, 4, 4, 0]} maxBarSize={28}>
+                    <LabelList dataKey="value" position="right" style={{ fontSize: 12, fontWeight: 600, fill: 'hsl(var(--foreground))' }} />
+                  </Bar>
+                </BarChart>
               </ResponsiveContainer>
             </div>
           </CardContent>

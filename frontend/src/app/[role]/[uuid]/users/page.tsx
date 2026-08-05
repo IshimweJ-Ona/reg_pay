@@ -7,11 +7,19 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { 
-  Search, MoreVertical,
-  Ban, UserPlus, Shield, Edit, Trash2, Power, Image as ImageIcon, Upload, X,
-  CheckCircle2, XCircle, Clock
-} from 'lucide-react';
+import {
+  SearchMd, DotsVertical,
+  SlashCircle01 as Ban, UserPlus01 as UserPlus, Shield01 as Shield, Edit05 as Edit, Power01 as Power,
+  Image03 as ImageIcon, Upload01 as Upload, XClose as X,
+  CheckCircle, XCircle, Clock
+} from '@untitledui/icons';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -61,6 +69,8 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { getAvatarUrl, cn } from '@/lib/utils';
 import { PermissionGate } from '@/components/auth/permission-gate';
 import { ProtectedRoute } from '@/components/auth/protected-route';
+import { PageHeader } from '@/components/layout/page-header';
+import { StatusBadge } from '@/components/ui/status-badge';
 
 function mapApiUser(apiUser: any): User {
   const role = apiUser.roles?.[0]?.name ?? 'USER';
@@ -382,30 +392,30 @@ function UsersManagementContent() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-headline font-bold">Personnel Infrastructure</h1>
-          <p className="text-muted-foreground">Manage corporate identities and role-based access.</p>
-        </div>
-        <div className="flex gap-2">
+      <PageHeader
+        title="Personnel Infrastructure"
+        description="Manage corporate identities and role-based access."
+        actions={
+          <>
             <PermissionGate permission="users.update">
                 <Button variant="outline" className="h-11 border-dashed" onClick={() => setIsBulkUploadOpen(true)}>
-                    <ImageIcon className="mr-2 h-4 w-4" /> Bulk Avatars
+                    <ImageIcon className="mr-2 h-4 w-4" size={16} /> Bulk Avatars
                 </Button>
             </PermissionGate>
             <PermissionGate permission="users.create">
                 <Button className="h-11 px-6 shadow-lg shadow-primary/20">
-                    <UserPlus className="mr-2 h-4 w-4" /> Create User
+                    <UserPlus className="mr-2 h-4 w-4" size={16} /> Create User
                 </Button>
             </PermissionGate>
-        </div>
-      </div>
+          </>
+        }
+      />
 
-      <div className="flex items-center gap-4 bg-white p-4 rounded-xl shadow-sm border">
+      <div className="flex items-center gap-4 bg-card p-4 rounded-xl shadow-sm border border-border">
         <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input 
-            placeholder="Search users by name or email..." 
+          <SearchMd className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" size={16} />
+          <Input
+            placeholder="Search users by name or email..."
             className="pl-10 h-11 border-none bg-secondary/30"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
@@ -413,7 +423,7 @@ function UsersManagementContent() {
         </div>
       </div>
 
-      <div className="bg-white rounded-xl border shadow-sm overflow-hidden overflow-x-auto">
+      <div className="bg-card rounded-xl border border-border shadow-sm overflow-hidden overflow-x-auto">
         <Table>
           <TableHeader className="bg-secondary/50">
             <TableRow>
@@ -448,24 +458,29 @@ function UsersManagementContent() {
                   <span className="text-sm font-medium">{user.permissions.length} permissions</span>
                 </TableCell>
                 <TableCell>
-                    <Badge variant={user.status === 'APPROVED' ? 'default' : user.status === 'PENDING' ? 'secondary' : 'destructive'} className={user.status === 'APPROVED' ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20' : ''}>
-                        {user.status}
-                    </Badge>
+                    <StatusBadge
+                      label={user.status}
+                      tone={
+                        user.status === 'APPROVED' ? 'success'
+                        : user.status === 'PENDING' ? 'warning'
+                        : 'destructive'
+                      }
+                    />
                 </TableCell>
                 <TableCell>
                   <PermissionGate permission="users.update">
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon"><MoreVertical className="h-4 w-4" /></Button>
+                        <Button variant="ghost" size="icon"><DotsVertical className="h-4 w-4" size={16} /></Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end" className="w-56">
                         <DropdownMenuItem onClick={() => openUserSheet(user)}>
-                          <Edit className="mr-2 h-4 w-4 text-primary" /> Edit user
+                          <Edit className="mr-2 h-4 w-4 text-primary" size={16} /> Edit user
                         </DropdownMenuItem>
                         {user.status === 'PENDING' && (
                           <PermissionGate permission="users.approve">
-                            <DropdownMenuItem onClick={() => openUserSheet(user)} className="text-emerald-600">
-                              <CheckCircle2 className="mr-2 h-4 w-4" /> Review &amp; approve
+                            <DropdownMenuItem onClick={() => openUserSheet(user)} className="text-success">
+                              <CheckCircle className="mr-2 h-4 w-4" size={16} /> Review &amp; approve
                             </DropdownMenuItem>
                           </PermissionGate>
                         )}
@@ -475,7 +490,7 @@ function UsersManagementContent() {
                             className="text-destructive" 
                             onClick={() => { setUserToDelete(user.id); setDeleteConfirmOpen(true); }}
                           >
-                            <Trash2 className="mr-2 h-4 w-4" /> Remove user
+                            <Ban className="mr-2 h-4 w-4" size={16} /> Remove user
                           </DropdownMenuItem>
                         </PermissionGate>
                       </DropdownMenuContent>
@@ -514,13 +529,13 @@ function UsersManagementContent() {
 
               {selectedUser.status === 'PENDING' ? (
                 <PermissionGate permission="users.approve" fallback={
-                  <p className="text-sm text-muted-foreground italic p-4 bg-secondary/20 rounded-xl border">
+                  <p className="text-sm text-muted-foreground italic p-4 bg-secondary/20 rounded-xl border border-border">
                     This account is awaiting approval. You don't have permission to approve or reject registrations.
                   </p>
                 }>
-                  <div className="space-y-4 p-4 rounded-xl border-2 border-amber-300 bg-amber-50/50">
-                    <div className="flex items-center gap-2 text-amber-700">
-                      <Clock className="h-4 w-4" />
+                  <div className="space-y-4 p-4 rounded-xl border-2 border-warning/30 bg-warning/5">
+                    <div className="flex items-center gap-2 text-warning">
+                      <Clock className="h-4 w-4" size={16} />
                       <span className="text-sm font-bold">Awaiting approval</span>
                     </div>
                     <p className="text-xs text-muted-foreground">
@@ -531,32 +546,40 @@ function UsersManagementContent() {
                       {canReadAllBranches && (
                         <div className="space-y-1.5">
                           <Label className="text-xs font-bold">Branch</Label>
-                          <select
-                            className="w-full h-9 rounded-lg border bg-white px-2 text-sm"
-                            value={approveWorkingLocationId}
-                            onChange={(e) => { setApproveWorkingLocationId(e.target.value); setApproveDepartmentId(''); }}
+                          <Select
+                            value={approveWorkingLocationId || 'none'}
+                            onValueChange={(value) => { setApproveWorkingLocationId(value === 'none' ? '' : value); setApproveDepartmentId(''); }}
                           >
-                            <option value="">Select branch</option>
-                            {locations.map((l: any) => (
-                              <option key={l.uuid ?? l.id} value={l.uuid ?? l.id}>{l.name}</option>
-                            ))}
-                          </select>
+                            <SelectTrigger className="h-9 bg-card text-sm">
+                              <SelectValue placeholder="Select branch" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="none">Select branch</SelectItem>
+                              {locations.map((l: any) => (
+                                <SelectItem key={l.uuid ?? l.id} value={l.uuid ?? l.id}>{l.name}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
                         </div>
                       )}
                       <div className="space-y-1.5">
                         <Label className="text-xs font-bold">Department (optional)</Label>
-                        <select
-                          className="w-full h-9 rounded-lg border bg-white px-2 text-sm"
-                          value={approveDepartmentId}
-                          onChange={(e) => setApproveDepartmentId(e.target.value)}
+                        <Select
+                          value={approveDepartmentId || 'none'}
+                          onValueChange={(value) => setApproveDepartmentId(value === 'none' ? '' : value)}
                         >
-                          <option value="">No department</option>
-                          {departments
-                            .filter((d: any) => !approveWorkingLocationId || String(d.working_location_id) === String(approveWorkingLocationId) || d.working_location?.uuid === approveWorkingLocationId)
-                            .map((d: any) => (
-                              <option key={d.uuid ?? d.id} value={d.uuid ?? d.id}>{d.name}</option>
-                            ))}
-                        </select>
+                          <SelectTrigger className="h-9 bg-card text-sm">
+                            <SelectValue placeholder="No department" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">No department</SelectItem>
+                            {departments
+                              .filter((d: any) => !approveWorkingLocationId || String(d.working_location_id) === String(approveWorkingLocationId) || d.working_location?.uuid === approveWorkingLocationId)
+                              .map((d: any) => (
+                                <SelectItem key={d.uuid ?? d.id} value={d.uuid ?? d.id}>{d.name}</SelectItem>
+                              ))}
+                          </SelectContent>
+                        </Select>
                       </div>
                     </div>
 
@@ -564,9 +587,10 @@ function UsersManagementContent() {
                       <Label className="text-xs font-bold">Assign role(s)</Label>
                       <div className="grid grid-cols-2 gap-2">
                         {roles.map((role: any) => (
-                          <label key={role.uuid ?? role.id} className="flex items-center gap-2 text-xs bg-white rounded-lg border px-2 py-1.5 cursor-pointer">
+                          <label key={role.uuid ?? role.id} className="flex items-center gap-2 text-xs bg-card rounded-lg border border-border px-2 py-1.5 cursor-pointer">
                             <input
                               type="checkbox"
+                              className="accent-primary h-3.5 w-3.5"
                               checked={approveRoleIds.includes(role.uuid ?? role.id)}
                               onChange={(e) => {
                                 const id = role.uuid ?? role.id;
@@ -585,25 +609,25 @@ function UsersManagementContent() {
 
                     <div className="flex gap-2 pt-2">
                       <Button
-                        className="flex-1 bg-emerald-600 hover:bg-emerald-700"
+                        className="flex-1 bg-success text-success-foreground hover:bg-success/90"
                         disabled={isApproving}
                         onClick={() => handleApproveUser(selectedUser.id)}
                       >
-                        <CheckCircle2 className="mr-2 h-4 w-4" /> {isApproving ? 'Approving...' : 'Approve account'}
+                        <CheckCircle className="mr-2 h-4 w-4" size={16} /> {isApproving ? 'Approving...' : 'Approve account'}
                       </Button>
                       <Button
                         variant="outline"
                         className="flex-1 text-destructive border-destructive/20 hover:bg-destructive/5"
                         onClick={() => setRejectConfirmOpen(true)}
                       >
-                        <XCircle className="mr-2 h-4 w-4" /> Reject
+                        <XCircle className="mr-2 h-4 w-4" size={16} /> Reject
                       </Button>
                     </div>
                   </div>
                 </PermissionGate>
               ) : (
               <>
-              <div className="space-y-4 rounded-xl border bg-slate-50 p-4">
+              <div className="space-y-4 rounded-xl border border-border bg-secondary/30 p-4">
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <Label className="text-base font-bold">{canReadAllBranches ? 'Branch & Department' : 'Department'}</Label>
@@ -618,36 +642,44 @@ function UsersManagementContent() {
                     {canReadAllBranches ? (
                       <div className="space-y-1.5">
                         <Label className="text-xs font-bold">Branch</Label>
-                        <select
-                          className="w-full h-9 rounded-lg border bg-white px-2 text-sm"
-                          value={editWorkingLocationId}
-                          onChange={(e) => {
-                            setEditWorkingLocationId(e.target.value);
+                        <Select
+                          value={editWorkingLocationId || 'none'}
+                          onValueChange={(value) => {
+                            setEditWorkingLocationId(value === 'none' ? '' : value);
                             setEditDepartmentId('');
                           }}
                         >
-                          <option value="">Select branch</option>
-                          {locations.map((location: any) => (
-                            <option key={location.uuid ?? location.id} value={location.uuid ?? location.id}>{location.name}</option>
-                          ))}
-                        </select>
+                          <SelectTrigger className="h-9 bg-card text-sm">
+                            <SelectValue placeholder="Select branch" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">Select branch</SelectItem>
+                            {locations.map((location: any) => (
+                              <SelectItem key={location.uuid ?? location.id} value={location.uuid ?? location.id}>{location.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                       </div>
                     ) : null}
 
                     <div className="space-y-1.5">
                       <Label className="text-xs font-bold">Department</Label>
-                      <select
-                        className="w-full h-9 rounded-lg border bg-white px-2 text-sm"
-                        value={editDepartmentId}
-                        onChange={(e) => setEditDepartmentId(e.target.value)}
+                      <Select
+                        value={editDepartmentId || 'none'}
+                        onValueChange={(value) => setEditDepartmentId(value === 'none' ? '' : value)}
                       >
-                        <option value="">No department</option>
-                        {departments
-                          .filter((department: any) => departmentBelongsToLocation(department, editWorkingLocationId || selectedUser.location_id || ''))
-                          .map((department: any) => (
-                            <option key={department.uuid ?? department.id} value={department.uuid ?? department.id}>{department.name}</option>
-                          ))}
-                      </select>
+                        <SelectTrigger className="h-9 bg-card text-sm">
+                          <SelectValue placeholder="No department" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">No department</SelectItem>
+                          {departments
+                            .filter((department: any) => departmentBelongsToLocation(department, editWorkingLocationId || selectedUser.location_id || ''))
+                            .map((department: any) => (
+                              <SelectItem key={department.uuid ?? department.id} value={department.uuid ?? department.id}>{department.name}</SelectItem>
+                            ))}
+                        </SelectContent>
+                      </Select>
                     </div>
                     <div className="sm:col-span-2 flex justify-end">
                       <Button
@@ -710,7 +742,7 @@ function UsersManagementContent() {
                           });
                         }}
                       >
-                        <Shield className={cn("mr-2 h-3.5 w-3.5", isAssigned ? "text-white" : "text-muted-foreground")} />
+                        <Shield className={cn("mr-2 h-3.5 w-3.5", isAssigned ? "text-primary-foreground" : "text-muted-foreground")} size={14} />
                         {role.name.replace('_', ' ')}
                       </Button>
                     );
@@ -724,7 +756,7 @@ function UsersManagementContent() {
                     <Label className="text-base font-bold">Permission Overrides</Label>
                     <span className="text-[10px] text-muted-foreground uppercase tracking-widest font-bold">Per-user exceptions to their role</span>
                   </div>
-                  <ScrollArea className="h-[250px] border rounded-xl p-4 bg-slate-50">
+                  <ScrollArea className="h-[250px] border border-border rounded-xl p-4 bg-secondary/30">
                     <div className="space-y-4">
                       {allPermissions.map((perm) => {
                         const override = selectedUser.permission_overrides?.find(o => o.permission_key === perm.key);
@@ -780,12 +812,12 @@ function UsersManagementContent() {
                   <span className="text-xs text-muted-foreground">Manage user accessibility and sessions.</span>
                 </div>
                 {selectedUser.status === 'SUSPENDED' ? (
-                  <Button variant="outline" className="text-emerald-600 border-emerald-200 bg-emerald-50 hover:bg-emerald-100 font-bold" onClick={() => reactivateUser(selectedUser.id).then(() => loadData())}>
-                    <Power className="mr-2 h-4 w-4" /> Reactive Account
+                  <Button variant="outline" className="text-success border-success/20 bg-success/5 hover:bg-success/10 font-bold" onClick={() => reactivateUser(selectedUser.id).then(() => loadData())}>
+                    <Power className="mr-2 h-4 w-4" size={16} /> Reactive Account
                   </Button>
                 ) : (
                   <Button variant="outline" className="text-destructive border-destructive/20 hover:bg-destructive/5 font-bold" onClick={() => handleSuspendUser(selectedUser.id)}>
-                    <Ban className="mr-2 h-4 w-4" /> Suspend Account
+                    <Ban className="mr-2 h-4 w-4" size={16} /> Suspend Account
                   </Button>
                 )}
               </div>
@@ -810,38 +842,38 @@ function UsersManagementContent() {
                 </DialogDescription>
             </DialogHeader>
             <div className="py-6 space-y-4">
-                <div 
-                    className="border-2 border-dashed rounded-2xl p-10 flex flex-col items-center justify-center gap-4 bg-slate-50 hover:bg-slate-100 transition-colors cursor-pointer"
+                <div
+                    className="border-2 border-dashed border-border rounded-2xl p-10 flex flex-col items-center justify-center gap-4 bg-secondary/30 hover:bg-secondary/50 transition-colors cursor-pointer"
                     onClick={() => fileInputRef.current?.click()}
                 >
                     <div className="h-16 w-16 rounded-full bg-primary/10 flex items-center justify-center text-primary">
-                        <Upload className="h-8 w-8" />
+                        <Upload className="h-8 w-8" size={32} />
                     </div>
                     <div className="text-center">
-                        <p className="font-bold text-slate-900">Click to select files</p>
+                        <p className="font-bold text-foreground">Click to select files</p>
                         <p className="text-xs text-muted-foreground mt-1">PNG or JPEG up to 2MB each</p>
                     </div>
-                    <input 
-                        type="file" 
-                        multiple 
-                        accept="image/*" 
-                        className="hidden" 
+                    <input
+                        type="file"
+                        multiple
+                        accept="image/*"
+                        className="hidden"
                         ref={fileInputRef}
                         onChange={(e) => setUploadingFiles(Array.from(e.target.files || []))}
                     />
                 </div>
 
                 {uploadingFiles.length > 0 && (
-                    <ScrollArea className="max-h-48 border rounded-xl p-2 bg-white">
+                    <ScrollArea className="max-h-48 border border-border rounded-xl p-2 bg-card">
                         <div className="space-y-2">
                             {uploadingFiles.map((f, i) => (
-                                <div key={i} className="flex items-center justify-between p-2 rounded-lg bg-slate-50 text-xs">
+                                <div key={i} className="flex items-center justify-between p-2 rounded-lg bg-secondary/30 text-xs">
                                     <div className="flex items-center gap-2">
-                                        <ImageIcon className="h-3 w-3 text-slate-400" />
+                                        <ImageIcon className="h-3 w-3 text-muted-foreground" size={12} />
                                         <span className="truncate max-w-[200px]">{f.name}</span>
                                     </div>
                                     <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setUploadingFiles(prev => prev.filter((_, idx) => idx !== i))}>
-                                        <X className="h-3 w-3" />
+                                        <X className="h-3 w-3" size={12} />
                                     </Button>
                                 </div>
                             ))}

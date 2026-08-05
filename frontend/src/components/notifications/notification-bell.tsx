@@ -2,7 +2,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from 'react';
-import { Bell, Check, AlertCircle } from 'lucide-react';
+import { Bell01, Check } from '@untitledui/icons';
 import { useRouter, useParams } from 'next/navigation';
 import {
   DropdownMenu, DropdownMenuContent,
@@ -18,6 +18,7 @@ import { useToast } from '@/hooks/use-toast';
 import { userFriendlyError } from '@/lib/error-message';
 import { useNotifications } from '@/hooks/use-notifications';
 import { useAuth } from '@/context/auth-context';
+import { getNotificationVisual } from '@/lib/notification-visual';
 
 export function NotificationBell({ type }: { type: 'admin' | 'user' }) {
   const { accessToken } = useAuth();
@@ -212,10 +213,10 @@ export function NotificationBell({ type }: { type: 'admin' | 'user' }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" className="relative h-10 w-10 rounded-xl bg-white border shadow-sm hover:bg-secondary/50 transition-colors">
-          <Bell className="h-5 w-5 text-muted-foreground" />
+        <Button variant="ghost" size="icon" className="relative h-10 w-10 rounded-xl bg-card border border-border shadow-sm hover:bg-secondary/50 transition-colors">
+          <Bell01 className="h-5 w-5 text-black" size={20} />
           {unreadCount > 0 && (
-            <span className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-600 text-[10px] font-bold text-white border-2 border-white shadow-sm">
+            <span className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-destructive text-[10px] font-bold text-destructive-foreground border-2 border-card shadow-sm">
               {unreadCount}
             </span>
           )}
@@ -242,52 +243,52 @@ export function NotificationBell({ type }: { type: 'admin' | 'user' }) {
         <DropdownMenuSeparator className="m-0" />
         <ScrollArea className="h-[400px]">
           <div className="flex flex-col">
-            {allNotifications.length > 0 ? allNotifications.map((n) => (
-              <div key={n.uuid} className={`p-4 border-b last:border-0 relative group transition-colors ${n.is_read ? 'bg-white opacity-80' : 'bg-blue-50/30'}`}>
+            {allNotifications.length > 0 ? allNotifications.map((n) => {
+              const visual = getNotificationVisual(n.type);
+              return (
+              <div key={n.uuid} className={`p-4 border-b border-border last:border-0 relative group transition-colors ${n.is_read ? 'bg-card opacity-80' : 'bg-info/5'}`}>
                 <div className="flex gap-4">
-                  <div className={`h-10 w-10 shrink-0 rounded-full flex items-center justify-center ${
-                    n.type === 'REGISTRATION_REQUEST' ? 'bg-rose-100 text-rose-600' : n.type === 'TRANSFER_REQUEST' ? 'bg-amber-100 text-amber-600' : 'bg-blue-100 text-blue-600'
-                  }`}>
-                    {n.type === 'REGISTRATION_REQUEST' ? <AlertCircle className="h-4 w-4" /> : n.type === 'TRANSFER_REQUEST' ? <AlertCircle className="h-4 w-4" /> : <Bell className="h-4 w-4" />}
+                  <div className={`h-10 w-10 shrink-0 rounded-full flex items-center justify-center ${visual.iconClasses}`}>
+                    {visual.icon}
                   </div>
                   <div className="flex flex-col gap-1 min-w-0 flex-1">
                     <div className="flex justify-between items-start">
                       <p className="font-bold text-xs truncate group-hover:text-primary transition-colors">{n.title}</p>
-                      {!n.is_read && <div className="h-2 w-2 rounded-full bg-red-600" />}
+                      {!n.is_read && <div className="h-2 w-2 rounded-full bg-destructive" />}
                     </div>
                     <p className="text-[11px] text-muted-foreground line-clamp-2 leading-relaxed">{n.message}</p>
-                    
+
                     {n.type === 'REGISTRATION_REQUEST' && n.user && (
-                      <div className="mt-2 p-2 bg-white/50 rounded-lg border border-slate-100 text-[10px] space-y-1">
+                      <div className="mt-2 p-2 bg-muted/50 rounded-lg border border-border text-[10px] space-y-1">
                         <div className="flex justify-between font-medium">
-                          <span className="text-slate-500">Name:</span>
+                          <span className="text-muted-foreground">Name:</span>
                           <span>{n.user.first_name} {n.user.last_name}</span>
                         </div>
                         <div className="flex justify-between font-medium">
-                          <span className="text-slate-500">Email:</span>
+                          <span className="text-muted-foreground">Email:</span>
                           <span>{n.user.email}</span>
                         </div>
                         <div className="flex justify-between font-medium">
-                          <span className="text-slate-500">Phone:</span>
+                          <span className="text-muted-foreground">Phone:</span>
                           <span>{n.user.phone_number}</span>
                         </div>
                         {n.user.working_location && (
                           <div className="flex justify-between font-medium">
-                            <span className="text-slate-500">Location:</span>
+                            <span className="text-muted-foreground">Location:</span>
                             <span>{n.user.working_location.name}</span>
                           </div>
                         )}
                         {n.user.department && (
                           <div className="flex justify-between font-medium">
-                            <span className="text-slate-500">Dept:</span>
+                            <span className="text-muted-foreground">Dept:</span>
                             <span>{n.user.department.name}</span>
                           </div>
                         )}
-                        
+
                         {!n.is_read && n.reference_id && (
-                          <div className="mt-3 flex gap-2 pt-2 border-t border-slate-100">
-                            <Button size="sm" className="h-7 flex-1 px-2 text-[10px] bg-emerald-600 hover:bg-emerald-700" onClick={() => handleApproveRegistration(n.reference_id!)}>
-                              <Check className="h-3 w-3 mr-1" /> Approve
+                          <div className="mt-3 flex gap-2 pt-2 border-t border-border">
+                            <Button size="sm" className="h-7 flex-1 px-2 text-[10px] bg-success hover:bg-success/90 text-success-foreground" onClick={() => handleApproveRegistration(n.reference_id!)}>
+                              <Check className="h-3 w-3 mr-1" size={12} /> Approve
                             </Button>
                             <Button size="sm" variant="outline" className="h-7 flex-1 px-2 text-[10px] text-destructive hover:bg-destructive/5" onClick={() => handleDenyRegistration(n.uuid, n.reference_id!)}>
                               Deny
@@ -299,26 +300,26 @@ export function NotificationBell({ type }: { type: 'admin' | 'user' }) {
 
                     {n.type === 'PAYROLL_APPROVAL_REQUEST' && !n.is_read && n.reference_id && (
                       <div className="mt-2 flex gap-2">
-                        <Button size="sm" className="h-7 flex-1 px-2 text-[10px] bg-emerald-600 hover:bg-emerald-700" onClick={() => handleApprovePayroll(n.uuid, n.reference_id!)}>
-                          <Check className="h-3 w-3 mr-1" /> Approve
+                        <Button size="sm" className="h-7 flex-1 px-2 text-[10px] bg-success hover:bg-success/90 text-success-foreground" onClick={() => handleApprovePayroll(n.uuid, n.reference_id!)}>
+                          <Check className="h-3 w-3 mr-1" size={12} /> Approve
                         </Button>
                         <Button size="sm" variant="outline" className="h-7 flex-1 px-2 text-[10px] text-destructive hover:bg-destructive/5" onClick={() => handleRejectPayroll(n.uuid, n.reference_id!)}>
                           Reject
                         </Button>
                       </div>
                     )}
-                    
+
                     {n.type === 'TRANSFER_REQUEST' && !n.is_read && n.reference_id && (
                       <div className="mt-2 flex gap-2">
-                        <Button size="sm" className="h-7 flex-1 px-2 text-[10px] bg-emerald-600 hover:bg-emerald-700" onClick={() => handleApproveTransfer(n.uuid, n.reference_id!, n.title)}>
-                          <Check className="h-3 w-3 mr-1" /> Approve
+                        <Button size="sm" className="h-7 flex-1 px-2 text-[10px] bg-success hover:bg-success/90 text-success-foreground" onClick={() => handleApproveTransfer(n.uuid, n.reference_id!, n.title)}>
+                          <Check className="h-3 w-3 mr-1" size={12} /> Approve
                         </Button>
                         <Button size="sm" variant="outline" className="h-7 flex-1 px-2 text-[10px] text-destructive hover:bg-destructive/5" onClick={() => handleDenyTransfer(n.uuid, n.reference_id!, n.title)}>
                           Reject
                         </Button>
                       </div>
                     )}
-                    
+
                     <div className="flex items-center justify-between mt-1">
                       <span className="text-[9px] font-bold text-muted-foreground/60 uppercase tracking-widest">
                         {new Date(n.created_at).toLocaleString()}
@@ -342,7 +343,8 @@ export function NotificationBell({ type }: { type: 'admin' | 'user' }) {
                   </div>
                 </div>
               </div>
-            )) : (
+              );
+            }) : (
               <div className="p-12 text-center text-muted-foreground text-xs italic">
                 No new communications.
               </div>

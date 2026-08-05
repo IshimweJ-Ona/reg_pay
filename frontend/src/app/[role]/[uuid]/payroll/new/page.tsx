@@ -7,14 +7,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Badge } from '@/components/ui/badge';
-import { 
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue 
+import { StatusBadge } from '@/components/ui/status-badge';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue
 } from "@/components/ui/select";
-import { 
-  ArrowLeft, Save, Calculator, Users, 
-  Search, Filter, ShieldCheck, Paperclip, X
-} from 'lucide-react';
+import {
+  ArrowLeft, Save01, Calculator, Users01,
+  SearchMd, FilterFunnel01, ShieldTick, Paperclip, X
+} from '@untitledui/icons';
 import { useRouter, useParams } from 'next/navigation';
 import { useToast } from '@/hooks/use-toast';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -24,6 +24,7 @@ import { getDepartments, getWorkingLocations } from '@/api/working_locations';
 import { useAuth } from '@/context/auth-context';
 import { userFriendlyError } from '@/lib/error-message';
 import { asPayrollNumber, formatRwf } from '@/lib/payroll-display';
+import { PageHeader } from '@/components/layout/page-header';
 
 const getEmployeeLocation = (employee: any) =>
   employee.working_location ?? employee.working_locations ?? null;
@@ -265,7 +266,7 @@ export default function NewPayrollBatchPage() {
     return (
       <div className="max-w-3xl mx-auto space-y-4 py-12">
         <Button variant="ghost" onClick={() => router.push(`${basePath}/payroll`)}>
-          <ArrowLeft className="mr-2 h-4 w-4" /> Back to payroll
+          <ArrowLeft className="mr-2 h-4 w-4" size={16} /> Back to payroll
         </Button>
         <Card className="border-none shadow-sm">
           <CardContent className="pt-6">
@@ -283,11 +284,13 @@ export default function NewPayrollBatchPage() {
     <div className="max-w-[1800px] mx-auto space-y-8 pb-12">
       <div className="flex items-center gap-4">
         <Button variant="ghost" size="icon" onClick={() => router.back()}>
-          <ArrowLeft className="h-5 w-5" />
+          <ArrowLeft className="h-5 w-5" size={20} />
         </Button>
-        <div>
-          <h1 className="text-3xl font-headline font-bold">Generate Payroll Batch</h1>
-          <p className="text-muted-foreground">Initiate salary calculations for a specific cycle.</p>
+        <div className="flex-1">
+          <PageHeader
+            title="Generate Payroll Batch"
+            description="Initiate salary calculations for a specific cycle."
+          />
         </div>
       </div>
 
@@ -393,8 +396,8 @@ export default function NewPayrollBatchPage() {
                     <Label>Attachments</Label>
                     <p className="text-[10px] text-muted-foreground">Upload payroll evidence or supporting documents for reviewers.</p>
                   </div>
-                  <label className="inline-flex h-9 cursor-pointer items-center gap-2 rounded-md border bg-white px-3 text-xs font-semibold shadow-sm hover:bg-secondary/60">
-                    <Paperclip className="h-3.5 w-3.5" />
+                  <label className="inline-flex h-9 cursor-pointer items-center gap-2 rounded-md border bg-card px-3 text-xs font-semibold shadow-sm hover:bg-secondary/60">
+                    <Paperclip className="h-3.5 w-3.5" size={14} />
                     Add Files
                     <input
                       type="file"
@@ -407,8 +410,8 @@ export default function NewPayrollBatchPage() {
                 {batchAttachments.length > 0 ? (
                   <div className="grid gap-2 sm:grid-cols-2">
                     {batchAttachments.map((file, index) => (
-                      <div key={`${file.name}-${file.size}-${index}`} className="flex items-center gap-2 rounded-lg border bg-slate-50 px-3 py-2 text-xs">
-                        <Paperclip className="h-3.5 w-3.5 text-muted-foreground" />
+                      <div key={`${file.name}-${file.size}-${index}`} className="flex items-center gap-2 rounded-lg border bg-muted/40 px-3 py-2 text-xs">
+                        <Paperclip className="h-3.5 w-3.5 text-muted-foreground" size={14} />
                         <div className="min-w-0 flex-1">
                           <p className="truncate font-semibold">{file.name}</p>
                           <p className="text-[10px] text-muted-foreground">{(file.size / 1024).toFixed(1)} KB</p>
@@ -420,13 +423,13 @@ export default function NewPayrollBatchPage() {
                           className="h-7 w-7"
                           onClick={() => removeAttachment(index)}
                         >
-                          <X className="h-3.5 w-3.5" />
+                          <X className="h-3.5 w-3.5" size={14} />
                         </Button>
                       </div>
                     ))}
                   </div>
                 ) : (
-                  <div className="rounded-lg border border-dashed bg-slate-50 px-3 py-4 text-center text-xs text-muted-foreground">
+                  <div className="rounded-lg border border-dashed bg-muted/40 px-3 py-4 text-center text-xs text-muted-foreground">
                     No attachments selected.
                   </div>
                 )}
@@ -442,7 +445,7 @@ export default function NewPayrollBatchPage() {
               </div>
               <div className="flex items-center gap-2">
                 <div className="relative w-48">
-                  <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground" />
+                  <SearchMd className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground" size={12} />
                   <Input
                     placeholder="Search..."
                     className="pl-7 h-8 text-xs"
@@ -450,7 +453,7 @@ export default function NewPayrollBatchPage() {
                     onChange={(event) => setSearchTerm(event.target.value)}
                   />
                 </div>
-                <Button variant="outline" size="sm" className="h-8"><Filter className="h-3 w-3" /></Button>
+                <Button variant="outline" size="sm" className="h-8"><FilterFunnel01 className="h-3 w-3" size={12} /></Button>
               </div>
             </CardHeader>
             <CardContent className="p-0 border-t">
@@ -519,9 +522,9 @@ export default function NewPayrollBatchPage() {
                         <TableCell>{department?.name ?? 'Unassigned'}</TableCell>
                         <TableCell>
                           {paymentReady ? (
-                            <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/20">Ready</Badge>
+                            <StatusBadge label="Ready" tone="success" />
                           ) : (
-                            <Badge variant="outline" className="text-rose-600 border-rose-200">Missing structure</Badge>
+                            <StatusBadge label="Missing structure" tone="destructive" />
                           )}
                         </TableCell>
                         <TableCell>{emp.status}</TableCell>
@@ -534,17 +537,17 @@ export default function NewPayrollBatchPage() {
           </Card>
         </div>
 
-        <Card className="border-none shadow-lg bg-primary text-white">
+        <Card className="border-none shadow-lg bg-primary text-primary-foreground">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Calculator className="h-5 w-5" /> Batch Summary
+              <Calculator className="h-5 w-5" size={20} /> Batch Summary
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-6">
             <div className="grid grid-cols-1 gap-3 border-b border-white/20 pb-4">
               <div className="flex items-center justify-between gap-4">
                 <div className="flex items-center gap-2">
-                  <Users className="h-4 w-4 opacity-70" />
+                  <Users01 className="h-4 w-4 opacity-70" size={16} />
                   <span className="text-sm">Batch Employees</span>
                 </div>
                 <span className="font-bold text-xl">{uniqueEmployeeCount}</span>
@@ -555,7 +558,7 @@ export default function NewPayrollBatchPage() {
               </div>
               <div className="flex items-center justify-between gap-4 text-sm">
                 <span className="opacity-80">Missing Payment Setup</span>
-                <span className={`font-bold ${missingPaymentSetupCount > 0 ? 'text-amber-200' : ''}`}>
+                <span className={`font-bold ${missingPaymentSetupCount > 0 ? 'text-warning' : ''}`}>
                   {missingPaymentSetupCount}
                 </span>
               </div>
@@ -566,15 +569,15 @@ export default function NewPayrollBatchPage() {
             </p>
 
             <div className="pt-2 space-y-3 md:max-w-sm md:ml-auto">
-              <Button 
-                className="w-full bg-white text-primary hover:bg-white/90 font-bold h-12"
+              <Button
+                className="w-full bg-card text-primary hover:bg-card/90 font-bold h-12"
                 onClick={handleSubmit}
                 disabled={!workingLocationId || uniqueEmployeeCount === 0 || missingPaymentSetupCount > 0}
               >
-                <Save className="mr-2 h-4 w-4" /> Finalize Draft
+                <Save01 className="mr-2 h-4 w-4" size={16} /> Finalize Draft
               </Button>
               <p className="text-[10px] text-center opacity-60">
-                <ShieldCheck className="h-3 w-3 inline mr-1" /> Draft batches remain reviewable before approval
+                <ShieldTick className="h-3 w-3 inline mr-1" size={12} /> Draft batches remain reviewable before approval
               </p>
             </div>
           </CardContent>

@@ -6,8 +6,19 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Activity, Clock, Loader2, RotateCw, User, MapPin, Building2, Fingerprint, ArrowRight } from 'lucide-react';
+import {
+  Activity,
+  Clock,
+  Loading02 as Loader2,
+  RefreshCw01 as RotateCw,
+  User01 as User,
+  MarkerPin01 as MapPin,
+  Building02 as Building2,
+  Fingerprint02 as Fingerprint,
+  ArrowRight,
+} from '@untitledui/icons';
 import { Button } from '@/components/ui/button';
+import { PageHeader } from '@/components/layout/page-header';
 import { getAuditLogs, type AuditLogEntry } from '@/api/audit-logs';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/auth-context';
@@ -105,9 +116,9 @@ export default function AuditLogsPage() {
     const formatted = formatAuditValue(value);
     const isComplex = typeof value === 'object' && value !== null;
     return isComplex ? (
-      <pre className="max-h-28 overflow-auto rounded-md bg-slate-50 p-2 text-[10px] font-mono border">{formatted}</pre>
+      <pre className="max-h-28 overflow-auto rounded-md bg-muted p-2 text-[10px] font-mono border">{formatted}</pre>
     ) : (
-      <span className="text-xs font-semibold text-slate-700">{formatted}</span>
+      <span className="text-xs font-semibold text-foreground">{formatted}</span>
     );
   };
 
@@ -123,11 +134,11 @@ export default function AuditLogsPage() {
 
   const getModuleIcon = (module: string) => {
     switch (module) {
-      case 'AUTH': return <Fingerprint className="h-3.5 w-3.5" />;
-      case 'EMPLOYEES': case 'ATTENDANCE': return <User className="h-3.5 w-3.5" />;
-      case 'ORGANIZATION': case 'DEPARTMENTS': return <Building2 className="h-3.5 w-3.5" />;
-      case 'PAYROLL': return <Activity className="h-3.5 w-3.5" />;
-      default: return <Activity className="h-3.5 w-3.5" />;
+      case 'AUTH': return <Fingerprint className="h-3.5 w-3.5" size={14} />;
+      case 'EMPLOYEES': case 'ATTENDANCE': return <User className="h-3.5 w-3.5" size={14} />;
+      case 'ORGANIZATION': case 'DEPARTMENTS': return <Building2 className="h-3.5 w-3.5" size={14} />;
+      case 'PAYROLL': return <Activity className="h-3.5 w-3.5" size={14} />;
+      default: return <Activity className="h-3.5 w-3.5" size={14} />;
     }
   };
 
@@ -136,7 +147,7 @@ export default function AuditLogsPage() {
   if (!user || loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <Loader2 className="h-8 w-8 animate-spin text-primary" size={32} />
       </div>
     );
   }
@@ -145,22 +156,22 @@ export default function AuditLogsPage() {
 
   return (
     <div className="max-w-[1800px] space-y-8">
-      <div>
-        <h1 className="text-3xl font-headline font-bold">Audit Logs</h1>
-        <p className="text-muted-foreground">Monitor system-wide activity, data changes, and user operations with full traceability.</p>
-      </div>
+      <PageHeader
+        title="Audit Logs"
+        description="Monitor system-wide activity, data changes, and user operations with full traceability."
+      />
 
       <Card className="border-none shadow-sm">
         <CardHeader>
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div>
               <CardTitle className="flex items-center gap-2">
-                <Activity className="h-5 w-5 text-primary" /> System Activity Trail
+                <Activity className="h-5 w-5 text-primary" size={20} /> System Activity Trail
               </CardTitle>
               <CardDescription>Every action recorded with who did it, their role, location, and what changed.</CardDescription>
             </div>
             <Button variant="outline" className="gap-2" onClick={refreshAuditLogs} disabled={auditRefreshing}>
-              {auditRefreshing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCw className="h-4 w-4" />}
+              {auditRefreshing ? <Loader2 className="h-4 w-4 animate-spin" size={16} /> : <RotateCw className="h-4 w-4" size={16} />}
               Refresh
             </Button>
           </div>
@@ -244,11 +255,11 @@ export default function AuditLogsPage() {
                   {/* Header */}
                   <div>
                     <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Activity Detail</p>
-                    <h3 className="text-sm font-bold text-slate-800 mt-1">{selectedAudit.activity_description}</h3>
+                    <h3 className="text-sm font-bold text-foreground mt-1">{selectedAudit.activity_description}</h3>
                   </div>
 
                   {/* Actor Info */}
-                  <div className="rounded-lg bg-white p-3 border shadow-sm">
+                  <div className="rounded-lg bg-card p-3 border shadow-sm">
                     <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">Performed By</p>
                     <div className="flex items-center gap-3">
                       <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
@@ -271,7 +282,7 @@ export default function AuditLogsPage() {
                       {selectedAudit.user?.working_location && (
                         <div>
                           <p className="text-[10px] text-muted-foreground flex items-center gap-1">
-                            <MapPin className="h-3 w-3" /> Location
+                            <MapPin className="h-3 w-3" size={12} /> Location
                           </p>
                           <p className="font-semibold">{formatDisplayName(selectedAudit.user.working_location.name)}</p>
                         </div>
@@ -279,7 +290,7 @@ export default function AuditLogsPage() {
                       {selectedAudit.user?.department && (
                         <div>
                           <p className="text-[10px] text-muted-foreground flex items-center gap-1">
-                            <Building2 className="h-3 w-3" /> Department
+                            <Building2 className="h-3 w-3" size={12} /> Department
                           </p>
                           <p className="font-semibold">{formatDisplayName(selectedAudit.user.department.name)}</p>
                         </div>
@@ -289,18 +300,18 @@ export default function AuditLogsPage() {
 
                   {/* Timestamp & IP */}
                   <div className="grid grid-cols-2 gap-3 text-xs">
-                    <div className="rounded-md bg-white p-2.5 border">
+                    <div className="rounded-md bg-card p-2.5 border">
                       <p className="text-[10px] text-muted-foreground">Timestamp</p>
                       <p className="font-semibold">{formatAuditTime(selectedAudit.created_at)}</p>
                     </div>
-                    <div className="rounded-md bg-white p-2.5 border">
+                    <div className="rounded-md bg-card p-2.5 border">
                       <p className="text-[10px] text-muted-foreground">IP Address</p>
                       <p className="font-semibold">{selectedAudit.ip_address ?? 'N/A'}</p>
                     </div>
                   </div>
 
                   {/* Target Entity */}
-                  <div className="rounded-md bg-white p-2.5 border text-xs">
+                  <div className="rounded-md bg-card p-2.5 border text-xs">
                     <p className="text-[10px] text-muted-foreground">Target Entity</p>
                     <div className="flex items-center gap-2 mt-1">
                       <Badge variant="outline" className="text-[10px] font-mono">{selectedAudit.entity_table}</Badge>
@@ -311,10 +322,10 @@ export default function AuditLogsPage() {
 
                   {/* Affected Employee */}
                   {selectedAudit.employee && (
-                    <div className="rounded-lg bg-white p-3 border shadow-sm">
+                    <div className="rounded-lg bg-card p-3 border shadow-sm">
                       <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">Affected Employee</p>
                       <div className="flex items-center gap-2">
-                        <User className="h-4 w-4 text-primary" />
+                        <User className="h-4 w-4 text-primary" size={16} />
                         <span className="font-semibold text-sm">{selectedAudit.employee.name}</span>
                       </div>
                       <div className="grid grid-cols-2 gap-2 mt-2 text-xs">
@@ -343,16 +354,16 @@ export default function AuditLogsPage() {
                   {selectedChangedFields.length > 0 && (
                     <div className="space-y-2">
                       <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">What Changed</p>
-                      <div className="overflow-hidden rounded-lg border bg-white">
+                      <div className="overflow-hidden rounded-lg border bg-card">
                         {selectedChangedFields.map((field) => (
                           <div key={field} className="grid grid-cols-1 gap-2 border-b p-3 last:border-b-0">
-                            <p className="text-xs font-bold text-slate-800">{humanizeAuditKey(field)}</p>
+                            <p className="text-xs font-bold text-foreground">{humanizeAuditKey(field)}</p>
                             <div className="grid grid-cols-[1fr_auto_1fr] items-start gap-2">
                               <div>
                                 <p className="mb-1 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Old</p>
                                 {renderAuditValue(selectedAudit.old_values?.[field])}
                               </div>
-                              <ArrowRight className="mt-5 h-4 w-4 text-muted-foreground" />
+                              <ArrowRight className="mt-5 h-4 w-4 text-muted-foreground" size={16} />
                               <div>
                                 <p className="mb-1 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">New</p>
                                 {renderAuditValue(selectedAudit.new_values?.[field])}
@@ -369,13 +380,13 @@ export default function AuditLogsPage() {
                       <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Recorded Data</p>
                       <div className="grid grid-cols-1 gap-3">
                         {selectedAudit.old_values && (
-                          <div className="rounded-md bg-white p-2.5 border">
+                          <div className="rounded-md bg-card p-2.5 border">
                             <p className="mb-1 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Old Version</p>
                             {renderAuditValue(selectedAudit.old_values)}
                           </div>
                         )}
                         {selectedAudit.new_values && (
-                          <div className="rounded-md bg-white p-2.5 border">
+                          <div className="rounded-md bg-card p-2.5 border">
                             <p className="mb-1 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">New Version</p>
                             {renderAuditValue(selectedAudit.new_values)}
                           </div>
@@ -388,7 +399,7 @@ export default function AuditLogsPage() {
             ) : (
               <div className="flex h-full min-h-72 items-center justify-center text-center text-muted-foreground">
                 <div>
-                  <Clock className="mx-auto mb-2 h-8 w-8 text-slate-400" />
+                  <Clock className="mx-auto mb-2 h-8 w-8 text-muted-foreground" size={32} />
                   <p>No activity selected.</p>
                 </div>
               </div>

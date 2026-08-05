@@ -5,10 +5,24 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow
 } from "@/components/ui/table";
-import { Building2, Plus, Search, Users, UserCog, Layers, Edit, Trash2, ChevronRight, MapPin, Loader2 } from 'lucide-react';
+import {
+  Building02 as Building2,
+  Plus,
+  SearchMd as Search,
+  Users01 as Users,
+  Briefcase01 as Briefcase,
+  LayersTwo01 as Layers,
+  Edit05 as Edit,
+  Archive,
+  ChevronRight,
+  MarkerPin01 as MapPin,
+  Loading02 as Loader2,
+} from '@untitledui/icons';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { PageHeader } from '@/components/layout/page-header';
+import { StatCard } from '@/components/ui/stat-card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Dialog,
@@ -29,8 +43,9 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/hooks/use-toast';
-import { getDepartments, createDepartment, updateDepartment, deleteDepartment } from '@/api/working_locations';
+import { getDepartments, createDepartment, updateDepartment, deleteDepartment, getWorkingLocations, enableDepartmentAtLocation, WorkingLocation } from '@/api/working_locations';
 import { getUsers } from '@/api/users';
 import { getEmployees } from '@/api/employees';
 import { userFriendlyError } from '@/lib/error-message';
@@ -55,6 +70,8 @@ export default function DepartmentsManagementPage() {
   const [locationEmployees, setLocationEmployees] = useState<any[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [loadingEmployees, setLoadingEmployees] = useState(false);
+  const [allLocations, setAllLocations] = useState<WorkingLocation[]>([]);
+  const [togglingLocationId, setTogglingLocationId] = useState<string | null>(null);
 
   const { toast } = useToast();
   const canManageDepartments = hasPermission('departments.manage');
@@ -73,6 +90,15 @@ export default function DepartmentsManagementPage() {
     }
   };
 
+  const loadLocations = async () => {
+    try {
+      const data = await getWorkingLocations();
+      setAllLocations(data.working_locations || data || []);
+    } catch (error) {
+      console.error('Failed to load working locations:', error);
+    }
+  };
+
   useEffect(() => {
     if (isLoading) return;
     if (!canManageDepartments) {
@@ -81,6 +107,7 @@ export default function DepartmentsManagementPage() {
     }
 
     loadData();
+    if (canReadAllBranches) loadLocations();
 
     // Listen for global system updates (via SSE) to refresh data instantly
     const handleSystemUpdate = (event: any) => {
@@ -91,7 +118,7 @@ export default function DepartmentsManagementPage() {
 
     window.addEventListener('system_update', handleSystemUpdate);
     return () => window.removeEventListener('system_update', handleSystemUpdate);
-  }, [isLoading, canManageDepartments, router]);
+  }, [isLoading, canManageDepartments, canReadAllBranches, router]);
 
   const departmentRows = useMemo(() => {
     const grouped = new Map<string, any>();
@@ -143,6 +170,60 @@ export default function DepartmentsManagementPage() {
     } finally {
       setLoadingUsers(false);
       setLoadingEmployees(false);
+    }
+  };
+
+  // Keep the open group dialog in sync with `departments` after any toggle
+  // triggers a reload - `selectedGroup` is otherwise a stale snapshot object.
+  useEffect(() => {
+    if (!selectedGroup) return;
+    const fresh = departmentRows.find((d) =>
+      canReadAllBranches ? d.name === selectedGroup.name : d.uuid === selectedGroup.uuid,
+    );
+    if (fresh) setSelectedGroup(fresh);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [departmentRows]);
+
+  // One row per working location, cross-referencing which ones currently
+  // have an ACTIVE row for this department group - the data for the toggle
+  // switches. Super-admin only; branch-scoped viewers never see this list.
+  const locationToggleRows = useMemo(() => {
+    if (!selectedGroup || !canReadAllBranches) return [];
+    return allLocations.map((loc) => {
+      const departmentRow = (selectedGroup.locations || []).find(
+        (l: any) => l.working_location_id === loc.id || l.working_location?.id === loc.id,
+      );
+      return {
+        location: loc,
+        departmentRow: departmentRow ?? null,
+        isActive: departmentRow?.status === 'ACTIVE',
+      };
+    });
+  }, [selectedGroup, allLocations, canReadAllBranches]);
+
+  const handleToggleLocation = async (row: (typeof locationToggleRows)[number]) => {
+    if (!selectedGroup) return;
+    setTogglingLocationId(row.location.id);
+    try {
+      if (row.isActive) {
+        await deleteDepartment(row.departmentRow.uuid);
+        toast({ title: "Removed", description: `${selectedGroup.name} disabled at ${row.location.name}.` });
+      } else {
+        await enableDepartmentAtLocation(selectedGroup.code, row.location.id, {
+          name: selectedGroup.name,
+          description: selectedGroup.description,
+        });
+        toast({ title: "Enabled", description: `${selectedGroup.name} is now active at ${row.location.name}.` });
+      }
+      await loadData();
+    } catch (error: any) {
+      toast({
+        variant: "destructive",
+        title: "Update failed",
+        description: userFriendlyError(error, "Please try again."),
+      });
+    } finally {
+      setTogglingLocationId(null);
     }
   };
 
@@ -209,54 +290,48 @@ export default function DepartmentsManagementPage() {
 
   return (
     <div className="space-y-8">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-headline font-bold">Department Directory</h1>
-          <p className="text-muted-foreground">
-            {canReadAllBranches
-              ? 'Browse departments across all branches. Select one to see its working locations.'
-              : `Manage departments in ${user?.location ?? 'your branch'}.`}
-          </p>
-        </div>
-        {canManageDepartments && (
-          <Button className="h-11 px-6 shadow-lg shadow-primary/20" onClick={() => setIsCreateModalOpen(true)}>
-            <Plus className="mr-2 h-4 w-4" /> Create Department
-          </Button>
-        )}
-      </div>
+      <PageHeader
+        title="Department Directory"
+        description={
+          canReadAllBranches
+            ? 'Browse departments across all branches. Select one to see its working locations.'
+            : `Manage departments in ${user?.location ?? 'your branch'}.`
+        }
+        actions={
+          canManageDepartments && (
+            <Button className="h-11 px-6 shadow-lg shadow-primary/20" onClick={() => setIsCreateModalOpen(true)}>
+              <Plus className="mr-2 h-4 w-4" size={16} /> Create Department
+            </Button>
+          )
+        }
+      />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div className="bg-white rounded-2xl border shadow-sm p-5 flex items-center gap-4">
-          <div className="h-11 w-11 rounded-xl bg-accent/10 flex items-center justify-center">
-            <Layers className="h-5 w-5 text-accent" />
-          </div>
-          <div>
-            <p className="text-2xl font-bold leading-none">{departmentRows.length}</p>
-            <p className="text-xs text-muted-foreground mt-1">Department{canReadAllBranches ? ' names' : 's'}</p>
-          </div>
-        </div>
-        <div className="bg-white rounded-2xl border shadow-sm p-5 flex items-center gap-4">
-          <div className="h-11 w-11 rounded-xl bg-primary/10 flex items-center justify-center">
-            <Building2 className="h-5 w-5 text-primary" />
-          </div>
-          <div>
-            <p className="text-2xl font-bold leading-none">{departments.length}</p>
-            <p className="text-xs text-muted-foreground mt-1">Department instances across branches</p>
-          </div>
-        </div>
+        <StatCard
+          icon={<Layers className="h-5 w-5" size={20} />}
+          label={`Department${canReadAllBranches ? ' names' : 's'}`}
+          value={departmentRows.length}
+          tone="accent"
+        />
+        <StatCard
+          icon={<Building2 className="h-5 w-5" size={20} />}
+          label="Department instances across branches"
+          value={departments.length}
+          tone="primary"
+        />
       </div>
 
       <div className="relative w-full max-w-md">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" size={16} />
         <Input
           placeholder="Filter by name..."
-          className="pl-10 h-11 border-none bg-white shadow-sm"
+          className="pl-10 h-11 border-none bg-card shadow-sm"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
         />
       </div>
 
-      <div className="bg-white rounded-2xl border shadow-sm overflow-hidden overflow-x-auto">
+      <div className="bg-card rounded-2xl border shadow-sm overflow-hidden overflow-x-auto">
         <Table>
           <TableHeader className="bg-secondary/50">
             <TableRow>
@@ -275,13 +350,13 @@ export default function DepartmentsManagementPage() {
                 <TableCell>
                   <div className="flex items-center gap-3">
                     <div className="h-10 w-10 rounded-xl bg-accent/5 flex items-center justify-center">
-                      <Layers className="h-5 w-5 text-accent" />
+                      <Layers className="h-5 w-5 text-accent" size={20} />
                     </div>
                     <div className="flex flex-col gap-0.5">
                       <span className="font-bold text-sm">{dept.name}</span>
                       {dept.working_location && (dept.branchCount === 1 || !canReadAllBranches) && (
                          <div className="flex items-center gap-1 text-[10px] text-muted-foreground font-medium">
-                            <Building2 className="h-3 w-3" /> {dept.working_location.name}
+                            <Building2 className="h-3 w-3" size={12} /> {dept.working_location.name}
                          </div>
                       )}
                     </div>
@@ -297,7 +372,7 @@ export default function DepartmentsManagementPage() {
                     className="gap-2"
                     onClick={() => setSelectedGroup(dept)}
                   >
-                    View All Branches <ChevronRight className="h-3.5 w-3.5" />
+                    View All Branches <ChevronRight className="h-3.5 w-3.5" size={14} />
                   </Button>
                 </TableCell>
               </TableRow>
@@ -410,34 +485,69 @@ export default function DepartmentsManagementPage() {
           <DialogHeader>
             <DialogTitle>{selectedGroup?.name}</DialogTitle>
             <DialogDescription>
-              This department exists in {selectedGroup?.branchCount} working location{selectedGroup?.branchCount === 1 ? '' : 's'}.
-              Select one to see its employees and users.
+              {canReadAllBranches
+                ? 'Toggle which working locations this department is active at, or select an active one to see its employees and users.'
+                : `This department exists in ${selectedGroup?.branchCount} working location${selectedGroup?.branchCount === 1 ? '' : 's'}. Select one to see its employees and users.`}
             </DialogDescription>
           </DialogHeader>
           <div className="max-h-[65vh] overflow-y-auto divide-y">
-            {(selectedGroup?.locations || []).map((loc: any) => (
-              <button
-                key={loc.id}
-                className="w-full flex items-center justify-between py-3 px-1 hover:bg-secondary/40 rounded-lg transition-colors text-left"
-                onClick={() => openLocationDetail(loc)}
-              >
-                <div className="flex items-center gap-2">
-                  <MapPin className="h-4 w-4 text-muted-foreground" />
-                  <div className="flex flex-col">
-                    <span className="font-semibold text-sm">{loc.working_location?.name ?? 'Unknown location'}</span>
+            {canReadAllBranches
+              ? locationToggleRows.map((row) => (
+                  <div
+                    key={row.location.id}
+                    className={`w-full flex items-center justify-between py-3 px-1 rounded-lg transition-colors ${row.isActive ? 'hover:bg-secondary/40 cursor-pointer' : ''}`}
+                    onClick={() => row.isActive && openLocationDetail(row.departmentRow)}
+                  >
+                    <div className="flex items-center gap-2">
+                      <MapPin className="h-4 w-4 text-muted-foreground" size={16} />
+                      <div className="flex flex-col">
+                        <span className={`font-semibold text-sm ${row.isActive ? '' : 'text-muted-foreground'}`}>{row.location.name}</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      {row.isActive && (
+                        <>
+                          <Badge variant="secondary" className="font-bold">
+                            <Users className="h-3 w-3 mr-1" size={12} /> {row.departmentRow.user_count ?? 0}
+                          </Badge>
+                          <Badge variant="outline" className="font-bold">
+                            <Briefcase className="h-3 w-3 mr-1" size={12} /> {row.departmentRow.employee_count ?? 0}
+                          </Badge>
+                        </>
+                      )}
+                      <Switch
+                        checked={row.isActive}
+                        disabled={togglingLocationId === row.location.id}
+                        onClick={(e) => e.stopPropagation()}
+                        onCheckedChange={() => handleToggleLocation(row)}
+                      />
+                      {row.isActive && <ChevronRight className="h-4 w-4 text-muted-foreground" size={16} />}
+                    </div>
                   </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Badge variant="secondary" className="font-bold">
-                    <Users className="h-3 w-3 mr-1" /> {loc.user_count ?? 0}
-                  </Badge>
-                  <Badge variant="outline" className="font-bold">
-                    <UserCog className="h-3 w-3 mr-1" /> {loc.employee_count ?? 0}
-                  </Badge>
-                  <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                </div>
-              </button>
-            ))}
+                ))
+              : (selectedGroup?.locations || []).map((loc: any) => (
+                  <button
+                    key={loc.id}
+                    className="w-full flex items-center justify-between py-3 px-1 hover:bg-secondary/40 rounded-lg transition-colors text-left"
+                    onClick={() => openLocationDetail(loc)}
+                  >
+                    <div className="flex items-center gap-2">
+                      <MapPin className="h-4 w-4 text-muted-foreground" size={16} />
+                      <div className="flex flex-col">
+                        <span className="font-semibold text-sm">{loc.working_location?.name ?? 'Unknown location'}</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Badge variant="secondary" className="font-bold">
+                        <Users className="h-3 w-3 mr-1" size={12} /> {loc.user_count ?? 0}
+                      </Badge>
+                      <Badge variant="outline" className="font-bold">
+                        <Briefcase className="h-3 w-3 mr-1" size={12} /> {loc.employee_count ?? 0}
+                      </Badge>
+                      <ChevronRight className="h-4 w-4 text-muted-foreground" size={16} />
+                    </div>
+                  </button>
+                ))}
           </div>
         </DialogContent>
       </Dialog>
@@ -469,7 +579,7 @@ export default function DepartmentsManagementPage() {
               {canManageDepartments && (
                 <div className="flex items-center gap-2 shrink-0">
                   <Button variant="outline" size="sm" onClick={() => setEditingDep(selectedLocationDept)}>
-                    <Edit className="mr-2 h-4 w-4" /> Edit
+                    <Edit className="mr-2 h-4 w-4" size={16} /> Edit
                   </Button>
                   <Button
                     variant="outline"
@@ -477,7 +587,7 @@ export default function DepartmentsManagementPage() {
                     className="text-destructive hover:text-destructive"
                     onClick={() => setArchiveId(selectedLocationDept.id)}
                   >
-                    <Trash2 className="mr-2 h-4 w-4" /> Archive
+                    <Archive className="mr-2 h-4 w-4" size={16} /> Archive
                   </Button>
                 </div>
               )}
@@ -486,17 +596,17 @@ export default function DepartmentsManagementPage() {
           <Tabs defaultValue="employees" className="w-full">
             <TabsList className="bg-secondary/30">
               <TabsTrigger value="employees" className="gap-2">
-                <UserCog className="h-4 w-4" /> Employees ({locationEmployees.length})
+                <Briefcase className="h-4 w-4" size={16} /> Employees ({locationEmployees.length})
               </TabsTrigger>
               <TabsTrigger value="users" className="gap-2">
-                <Users className="h-4 w-4" /> Users ({locationUsers.length})
+                <Users className="h-4 w-4" size={16} /> Users ({locationUsers.length})
               </TabsTrigger>
             </TabsList>
 
             <TabsContent value="employees" className="max-h-[55vh] overflow-y-auto">
               {loadingEmployees ? (
                 <div className="flex items-center justify-center py-10 text-muted-foreground">
-                  <Loader2 className="h-5 w-5 animate-spin mr-2" /> Loading employees...
+                  <Loader2 className="h-5 w-5 animate-spin mr-2" size={20} /> Loading employees...
                 </div>
               ) : locationEmployees.length === 0 ? (
                 <p className="text-sm text-muted-foreground py-8 text-center">No employees are assigned to this department yet.</p>
@@ -518,7 +628,7 @@ export default function DepartmentsManagementPage() {
             <TabsContent value="users" className="max-h-[55vh] overflow-y-auto">
               {loadingUsers ? (
                 <div className="flex items-center justify-center py-10 text-muted-foreground">
-                  <Loader2 className="h-5 w-5 animate-spin mr-2" /> Loading users...
+                  <Loader2 className="h-5 w-5 animate-spin mr-2" size={20} /> Loading users...
                 </div>
               ) : locationUsers.length === 0 ? (
                 <p className="text-sm text-muted-foreground py-8 text-center">No users are assigned to this department yet.</p>

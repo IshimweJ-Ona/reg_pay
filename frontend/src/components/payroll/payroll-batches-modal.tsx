@@ -9,9 +9,11 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Clock, CheckCircle, XCircle, Eye, User } from 'lucide-react';
+import { PayrollStatusBadge } from '@/components/payroll/payroll-status-badge';
+import { File02, CheckCircle, XCircle, Eye, User01 } from '@untitledui/icons';
 import { getPayrollBatches, getPayrollBatch, approvePayrollBatch, rejectPayrollBatch, rejectPayrollItem } from '@/api/payroll';
 import { useToast } from '@/hooks/use-toast';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -165,24 +167,19 @@ export function PayrollBatchesModal({
     return false;
   };
 
-  if (!isOpen) return null;
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-      <div className="bg-white rounded-3xl w-full max-w-5xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl">
-        <div className="p-6 border-b flex items-center justify-between bg-slate-50">
+    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-w-5xl w-full max-h-[90vh] p-0 gap-0 overflow-hidden flex flex-col">
+        <div className="p-6 border-b border-border flex items-center justify-between bg-muted/40">
           <div>
-            <h2 className="text-2xl font-bold text-slate-900">{title}</h2>
-            <p className="text-muted-foreground">{description}</p>
+            <DialogTitle className="text-2xl font-headline font-bold text-foreground">{title}</DialogTitle>
+            <DialogDescription className="text-muted-foreground">{description}</DialogDescription>
           </div>
-          <Button variant="ghost" size="icon" onClick={onClose} className="rounded-full">
-            <XCircle className="h-6 w-6" />
-          </Button>
         </div>
 
         <div className="flex-1 overflow-hidden flex">
           {/* Batches List */}
-          <div className="w-1/3 border-r overflow-y-auto p-4 space-y-3 bg-slate-50/50">
+          <div className="w-1/3 border-r border-border overflow-y-auto p-4 space-y-3 bg-muted/20">
             <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider px-2 mb-2">Batches</h3>
             {isLoading && batches.length === 0 ? (
               <div className="p-4 text-center animate-pulse">Loading batches...</div>
@@ -192,16 +189,14 @@ export function PayrollBatchesModal({
               batches.map((batch) => (
                 <div
                   key={batch.uuid}
-                  className={`p-4 rounded-2xl cursor-pointer transition-all border ${selectedBatch?.uuid === batch.uuid ? 'bg-white border-primary shadow-md ring-1 ring-primary/10' : 'bg-white hover:border-slate-300 border-transparent shadow-sm'}`}
+                  className={`p-4 rounded-2xl cursor-pointer transition-all border ${selectedBatch?.uuid === batch.uuid ? 'bg-card border-primary shadow-md ring-1 ring-primary/10' : 'bg-card hover:border-muted-foreground/30 border-transparent shadow-sm'}`}
                   onClick={() => handleViewBatch(batch.uuid)}
                 >
                   <div className="flex items-center justify-between mb-2">
                     <Badge variant="outline" className="font-mono text-[10px]">{batch.batch_code}</Badge>
-                    <Badge className={batch.status === 'PENDING' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}>
-                      {batch.status}
-                    </Badge>
+                    <PayrollStatusBadge status={batch.status} />
                   </div>
-                  <p className="font-bold text-slate-800">{batch.working_location?.name || 'Group HQ'}</p>
+                  <p className="font-bold text-foreground">{batch.working_location?.name || 'Group HQ'}</p>
                   <div className="flex items-center justify-between mt-2">
                     <span className="text-xs text-muted-foreground">{batch.total_employees} Personnel</span>
                     <span className="text-sm font-bold text-primary">RWF {Number(batch.total_amount).toLocaleString()}</span>
@@ -212,39 +207,39 @@ export function PayrollBatchesModal({
           </div>
 
           {/* Batch Details */}
-          <div className="flex-1 flex flex-col bg-white">
+          <div className="flex-1 flex flex-col bg-card">
             {selectedBatch ? (
               <>
-                <div className="p-6 border-b flex items-center justify-between">
+                <div className="p-6 border-b border-border flex items-center justify-between">
                   <div className="flex items-center gap-4">
                     <div className="h-12 w-12 rounded-2xl bg-primary/10 flex items-center justify-center text-primary">
-                      <Clock className="h-6 w-6" />
+                      <File02 className="h-6 w-6 text-primary" size={24} />
                     </div>
                     <div>
-                      <h3 className="text-lg font-bold">{selectedBatch.batch_code}</h3>
+                      <h3 className="text-lg font-bold text-foreground">{selectedBatch.batch_code}</h3>
                       <p className="text-sm text-muted-foreground">{selectedBatch.working_location?.name} • {selectedBatch.payroll_month}/{selectedBatch.payroll_year}</p>
                     </div>
                   </div>
                   {canReviewBatch(selectedBatch) && (
                     <div className="flex gap-2">
                       <Button variant="outline" className="text-destructive hover:bg-destructive/10 border-destructive/20" onClick={() => handleRejectBatch(selectedBatch.uuid)} disabled={isActionLoading}>
-                        <XCircle className="mr-2 h-4 w-4" /> Decline Batch
+                        <XCircle className="mr-2 h-4 w-4" size={16} /> Decline Batch
                       </Button>
-                      <Button className="bg-emerald-600 hover:bg-emerald-700 shadow-lg shadow-emerald-600/20" onClick={() => handleApproveBatch(selectedBatch.uuid)} disabled={isActionLoading}>
-                        <CheckCircle className="mr-2 h-4 w-4" /> Approve Batch
+                      <Button className="bg-success hover:bg-success/90 text-success-foreground shadow-lg shadow-success/20" onClick={() => handleApproveBatch(selectedBatch.uuid)} disabled={isActionLoading}>
+                        <CheckCircle className="mr-2 h-4 w-4" size={16} /> Approve Batch
                       </Button>
                     </div>
                   )}
                 </div>
 
                 <div className="flex-1 overflow-hidden flex flex-col">
-                  <div className="px-6 py-4 bg-slate-50 border-b flex items-center justify-between">
-                    <h4 className="text-sm font-bold text-slate-700">Personnel in Batch</h4>
+                  <div className="px-6 py-4 bg-muted/40 border-b border-border flex items-center justify-between">
+                    <h4 className="text-sm font-bold text-foreground">Personnel in Batch</h4>
                     <span className="text-xs font-medium text-muted-foreground">{selectedBatch.items?.length || 0} Records</span>
                   </div>
                   <ScrollArea className="flex-1">
                     <Table>
-                      <TableHeader className="sticky top-0 bg-white z-10">
+                      <TableHeader className="sticky top-0 bg-card z-10">
                         <TableRow>
                           <TableHead>Employee</TableHead>
                           <TableHead>Days</TableHead>
@@ -262,8 +257,8 @@ export function PayrollBatchesModal({
                             <TableRow key={item.uuid} className={item.status === 'REJECTED' ? 'opacity-50 grayscale' : ''}>
                               <TableCell>
                                 <div className="flex items-center gap-3">
-                                  <div className="h-8 w-8 rounded-full bg-slate-100 flex items-center justify-center">
-                                    <User className="h-4 w-4 text-slate-500" />
+                                  <div className="h-8 w-8 rounded-full bg-muted flex items-center justify-center">
+                                    <User01 className="h-4 w-4 text-black" size={16} />
                                   </div>
                                   <div className="flex flex-col">
                                     <span className="font-semibold text-sm">{item.employee?.first_name} {item.employee?.last_name}</span>
@@ -273,14 +268,14 @@ export function PayrollBatchesModal({
                               </TableCell>
                               <TableCell className="text-xs font-medium">{amounts.attendanceDays}/{amounts.workDays ?? '-'}</TableCell>
                               <TableCell className="text-xs font-medium">{formatRwf(amounts.grossPay)}</TableCell>
-                              <TableCell className="text-xs font-medium text-rose-600">-{formatRwf(amounts.totalDeductions)}</TableCell>
-                              <TableCell className="text-sm font-bold text-slate-900">{formatRwf(amounts.netPay)}</TableCell>
+                              <TableCell className="text-xs font-medium text-destructive">-{formatRwf(amounts.totalDeductions)}</TableCell>
+                              <TableCell className="text-sm font-bold text-foreground">{formatRwf(amounts.netPay)}</TableCell>
                               {showActions && (
                                 <TableCell className="text-right">
                                   {item.status === 'REJECTED' ? (
                                     <Badge variant="secondary" className="text-[10px]">Rejected</Badge>
                                   ) : canReviewBatch(selectedBatch) ? (
-                                    <Button variant="ghost" size="sm" className="h-8 text-rose-600 hover:text-rose-700 hover:bg-rose-50 font-bold text-xs" onClick={() => handleRejectItem(item.uuid)} disabled={isActionLoading}>
+                                    <Button variant="ghost" size="sm" className="h-8 text-destructive hover:text-destructive hover:bg-destructive/10 font-bold text-xs" onClick={() => handleRejectItem(item.uuid)} disabled={isActionLoading}>
                                       Reject
                                     </Button>
                                   ) : (
@@ -298,18 +293,18 @@ export function PayrollBatchesModal({
               </>
             ) : (
               <div className="flex-1 flex flex-col items-center justify-center p-12 text-center space-y-4">
-                <div className="h-20 w-20 rounded-full bg-slate-50 flex items-center justify-center border-2 border-dashed">
-                  <Eye className="h-10 w-10 text-slate-300" />
+                <div className="h-20 w-20 rounded-full bg-muted flex items-center justify-center border-2 border-dashed border-border">
+                  <Eye className="h-10 w-10 text-black" size={40} />
                 </div>
                 <div>
-                  <h3 className="text-xl font-bold text-slate-400">Select a batch to review</h3>
+                  <h3 className="text-xl font-bold text-muted-foreground">Select a batch to review</h3>
                   <p className="text-sm text-muted-foreground max-w-xs mx-auto">Click on a batch from the left panel to inspect its employees and financial breakdown.</p>
                 </div>
               </div>
             )}
           </div>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

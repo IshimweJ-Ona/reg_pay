@@ -3,14 +3,15 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
-import { 
-  ArrowLeft, FileText, Users,
-  CheckCircle2, XCircle, Clock, MessageSquare, Download, Save, ExternalLink, Paperclip
-} from 'lucide-react';
+import {
+  ArrowLeft, File02, Users01,
+  CheckCircle, XCircle, Clock, ClockRewind, MessageSquare01, Download01, Save01, LinkExternal01, Paperclip, Wallet01, Calculator, Percent01
+} from '@untitledui/icons';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useParams, useRouter } from 'next/navigation';
 import { PayrollStatusBadge } from '@/components/payroll/payroll-status-badge';
+import { StatCard } from '@/components/ui/stat-card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import {
   Dialog,
@@ -228,10 +229,10 @@ export default function PayrollBatchDetailsPage() {
 
   return (
     <div className="space-y-8 pb-12">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-2xl border shadow-sm">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-6 rounded-2xl border shadow-sm">
         <div className="flex items-center gap-4">
           <Button variant="ghost" size="icon" onClick={() => router.back()}>
-            <ArrowLeft className="h-5 w-5" />
+            <ArrowLeft className="h-5 w-5" size={20} />
           </Button>
           <div>
             <div className="flex items-center gap-3">
@@ -246,18 +247,18 @@ export default function PayrollBatchDetailsPage() {
         <div className="flex gap-2">
           {canSubmit && (
             <Button className="bg-primary hover:bg-primary/90 gap-2 shadow-lg" onClick={() => handleAction('SUBMIT')}>
-              <Save className="h-4 w-4" /> {isRejected ? 'Resubmit for Review' : 'Submit for Review'}
+              <Save01 className="h-4 w-4" size={16} /> {isRejected ? 'Resubmit for Review' : 'Submit for Review'}
             </Button>
           )}
           <Button variant="outline" className="gap-2" onClick={handleExport}>
-            <Download className="h-4 w-4" /> Export Assets
+            <Download01 className="h-4 w-4" size={16} /> Export Assets
           </Button>
           {canApprove && (
             <>
               <Dialog>
                 <DialogTrigger asChild>
                   <Button variant="destructive" className="gap-2">
-                    <XCircle className="h-4 w-4" /> Reject Cycle
+                    <XCircle className="h-4 w-4" size={16} /> Reject Cycle
                   </Button>
                 </DialogTrigger>
                 <DialogContent>
@@ -274,15 +275,15 @@ export default function PayrollBatchDetailsPage() {
               </Dialog>
               <Dialog>
                 <DialogTrigger asChild>
-                  <Button className="bg-emerald-600 hover:bg-emerald-700 gap-2 shadow-lg shadow-emerald-600/20">
-                    <CheckCircle2 className="h-4 w-4" /> {canApproveFinal ? 'Final Authorization' : 'Initial Approval'}
+                  <Button className="bg-success hover:bg-success/90 text-success-foreground gap-2 shadow-lg shadow-success/20">
+                    <CheckCircle className="h-4 w-4" size={16} /> {canApproveFinal ? 'Final Authorization' : 'Initial Approval'}
                   </Button>
                 </DialogTrigger>
                 <DialogContent>
                   <DialogHeader>
                     <DialogTitle>{canApproveFinal ? 'Final Authorization' : 'Initial Approval'}</DialogTitle>
                     <DialogDescription>
-                      {canApproveFinal 
+                      {canApproveFinal
                         ? `You are authorizing the final disbursement of ${formatRwf(batch.total_amount)} to ${rows.length} employees.`
                         : `You are approving this batch for final authorization.`}
                     </DialogDescription>
@@ -290,7 +291,7 @@ export default function PayrollBatchDetailsPage() {
                   <Textarea placeholder="Optional comment..." value={comment} onChange={(e) => setComment(e.target.value)} />
                   <DialogFooter>
                     <Button variant="ghost" onClick={() => setComment('')}>Cancel</Button>
-                    <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={() => handleAction('APPROVE')}>
+                    <Button className="bg-success hover:bg-success/90 text-success-foreground" onClick={() => handleAction('APPROVE')}>
                       {canApproveFinal ? 'Execute Payment' : 'Confirm Approval'}
                     </Button>
                   </DialogFooter>
@@ -302,24 +303,24 @@ export default function PayrollBatchDetailsPage() {
       </div>
 
       {isRejected && batch.rejected_reason && (
-        <div className="rounded-2xl border border-rose-200 bg-rose-50 p-5 text-sm text-rose-900 shadow-sm">
-          <div className="flex items-center gap-2 font-bold text-rose-800 text-base">
-            <XCircle className="h-5 w-5 text-rose-600" />
+        <div className="rounded-2xl border border-destructive/20 bg-destructive/10 p-5 text-sm text-destructive shadow-sm">
+          <div className="flex items-center gap-2 font-bold text-base">
+            <XCircle className="h-5 w-5" size={20} />
             Batch Rejected by Reviewer
           </div>
-          <p className="mt-2 text-rose-700 font-medium whitespace-pre-wrap">
+          <p className="mt-2 font-medium whitespace-pre-wrap">
             Reason: {batch.rejected_reason}
           </p>
-          <p className="mt-2 text-xs text-rose-600">
+          <p className="mt-2 text-xs">
             Please make any required updates to employees/time records and click <strong>Resubmit for Review</strong> above to submit this batch back into the approval workflow.
           </p>
         </div>
       )}
 
       {isApproved && (
-        <div className="rounded-2xl border bg-slate-50 p-4 text-sm text-muted-foreground">
-          <div className="flex items-center gap-2 font-semibold text-slate-800">
-            <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+        <div className="rounded-2xl border bg-muted/40 p-4 text-sm text-muted-foreground">
+          <div className="flex items-center gap-2 font-semibold text-foreground">
+            <CheckCircle className="h-4 w-4 text-success" size={16} />
             Completed & Approved Batch
           </div>
           <p className="mt-1">
@@ -329,54 +330,54 @@ export default function PayrollBatchDetailsPage() {
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-6 gap-6">
-        <Card className="border-none shadow-sm">
-          <CardContent className="pt-6">
-            <p className="text-xs font-bold text-muted-foreground uppercase">Net Disbursement</p>
-            <h3 className="text-xl font-bold mt-1 text-primary">{formatRwf(hasRows ? totals.totalNetPay : batch.total_amount)}</h3>
-          </CardContent>
-        </Card>
-        <Card className="border-none shadow-sm">
-          <CardContent className="pt-6">
-            <p className="text-xs font-bold text-muted-foreground uppercase">Gross Pay</p>
-            <h3 className="text-xl font-bold mt-1">{formatRwf(hasRows ? totals.totalGrossPay : batch.total_gross)}</h3>
-          </CardContent>
-        </Card>
-        <Card className="border-none shadow-sm">
-          <CardContent className="pt-6">
-            <p className="text-xs font-bold text-muted-foreground uppercase">Deductions</p>
-            <h3 className="text-xl font-bold mt-1 text-rose-600">{formatRwf(hasRows ? totals.totalDeductions : batch.total_deductions)}</h3>
-          </CardContent>
-        </Card>
-        <Card className="border-none shadow-sm">
-          <CardContent className="pt-6">
-            <p className="text-xs font-bold text-muted-foreground uppercase">PIT Tax</p>
-            <h3 className="text-xl font-bold mt-1 text-rose-600">{formatRwf(hasRows ? totals.totalTax : batch.total_tax)}</h3>
-          </CardContent>
-        </Card>
-        <Card className="border-none shadow-sm">
-          <CardContent className="pt-6">
-            <p className="text-xs font-bold text-muted-foreground uppercase">Staff Count</p>
-            <h3 className="text-xl font-bold mt-1">{rows.length} Employees</h3>
-          </CardContent>
-        </Card>
-        <Card className="border-none shadow-sm">
-          <CardContent className="pt-6">
-            <p className="text-xs font-bold text-muted-foreground uppercase">Payment Date</p>
-            <h3 className="text-xl font-bold mt-1">{formatPayrollDate(batchPaymentDate)}</h3>
-          </CardContent>
-        </Card>
+        <StatCard
+          tone="primary"
+          icon={<Wallet01 className="h-5 w-5" size={20} />}
+          label="Net Disbursement"
+          value={formatRwf(hasRows ? totals.totalNetPay : batch.total_amount)}
+        />
+        <StatCard
+          tone="accent"
+          icon={<Calculator className="h-5 w-5" size={20} />}
+          label="Gross Pay"
+          value={formatRwf(hasRows ? totals.totalGrossPay : batch.total_gross)}
+        />
+        <StatCard
+          tone="destructive"
+          icon={<XCircle className="h-5 w-5" size={20} />}
+          label="Deductions"
+          value={formatRwf(hasRows ? totals.totalDeductions : batch.total_deductions)}
+        />
+        <StatCard
+          tone="destructive"
+          icon={<Percent01 className="h-5 w-5" size={20} />}
+          label="PIT Tax"
+          value={formatRwf(hasRows ? totals.totalTax : batch.total_tax)}
+        />
+        <StatCard
+          tone="info"
+          icon={<Users01 className="h-5 w-5" size={20} />}
+          label="Staff Count"
+          value={`${rows.length} Employees`}
+        />
+        <StatCard
+          tone="success"
+          icon={<Clock className="h-5 w-5" size={20} />}
+          label="Payment Date"
+          value={formatPayrollDate(batchPaymentDate)}
+        />
       </div>
 
       <Tabs defaultValue="employees" className="w-full">
-        <TabsList className="bg-white border p-1 h-12 rounded-xl mb-6">
-          <TabsTrigger value="employees" className="gap-2 px-6 rounded-lg data-[state=active]:bg-primary data-[state=active]:text-white">
-            <Users className="h-4 w-4" /> Employee Breakdown
+        <TabsList className="bg-card border p-1 h-12 rounded-xl mb-6">
+          <TabsTrigger value="employees" className="gap-2 px-6 rounded-lg data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+            <Users01 className="h-4 w-4" size={16} /> Employee Breakdown
           </TabsTrigger>
-          <TabsTrigger value="history" className="gap-2 px-6 rounded-lg data-[state=active]:bg-primary data-[state=active]:text-white">
-            <Clock className="h-4 w-4" /> Approval Audit Trail
+          <TabsTrigger value="history" className="gap-2 px-6 rounded-lg data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+            <ClockRewind className="h-4 w-4" size={16} /> Approval Audit Trail
           </TabsTrigger>
-          <TabsTrigger value="documents" className="gap-2 px-6 rounded-lg data-[state=active]:bg-primary data-[state=active]:text-white">
-            <FileText className="h-4 w-4" /> Attachments
+          <TabsTrigger value="documents" className="gap-2 px-6 rounded-lg data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+            <File02 className="h-4 w-4" size={16} /> Attachments
           </TabsTrigger>
         </TabsList>
 
@@ -437,40 +438,35 @@ export default function PayrollBatchDetailsPage() {
                             </div>
                           </TableCell>
                           <TableCell className="text-right">{formatRwf(amounts.basePay)}</TableCell>
-                          <TableCell className="text-right text-rose-600">
+                          <TableCell className="text-right text-destructive">
                             <div className="flex flex-col">
                               <span>{amounts.tax > 0 ? `-${formatRwf(amounts.tax)}` : '-'}</span>
                               {amounts.tax > 0 && <span className="text-[10px] text-muted-foreground">{taxLabel}</span>}
                             </div>
                           </TableCell>
-                          <TableCell className="text-right text-emerald-600">{formatRwf(amounts.allowances)}</TableCell>
+                          <TableCell className="text-right text-success">{formatRwf(amounts.allowances)}</TableCell>
                           <TableCell className="text-right font-medium">{amounts.overtimeHours.toLocaleString()}</TableCell>
-                          <TableCell className="text-right text-emerald-600">{formatRwf(amounts.overtimePay)}</TableCell>
+                          <TableCell className="text-right text-success">{formatRwf(amounts.overtimePay)}</TableCell>
                           <TableCell className="text-right font-medium">{formatRwf(amounts.grossPay)}</TableCell>
-                          <TableCell className="text-right font-medium text-purple-600">
+                          <TableCell className="text-right font-medium text-accent">
                             {amounts.ikimina > 0 ? `-${formatRwf(amounts.ikimina)}` : '—'}
                           </TableCell>
-                          <TableCell className="text-right text-rose-600">
+                          <TableCell className="text-right text-destructive">
                             {amounts.otherDeductions > 0 ? `-${formatRwf(amounts.otherDeductions)}` : '—'}
                           </TableCell>
                           <TableCell className="text-right font-bold text-primary">{formatRwf(amounts.netPay)}</TableCell>
                           <TableCell>
                             <div className="flex items-center gap-2">
-                              <Badge 
-                                variant="secondary" 
-                                className={item.status === 'REJECTED' ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-700"}
-                              >
-                                {item.status}
-                              </Badge>
+                              <PayrollStatusBadge status={item.status} />
                               {canApprove && item.status !== 'REJECTED' && (
-                                <Button 
-                                  variant="ghost" 
-                                  size="icon" 
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
                                   className="h-8 w-8 text-destructive hover:bg-destructive/10"
                                   onClick={() => handleRejectItem(item.uuid)}
                                   title="Reject this employee"
                                 >
-                                  <XCircle className="h-4 w-4" />
+                                  <XCircle className="h-4 w-4" size={16} />
                                 </Button>
                               )}
                             </div>
@@ -484,15 +480,15 @@ export default function PayrollBatchDetailsPage() {
                       <TableRow className="bg-secondary/20 font-bold border-t-2">
                         <TableCell colSpan={4}>Total</TableCell>
                         <TableCell className="text-right">{formatRwf(totals.totalBasePay)}</TableCell>
-                        <TableCell className="text-right text-rose-600">-{formatRwf(totals.totalTax)}</TableCell>
-                        <TableCell className="text-right text-emerald-600">{formatRwf(totals.totalAllowances)}</TableCell>
+                        <TableCell className="text-right text-destructive">-{formatRwf(totals.totalTax)}</TableCell>
+                        <TableCell className="text-right text-success">{formatRwf(totals.totalAllowances)}</TableCell>
                         <TableCell className="text-right">{totals.totalOvertimeHours.toLocaleString()}</TableCell>
-                        <TableCell className="text-right text-emerald-600">{formatRwf(totals.totalOvertimePay)}</TableCell>
+                        <TableCell className="text-right text-success">{formatRwf(totals.totalOvertimePay)}</TableCell>
                         <TableCell className="text-right">{formatRwf(totals.totalGrossPay)}</TableCell>
-                        <TableCell className="text-right text-purple-600">
+                        <TableCell className="text-right text-accent">
                           {totals.totalIkimina > 0 ? `-${formatRwf(totals.totalIkimina)}` : '—'}
                         </TableCell>
-                        <TableCell className="text-right text-rose-600">
+                        <TableCell className="text-right text-destructive">
                           {totals.totalOtherDeductions > 0 ? `-${formatRwf(totals.totalOtherDeductions)}` : '—'}
                         </TableCell>
                         <TableCell className="text-right text-primary">{formatRwf(totals.totalNetPay)}</TableCell>
@@ -505,7 +501,7 @@ export default function PayrollBatchDetailsPage() {
 
               {/* Pagination controls */}
               {totalPages > 1 && (
-                <div className="flex items-center justify-between p-4 border-t bg-white">
+                <div className="flex items-center justify-between p-4 border-t bg-card">
                   <div className="text-sm text-muted-foreground">
                     Showing {(currentPage - 1) * itemsPerPage + 1} to {Math.min(currentPage * itemsPerPage, rows.length)} of {rows.length} entries
                   </div>
@@ -546,12 +542,12 @@ export default function PayrollBatchDetailsPage() {
                 return (
                 <div key={idx} className="flex gap-4 relative">
                   {idx < activityTrail.length - 1 && (
-                    <div className="absolute left-[19px] top-10 bottom-0 w-0.5 bg-slate-200" />
+                    <div className="absolute left-[19px] top-10 bottom-0 w-0.5 bg-border" />
                   )}
                   <div className={`h-10 w-10 rounded-full flex items-center justify-center shrink-0 shadow-sm border ${
-                    isRejected ? 'bg-rose-500 text-white' : 'bg-emerald-500 text-white'
+                    isRejected ? 'bg-destructive text-destructive-foreground' : 'bg-success text-success-foreground'
                   }`}>
-                    {isRejected ? <XCircle className="h-5 w-5" /> : <CheckCircle2 className="h-5 w-5" />}
+                    {isRejected ? <XCircle className="h-5 w-5" size={20} /> : <CheckCircle className="h-5 w-5" size={20} />}
                   </div>
                   <div className="flex-1 space-y-1 pb-8">
                     <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
@@ -567,7 +563,7 @@ export default function PayrollBatchDetailsPage() {
                       </div>
                     </div>
                     <div className="bg-secondary/40 p-3 rounded-xl flex gap-3 items-start">
-                      <MessageSquare className="h-4 w-4 text-muted-foreground mt-0.5" />
+                      <MessageSquare01 className="h-4 w-4 text-muted-foreground mt-0.5" size={16} />
                       <p className="text-sm italic">{step.comment ?? 'No comment'}</p>
                     </div>
                   </div>
@@ -585,9 +581,9 @@ export default function PayrollBatchDetailsPage() {
         <TabsContent value="documents">
           <Card className="border-none shadow-sm">
             <CardContent className="pt-6 space-y-6">
-              <div className="rounded-xl border bg-slate-50 p-4">
+              <div className="rounded-xl border bg-muted/40 p-4">
                 <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Batch Description</p>
-                <p className="mt-2 text-sm text-slate-700 whitespace-pre-wrap">
+                <p className="mt-2 text-sm text-foreground whitespace-pre-wrap">
                   {batch.description?.trim() || 'No description was added to this batch.'}
                 </p>
               </div>
@@ -600,10 +596,10 @@ export default function PayrollBatchDetailsPage() {
                 {attachments.length > 0 ? (
                   <div className="grid gap-3 md:grid-cols-2">
                     {attachments.map((attachment: any, index: number) => (
-                      <div key={attachment.id ?? index} className="rounded-xl border bg-white p-4 shadow-sm">
+                      <div key={attachment.id ?? index} className="rounded-xl border bg-card p-4 shadow-sm">
                         <div className="flex items-start gap-3">
                           <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center">
-                            <Paperclip className="h-4 w-4 text-primary" />
+                            <Paperclip className="h-4 w-4 text-primary" size={16} />
                           </div>
                           <div className="min-w-0 flex-1">
                             <p className="truncate text-sm font-bold">{attachment.original_name ?? attachment.name ?? 'Attachment'}</p>
@@ -622,7 +618,7 @@ export default function PayrollBatchDetailsPage() {
                               className="inline-flex h-8 w-8 items-center justify-center rounded-md border text-muted-foreground hover:text-primary"
                               title="Open attachment"
                             >
-                              <ExternalLink className="h-4 w-4" />
+                              <LinkExternal01 className="h-4 w-4" size={16} />
                             </a>
                           )}
                         </div>

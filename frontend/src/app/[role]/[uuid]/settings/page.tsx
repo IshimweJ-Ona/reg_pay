@@ -10,7 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Loader2, Plus, RotateCw, Save, ShieldCheck } from 'lucide-react';
+import { Loading02 as Loader2, Plus, RefreshCw01 as RotateCw, Save01 as Save, ShieldTick as ShieldCheck } from '@untitledui/icons';
 import { createRole, getRoles, updateRole, type Role } from '@/api/roles';
 import { getSystemConfigs, updateSystemConfig } from '@/api/system-config';
 import { PERMISSION_MODULES, ALL_PERMISSION_KEYS, expandPermissionKeys } from '@/lib/permissions';
@@ -210,7 +210,7 @@ export default function SystemSettingsPage() {
   if (!user || loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <Loader2 className="h-8 w-8 animate-spin text-primary" size={32} />
       </div>
     );
   }
@@ -247,7 +247,7 @@ export default function SystemSettingsPage() {
                 />
               </div>
               <Button className="h-10 gap-2" onClick={handleSaveOvertimeRate} disabled={savingOvertime}>
-                {savingOvertime ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                {savingOvertime ? <Loader2 className="h-4 w-4 animate-spin" size={16} /> : <Save className="h-4 w-4" size={16} />}
                 Save
               </Button>
             </div>
@@ -267,13 +267,13 @@ export default function SystemSettingsPage() {
         <Card className="border-none shadow-sm">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <ShieldCheck className="h-5 w-5 text-primary" /> Roles
+              <ShieldCheck className="h-5 w-5 text-primary" size={20} /> Roles
             </CardTitle>
             <CardDescription>Select an existing role or create a new one.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <Button variant="outline" className="w-full justify-start gap-2" onClick={resetCreateForm}>
-              <Plus className="h-4 w-4" />
+              <Plus className="h-4 w-4" size={16} />
               New role
             </Button>
             <ScrollArea className="h-[520px] pr-3">
@@ -288,7 +288,7 @@ export default function SystemSettingsPage() {
                       type="button"
                       onClick={() => setSelectedRoleId(role.id)}
                       className={`w-full rounded-lg border px-3 py-3 text-left transition-colors ${
-                        active ? 'border-primary bg-primary/5' : 'bg-white hover:bg-secondary/40'
+                        active ? 'border-primary bg-primary/5' : 'bg-card hover:bg-secondary/40'
                       }`}
                     >
                       <div className="flex items-center justify-between gap-2">
@@ -320,7 +320,7 @@ export default function SystemSettingsPage() {
                 </CardDescription>
               </div>
               <Button variant="outline" className="gap-2" onClick={loadData}>
-                <RotateCw className="h-4 w-4" />
+                <RotateCw className="h-4 w-4" size={16} />
                 Refresh
               </Button>
             </div>
@@ -365,7 +365,7 @@ export default function SystemSettingsPage() {
                   }
                 }}
               >
-                <SelectTrigger className="w-[160px] bg-white">
+                <SelectTrigger className="w-[160px] bg-card">
                   <SelectValue placeholder="Bulk actions" />
                 </SelectTrigger>
                 <SelectContent>
@@ -416,7 +416,7 @@ export default function SystemSettingsPage() {
                           <label
                             key={permission.key}
                             className={`flex min-h-16 items-start gap-3 rounded-lg border p-3 ${
-                              impliedOnly ? 'bg-secondary/20 cursor-default' : 'cursor-pointer bg-white hover:bg-secondary/30'
+                              impliedOnly ? 'bg-secondary/20 cursor-default' : 'cursor-pointer bg-card hover:bg-secondary/30'
                             }`}
                           >
                             <Checkbox
@@ -450,7 +450,7 @@ export default function SystemSettingsPage() {
 
             <div className="flex justify-end">
               <Button className="h-11 px-8 shadow-lg shadow-primary/20" onClick={handleSaveRole} disabled={savingRole}>
-                {savingRole ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                {savingRole ? <Loader2 className="mr-2 h-4 w-4 animate-spin" size={16} /> : <Save className="mr-2 h-4 w-4" size={16} />}
                 {selectedRoleId ? 'Save role permissions' : 'Create role'}
               </Button>
             </div>

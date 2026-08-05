@@ -2,11 +2,18 @@
 
 import { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { RotateCw } from "lucide-react";
-import { 
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow 
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow
 } from "@/components/ui/table";
-import { Percent, Plus, Trash2, Loader2, Zap, ShieldCheck } from 'lucide-react';
+import {
+  RefreshCw01 as RotateCw,
+  Percent01 as Percent,
+  Plus,
+  Trash01 as Trash2,
+  Loading02 as Loader2,
+  Zap,
+  ShieldTick as ShieldCheck,
+} from '@untitledui/icons';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from "@/components/ui/input";
@@ -16,6 +23,9 @@ import { useRouter, useParams } from 'next/navigation';
 import { getMonthlyTaxes, updateMonthlyTax, deactivateMonthlyTax, MonthlyTax } from '@/api/system-config';
 import { useToast } from '@/hooks/use-toast';
 import { userFriendlyError } from '@/lib/error-message';
+import { PageHeader } from '@/components/layout/page-header';
+import { StatCard } from '@/components/ui/stat-card';
+import { StatusBadge } from '@/components/ui/status-badge';
 
 const isPitTax = (name: string) => {
   const normalized = name.toLowerCase().replace(/[^a-z]/g, '');
@@ -107,62 +117,15 @@ export default function TaxSetupPage() {
 
   return (
     <div className="space-y-8">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-headline font-bold">Tax Setup</h1>
-          <p className="text-muted-foreground">Manage PIT and employee-assigned monthly tax policies.</p>
-        </div>
-      </div>
+      <PageHeader
+        title="Tax Setup"
+        description="Manage PIT and employee-assigned monthly tax policies."
+      />
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <Card className="border-none shadow-sm">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-bold uppercase tracking-wider text-muted-foreground">Active Taxes</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center gap-4">
-              <div className="h-12 w-12 rounded-xl bg-primary/10 flex items-center justify-center">
-                <Percent className="h-6 w-6 text-primary" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold">{taxes.length}</p>
-                <p className="text-xs text-muted-foreground">Configured policies</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="border-none shadow-sm">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-bold uppercase tracking-wider text-muted-foreground">Effective Rule</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center gap-4">
-              <div className="h-12 w-12 rounded-xl bg-emerald-100 flex items-center justify-center">
-                <Zap className="h-6 w-6 text-emerald-600" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold">1st / Next</p>
-                <p className="text-xs text-muted-foreground">Immediate on day 1, otherwise next month</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="border-none shadow-sm">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-bold uppercase tracking-wider text-muted-foreground">Policy Control</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center gap-4">
-              <div className="h-12 w-12 rounded-xl bg-blue-100 flex items-center justify-center">
-                <ShieldCheck className="h-6 w-6 text-blue-600" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold">PIT Auto</p>
-                <p className="text-xs text-muted-foreground">Other taxes are assigned per employee</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+        <StatCard icon={<Percent className="h-6 w-6" size={24} />} label="Active Taxes" value={taxes.length} tone="primary" />
+        <StatCard icon={<Zap className="h-6 w-6" size={24} />} label="Effective Rule" value="1st / Next" tone="success" />
+        <StatCard icon={<ShieldCheck className="h-6 w-6" size={24} />} label="Policy Control" value="PIT Auto" tone="info" />
       </div>
 
       <Card className="border-none shadow-sm">
@@ -173,7 +136,7 @@ export default function TaxSetupPage() {
               <CardDescription>PIT/PAYE applies automatically to monthly employees. Other taxes are available as employee-level deductions.</CardDescription>
             </div>
             <Button variant="outline" className="gap-2" onClick={loadTaxes} disabled={loading}>
-              <RotateCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+              <RotateCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} size={16} />
               Refresh
             </Button>
           </div>
@@ -199,7 +162,7 @@ export default function TaxSetupPage() {
               />
             </div>
             <Button className="h-10 shadow-md" onClick={handleCreateTax} disabled={saving}>
-              {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Plus className="h-4 w-4 mr-2" />}
+              {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" size={16} /> : <Plus className="h-4 w-4 mr-2" size={16} />}
               Save Tax Policy
             </Button>
           </div>
@@ -219,22 +182,22 @@ export default function TaxSetupPage() {
               <TableBody>
                 {loading ? (
                    <TableRow>
-                     <TableCell colSpan={6} className="text-center py-10"><Loader2 className="h-6 w-6 animate-spin mx-auto text-primary" /></TableCell>
+                     <TableCell colSpan={6} className="text-center py-10"><Loader2 className="h-6 w-6 animate-spin mx-auto text-primary" size={24} /></TableCell>
                    </TableRow>
                 ) : taxes.length > 0 ? taxes.map((tax) => (
                   <TableRow key={tax.uuid} className="hover:bg-secondary/10 transition-colors">
                     <TableCell className="font-bold">{tax.name}</TableCell>
-                    <TableCell className="font-mono text-emerald-700 font-bold">{tax.rate}%</TableCell>
+                    <TableCell className="font-mono text-success font-bold">{tax.rate}%</TableCell>
                     <TableCell className="text-xs text-muted-foreground">{new Date(tax.effective_from).toLocaleDateString()}</TableCell>
                     <TableCell>
                       {tax.is_automatic ? (
-                        <Badge className="bg-blue-500/10 text-blue-600 border-blue-500/20">Automatic PIT</Badge>
+                        <StatusBadge tone="info" label="Automatic PIT" />
                       ) : (
                         <Badge variant="outline">Assign to Employee</Badge>
                       )}
                     </TableCell>
                     <TableCell>
-                      <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/20">Active</Badge>
+                      <StatusBadge tone="success" label="Active" />
                     </TableCell>
                     <TableCell className="text-right">
                       <Button
@@ -244,7 +207,7 @@ export default function TaxSetupPage() {
                         onClick={() => handleDeleteTax(tax.uuid)}
                         disabled={tax.uuid === 'default-pit'}
                       >
-                        <Trash2 className="h-4 w-4" />
+                        <Trash2 className="h-4 w-4" size={16} />
                       </Button>
                     </TableCell>
                   </TableRow>

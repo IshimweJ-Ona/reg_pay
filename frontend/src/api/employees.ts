@@ -31,6 +31,7 @@ export const createEmployee = async (payload: CreateEmployeePayload) => {
 export interface GetEmployeesFilters {
     q?: string;
     department_id?: string;
+    working_location_id?: string;
 }
 
 export const getEmployees = async (filters?: GetEmployeesFilters) => {

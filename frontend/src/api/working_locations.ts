@@ -83,6 +83,21 @@ export const deleteDepartment = async (uuid: string) => {
     return response.data;
 };
 
+// Assigns/reactivates a department (identified by its shared `code`) at one
+// specific working location - the counterpart to deleteDepartment's
+// per-location archive. Creates a fresh row if one never existed there.
+export const enableDepartmentAtLocation = async (
+    code: string,
+    workingLocationId: string,
+    payload: { name: string; description?: string },
+) => {
+    const response = await api.patch(
+        `/organization/departments/${code}/locations/${workingLocationId}/enable`,
+        payload,
+    );
+    return response.data;
+};
+
 export const assignBranchManager = async (
     workingLocationUuid: string,
     user_id: string,

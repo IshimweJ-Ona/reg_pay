@@ -1,14 +1,13 @@
 "use client";
 
 import { useEffect, useState } from 'react';
-import { Card, CardContent } from "@/components/ui/card";
-import { 
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow 
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow
 } from "@/components/ui/table";
-import { 
-  Plus, Search, Download, FileText, 
-  MoreVertical, Eye, CheckCircle, XCircle, Clock, Wallet
-} from 'lucide-react';
+import {
+  Plus, SearchMd, Download01, File02,
+  DotsVertical, Eye, CheckCircle, XCircle, Clock, Wallet01, Activity
+} from '@untitledui/icons';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { PayrollBatch } from '@/types/payroll';
@@ -20,6 +19,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { PermissionGate } from '@/components/auth/permission-gate';
+import { PageHeader } from '@/components/layout/page-header';
+import { StatCard, StatCardTone } from '@/components/ui/stat-card';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { approvePayrollBatch, downloadPayrollBatchExport, getPayrollBatches, rejectPayrollBatch } from '@/api/payroll';
@@ -87,8 +88,8 @@ export default function PayrollAdminPage() {
     {
       name: 'Total Batches',
       value: String(batches.length),
-      icon: FileText,
-      color: 'text-blue-600',
+      icon: File02,
+      tone: 'info' as StatCardTone,
       key: 'total',
       title: 'All Payroll Batches',
       description: 'Every payroll batch across every status.',
@@ -98,8 +99,8 @@ export default function PayrollAdminPage() {
     {
       name: 'Active Batches',
       value: String(batches.filter(b => !['APPROVED', 'REJECTED'].includes(b.status)).length),
-      icon: CheckCircle,
-      color: 'text-emerald-600',
+      icon: Activity,
+      tone: 'success' as StatCardTone,
       key: 'active',
       title: 'Active Payroll Batches',
       description: 'Batches still moving through the approval pipeline.',
@@ -110,7 +111,7 @@ export default function PayrollAdminPage() {
       name: 'Pending Review',
       value: String(batches.filter(b => ['PENDING', 'IN_REVIEW', 'MANAGER_APPROVED'].includes(b.status)).length),
       icon: Clock,
-      color: 'text-amber-600',
+      tone: 'warning' as StatCardTone,
       key: 'pending',
       title: 'Pending Payroll Review',
       description: 'Approve or decline batches awaiting disbursement.',
@@ -120,8 +121,8 @@ export default function PayrollAdminPage() {
     {
       name: 'Total Disbursed',
       value: formatRwf(batches.filter(b => b.status === 'APPROVED').reduce((sum, batch) => sum + batch.totalAmount, 0)),
-      icon: Wallet,
-      color: 'text-primary',
+      icon: Wallet01,
+      tone: 'primary' as StatCardTone,
       key: 'disbursed',
       title: 'Disbursed Payroll Batches',
       description: 'Batches that have been fully approved and paid out.',
@@ -237,53 +238,44 @@ export default function PayrollAdminPage() {
         showActions={activeStat?.showActions ?? false}
       />
 
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-headline font-bold">Payroll Infrastructure</h1>
-          <p className="text-muted-foreground">Manage and audit enterprise-wide salary disbursements.</p>
-        </div>
-        <PermissionGate permission="payroll.create">
-          <Link href={`${basePath}/payroll/new`}>
-            <Button className="h-11 px-6 shadow-lg shadow-primary/20">
-              <Plus className="mr-2 h-4 w-4" /> Generate New Batch
-            </Button>
-          </Link>
-        </PermissionGate>
-      </div>
+      <PageHeader
+        title="Payroll Infrastructure"
+        description="Manage and audit enterprise-wide salary disbursements."
+        actions={
+          <PermissionGate permission="payroll.create">
+            <Link href={`${basePath}/payroll/new`}>
+              <Button className="h-11 px-6 shadow-lg shadow-primary/20">
+                <Plus className="mr-2 h-4 w-4" size={16} /> Generate New Batch
+              </Button>
+            </Link>
+          </PermissionGate>
+        }
+      />
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {stats.map((stat) => (
-          <Card
+          <StatCard
             key={stat.name}
-            className="border-none shadow-sm cursor-pointer hover:ring-2 hover:ring-primary/20 transition-all"
+            icon={<stat.icon className="h-5 w-5" size={20} />}
+            label={stat.name}
+            value={stat.value}
+            tone={stat.tone}
             onClick={() => setOpenStatCard(stat.key)}
-          >
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-muted-foreground">{stat.name}</p>
-                  <h3 className="text-2xl font-bold mt-1">{stat.value}</h3>
-                </div>
-                <div className="bg-secondary p-3 rounded-xl">
-                  <stat.icon className={`h-6 w-6 ${stat.color}`} />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+          />
         ))}
       </div>
 
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4">
-        <div className="flex bg-white p-1 rounded-xl border shadow-sm">
-          <Button 
-            variant={activeTab === 'ACTIVE' ? 'default' : 'ghost'} 
+        <div className="flex bg-card p-1 rounded-xl border shadow-sm">
+          <Button
+            variant={activeTab === 'ACTIVE' ? 'default' : 'ghost'}
             className="h-10 px-6 rounded-lg font-bold transition-all"
             onClick={() => setActiveTab('ACTIVE')}
           >
             Pending Review
           </Button>
-          <Button 
-            variant={activeTab === 'HISTORY' ? 'default' : 'ghost'} 
+          <Button
+            variant={activeTab === 'HISTORY' ? 'default' : 'ghost'}
             className="h-10 px-6 rounded-lg font-bold transition-all"
             onClick={() => setActiveTab('HISTORY')}
           >
@@ -291,21 +283,21 @@ export default function PayrollAdminPage() {
           </Button>
         </div>
 
-        <div className="flex items-center gap-4 bg-white p-1.5 px-3 rounded-xl shadow-sm border flex-1">
+        <div className="flex items-center gap-4 bg-card p-1.5 px-3 rounded-xl shadow-sm border flex-1">
           <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input 
-              placeholder={`Search ${activeTab === 'ACTIVE' ? 'pending' : 'historical'} batches...`} 
+            <SearchMd className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" size={16} />
+            <Input
+              placeholder={`Search ${activeTab === 'ACTIVE' ? 'pending' : 'historical'} batches...`}
               className="pl-10 h-9 border-none bg-transparent focus-visible:ring-0"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />
           </div>
-          <div className="h-6 w-px bg-slate-200" />
+          <div className="h-6 w-px bg-border" />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="sm" className="h-8 gap-2 text-muted-foreground">
-                <Download className="h-4 w-4" /> Export
+                <Download01 className="h-4 w-4" size={16} /> Export
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent>
@@ -316,7 +308,7 @@ export default function PayrollAdminPage() {
         </div>
       </div>
 
-      <div className="bg-white rounded-2xl border shadow-sm overflow-hidden">
+      <div className="bg-card rounded-2xl border shadow-sm overflow-hidden">
         <Table>
           <TableHeader className="bg-secondary/50">
             <TableRow>
@@ -352,7 +344,7 @@ export default function PayrollAdminPage() {
                 <TableCell className="text-right font-medium">{formatRwf(batch.totalGross)}</TableCell>
                 <TableCell className="text-right">
                   <div className="flex flex-col">
-                    <span className="font-medium text-rose-600">-{formatRwf(batch.totalDeductions)}</span>
+                    <span className="font-medium text-destructive">-{formatRwf(batch.totalDeductions)}</span>
                     <span className="text-[10px] text-muted-foreground">PIT {formatRwf(batch.totalTax)}</span>
                   </div>
                 </TableCell>
@@ -364,25 +356,25 @@ export default function PayrollAdminPage() {
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button variant="ghost" size="icon" className="h-8 w-8">
-                        <MoreVertical className="h-4 w-4 text-muted-foreground" />
+                        <DotsVertical className="h-4 w-4 text-muted-foreground" size={16} />
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end" className="w-56">
                       <Link href={`${basePath}/payroll/${batch.id}`}>
                         <DropdownMenuItem>
-                          <Eye className="mr-2 h-4 w-4" /> View Details
+                          <Eye className="mr-2 h-4 w-4" size={16} /> View Details
                         </DropdownMenuItem>
                       </Link>
                       <DropdownMenuItem onClick={() => handleBatchExport(batch)}>
-                        <Download className="mr-2 h-4 w-4" /> Export CSV
+                        <Download01 className="mr-2 h-4 w-4" size={16} /> Export CSV
                       </DropdownMenuItem>
                       {canReviewBatch(batch) && (
                         <PermissionGate permission="payroll.approve">
-                          <DropdownMenuItem className="text-emerald-600" onClick={() => handleApprove(batch)}>
-                            <CheckCircle className="mr-2 h-4 w-4" /> Approve
+                          <DropdownMenuItem className="text-success" onClick={() => handleApprove(batch)}>
+                            <CheckCircle className="mr-2 h-4 w-4" size={16} /> Approve
                           </DropdownMenuItem>
                           <DropdownMenuItem className="text-destructive" onClick={() => handleReject(batch)}>
-                            <XCircle className="mr-2 h-4 w-4" /> Reject
+                            <XCircle className="mr-2 h-4 w-4" size={16} /> Reject
                           </DropdownMenuItem>
                         </PermissionGate>
                       )}

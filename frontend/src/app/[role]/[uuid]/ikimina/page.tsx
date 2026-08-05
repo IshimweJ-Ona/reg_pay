@@ -6,12 +6,20 @@ import {
 } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
-  Coins, Search, UserPlus, Edit, PiggyBank, Users, Activity, TrendingUp, Trash2
-} from 'lucide-react';
+  Coins01 as Coins, SearchMd as Search, UserPlus01 as UserPlus, Edit05 as Edit,
+  Users01 as Users, PiggyBank01 as PiggyBank, Clipboard, LineChartUp03 as TrendingUp, Trash01 as Trash2
+} from '@untitledui/icons';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -42,6 +50,9 @@ import {
   removeIkiminaMembership,
 } from '@/api/ikimina';
 import { userFriendlyError } from '@/lib/error-message';
+import { PageHeader } from '@/components/layout/page-header';
+import { StatCard } from '@/components/ui/stat-card';
+import { StatusBadge } from '@/components/ui/status-badge';
 
 const formatRwf = (value: number) => `RWF ${value.toLocaleString()}`;
 
@@ -246,130 +257,93 @@ function IkiminaManagementContent() {
 
   return (
     <div className="space-y-8 pb-12">
-      {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-2xl border shadow-sm">
-        <div className="flex items-center gap-4">
-          <div className="bg-primary/10 p-3 rounded-2xl text-primary">
-            <PiggyBank className="h-8 w-8" />
-          </div>
-          <div>
-            <h1 className="text-3xl font-headline font-bold">Ikimina Savings</h1>
-            <p className="text-sm text-muted-foreground">Manage employee savings plans and recurring payroll deductions.</p>
-          </div>
-        </div>
-        {canManage && (
-          <Button 
-            className="bg-primary hover:bg-primary/90 gap-2 shadow-lg shadow-primary/20" 
-            onClick={() => setIsRegisterOpen(true)}
-          >
-            <UserPlus className="h-4 w-4" /> Register Savings Plan
-          </Button>
-        )}
-      </div>
+      <PageHeader
+        title="Ikimina Savings"
+        description="Manage employee savings plans and recurring payroll deductions."
+        actions={
+          canManage && (
+            <Button
+              className="gap-2 shadow-lg shadow-primary/20"
+              onClick={() => setIsRegisterOpen(true)}
+            >
+              <UserPlus className="h-4 w-4" size={16} /> Register Savings Plan
+            </Button>
+          )
+        }
+      />
 
       {/* Stats row */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-        <Card className="border-none shadow-sm bg-gradient-to-br from-primary/5 to-white border-l-4 border-l-primary">
-          <CardContent className="pt-6">
-            <div className="flex justify-between items-start">
-              <div>
-                <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Total Savings Pool</p>
-                <h3 className="text-2xl font-bold mt-2 text-primary">{formatRwf(stats.totalSavings)}</h3>
-              </div>
-              <div className="bg-primary/10 p-2 rounded-xl text-primary">
-                <Coins className="h-5 w-5" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="border-none shadow-sm border-l-4 border-l-emerald-500">
-          <CardContent className="pt-6">
-            <div className="flex justify-between items-start">
-              <div>
-                <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Active Members</p>
-                <h3 className="text-2xl font-bold mt-2 text-foreground">{stats.totalActive} Employees</h3>
-              </div>
-              <div className="bg-emerald-500/10 p-2 rounded-xl text-emerald-600">
-                <Users className="h-5 w-5" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="border-none shadow-sm border-l-4 border-l-purple-500">
-          <CardContent className="pt-6">
-            <div className="flex justify-between items-start">
-              <div>
-                <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Monthly Pool Growth</p>
-                <h3 className="text-2xl font-bold mt-2 text-purple-600">+{formatRwf(stats.monthlyExpected)} / mo</h3>
-              </div>
-              <div className="bg-purple-500/10 p-2 rounded-xl text-purple-600">
-                <TrendingUp className="h-5 w-5" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="border-none shadow-sm border-l-4 border-l-amber-500">
-          <CardContent className="pt-6">
-            <div className="flex justify-between items-start">
-              <div>
-                <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Average Contribution Pool</p>
-                <h3 className="text-2xl font-bold mt-2 text-amber-600">{formatRwf(stats.averageSaving)}</h3>
-              </div>
-              <div className="bg-amber-500/10 p-2 rounded-xl text-amber-600">
-                <Activity className="h-5 w-5" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+        <StatCard
+          tone="primary"
+          icon={<Coins className="h-5 w-5" size={20} />}
+          label="Total Savings Pool"
+          value={formatRwf(stats.totalSavings)}
+        />
+        <StatCard
+          tone="success"
+          icon={<Users className="h-5 w-5" size={20} />}
+          label="Active Members"
+          value={`${stats.totalActive} Employees`}
+        />
+        <StatCard
+          tone="info"
+          icon={<TrendingUp className="h-5 w-5" size={20} />}
+          label="Monthly Pool Growth"
+          value={`+${formatRwf(stats.monthlyExpected)} / mo`}
+        />
+        <StatCard
+          tone="warning"
+          icon={<PiggyBank className="h-5 w-5" size={20} />}
+          label="Average Contribution Pool"
+          value={formatRwf(stats.averageSaving)}
+        />
       </div>
 
       {/* Tabs */}
       <Tabs defaultValue="members" className="w-full">
-        <TabsList className="bg-white border p-1 h-12 rounded-xl mb-6">
-          <TabsTrigger value="members" className="gap-2 px-6 rounded-lg data-[state=active]:bg-primary data-[state=active]:text-white">
-            <Users className="h-4 w-4" /> Active Members ({filteredMemberships.length})
+        <TabsList className="bg-card border border-border p-1 h-12 rounded-xl mb-6">
+          <TabsTrigger value="members" className="gap-2 px-6 rounded-lg data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+            <Users className="h-4 w-4" size={16} /> Active Members ({filteredMemberships.length})
           </TabsTrigger>
-          <TabsTrigger value="ledger" className="gap-2 px-6 rounded-lg data-[state=active]:bg-primary data-[state=active]:text-white">
-            <Activity className="h-4 w-4" /> Contribution Ledger ({allContributions.length})
+          <TabsTrigger value="ledger" className="gap-2 px-6 rounded-lg data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+            <Clipboard className="h-4 w-4" size={16} /> Contribution Ledger ({allContributions.length})
           </TabsTrigger>
         </TabsList>
 
         <TabsContent value="members" className="space-y-4">
           {/* Filters */}
-          <div className="flex flex-col md:flex-row gap-4 bg-white p-4 rounded-xl border shadow-sm">
+          <div className="flex flex-col md:flex-row gap-4 bg-card p-4 rounded-xl border border-border shadow-sm">
             <div className="flex-1 relative">
-              <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input 
-                placeholder="Search member by name, department, or working location..." 
+              <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" size={16} />
+              <Input
+                placeholder="Search member by name, department, or working location..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="pl-9"
               />
             </div>
             <div className="flex gap-2">
-              <Button 
+              <Button
                 variant={statusFilter === 'ALL' ? 'default' : 'outline'}
                 onClick={() => setStatusFilter('ALL')}
                 size="sm"
               >
                 All Status
               </Button>
-              <Button 
+              <Button
                 variant={statusFilter === 'ACTIVE' ? 'default' : 'outline'}
                 onClick={() => setStatusFilter('ACTIVE')}
                 size="sm"
-                className="text-emerald-600 hover:text-emerald-700"
+                className={statusFilter === 'ACTIVE' ? '' : 'text-success hover:text-success'}
               >
                 Active
               </Button>
-              <Button 
+              <Button
                 variant={statusFilter === 'INACTIVE' ? 'default' : 'outline'}
                 onClick={() => setStatusFilter('INACTIVE')}
                 size="sm"
-                className="text-rose-600 hover:text-rose-700"
+                className={statusFilter === 'INACTIVE' ? '' : 'text-destructive hover:text-destructive'}
               >
                 Inactive
               </Button>
@@ -412,14 +386,12 @@ function IkiminaManagementContent() {
                         <TableCell className="text-sm text-muted-foreground">{m.employee?.working_location?.name ?? '—'}</TableCell>
                         <TableCell className="text-sm text-muted-foreground">{m.employee?.department?.name ?? '—'}</TableCell>
                         <TableCell className="text-right font-medium">{formatRwf(m.monthly_amount)}</TableCell>
-                        <TableCell className="text-right font-bold text-emerald-600">{formatRwf(m.total_savings ?? 0)}</TableCell>
+                        <TableCell className="text-right font-bold text-success">{formatRwf(m.total_savings ?? 0)}</TableCell>
                         <TableCell>
-                          <Badge 
-                            variant="secondary"
-                            className={m.is_active ? "bg-emerald-100 text-emerald-700 font-bold" : "bg-rose-100 text-rose-700 font-bold"}
-                          >
-                            {m.is_active ? 'Active' : 'Inactive'}
-                          </Badge>
+                          <StatusBadge
+                            label={m.is_active ? 'Active' : 'Inactive'}
+                            tone={m.is_active ? 'success' : 'destructive'}
+                          />
                         </TableCell>
                         <TableCell className="text-sm text-muted-foreground">{new Date(m.joined_at).toLocaleDateString()}</TableCell>
                         {canManage && (
@@ -431,7 +403,7 @@ function IkiminaManagementContent() {
                                 onClick={() => handleOpenEdit(m)}
                                 className="h-8 w-8 text-muted-foreground hover:text-foreground"
                               >
-                                <Edit className="h-4 w-4" />
+                                <Edit className="h-4 w-4" size={16} />
                               </Button>
                               <Button
                                 variant="ghost"
@@ -439,7 +411,7 @@ function IkiminaManagementContent() {
                                 onClick={() => setRemoveTarget(m)}
                                 className="h-8 w-8 text-muted-foreground hover:text-destructive"
                               >
-                                <Trash2 className="h-4 w-4" />
+                                <Trash2 className="h-4 w-4" size={16} />
                               </Button>
                             </div>
                           </TableCell>
@@ -491,7 +463,7 @@ function IkiminaManagementContent() {
                         <TableCell className="text-sm font-mono text-muted-foreground">
                           {c.payroll_batch_id ? `Payroll Batch` : 'Manual Adjustment'}
                         </TableCell>
-                        <TableCell className="text-right font-bold text-emerald-600">+{formatRwf(c.amount)}</TableCell>
+                        <TableCell className="text-right font-bold text-success">+{formatRwf(c.amount)}</TableCell>
                       </TableRow>
                     ))
                   )}
@@ -514,22 +486,24 @@ function IkiminaManagementContent() {
           <form onSubmit={handleRegister} className="space-y-6 pt-4">
             <div className="space-y-2">
               <Label htmlFor="employee">Employee</Label>
-              <select
-                id="employee"
-                className="w-full flex h-10 rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                value={newMemberEmployeeId}
-                onChange={(e) => setNewMemberEmployeeId(e.target.value)}
-                required
+              <Select
+                value={newMemberEmployeeId || 'none'}
+                onValueChange={(value) => setNewMemberEmployeeId(value === 'none' ? '' : value)}
               >
-                <option value="">-- Choose Eligible Monthly Employee --</option>
-                {eligibleEmployees.map((emp) => (
-                  <option key={emp.id} value={emp.id}>
-                    {emp.first_name} {emp.last_name} ({emp.department?.name || 'No Dept'})
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger id="employee">
+                  <SelectValue placeholder="-- Choose Eligible Monthly Employee --" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">-- Choose Eligible Monthly Employee --</SelectItem>
+                  {eligibleEmployees.map((emp) => (
+                    <SelectItem key={emp.id} value={emp.id}>
+                      {emp.first_name} {emp.last_name} ({emp.department?.name || 'No Dept'})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               {eligibleEmployees.length === 0 && (
-                <p className="text-xs text-amber-600 font-medium">No monthly employees available or all monthly employees already registered.</p>
+                <p className="text-xs text-warning font-medium">No monthly employees available or all monthly employees already registered.</p>
               )}
             </div>
 
@@ -581,12 +555,10 @@ function IkiminaManagementContent() {
             </div>
 
             <div className="flex items-center space-x-2">
-              <input
-                type="checkbox"
+              <Checkbox
                 id="edit-active"
-                className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
                 checked={editMemberActive}
-                onChange={(e) => setEditMemberActive(e.target.checked)}
+                onCheckedChange={(checked) => setEditMemberActive(checked === true)}
               />
               <Label htmlFor="edit-active" className="cursor-pointer font-medium">
                 Active savings plan (deductions will run in next payroll cycle)

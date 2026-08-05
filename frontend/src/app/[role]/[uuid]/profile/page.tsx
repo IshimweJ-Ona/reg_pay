@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useToast } from '@/hooks/use-toast';
-import { Camera, KeyRound, Loader2, Mail, Save, User as UserIcon } from 'lucide-react';
+import { Camera01 as Camera, Key01 as KeyRound, Loading02 as Loader2, Mail01 as Mail, Save01 as Save, User01 as UserIcon } from '@untitledui/icons';
 import { getAvatarUrl } from '@/lib/utils';
 
 const splitName = (name: string) => {
@@ -109,14 +109,14 @@ export default function AdminProfilePage() {
             <form onSubmit={handleUpdate} className="space-y-6">
               <div className="flex items-center gap-6 mb-8">
                 <div className="relative group">
-                  <Avatar className="h-24 w-24 border-4 border-white shadow-xl">
+                  <Avatar className="h-24 w-24 border-4 border-card shadow-xl">
                     <AvatarImage src={getAvatarUrl(user?.avatar_url)} />
                     <AvatarFallback className="text-2xl font-bold bg-primary/10 text-primary">
                       {user?.name?.charAt(0)}
                     </AvatarFallback>
                   </Avatar>
-                  <button type="button" className="absolute bottom-0 right-0 h-8 w-8 bg-white rounded-full shadow-lg border flex items-center justify-center hover:bg-secondary transition-colors">
-                    <Camera className="h-4 w-4 text-muted-foreground" />
+                  <button type="button" className="absolute bottom-0 right-0 h-8 w-8 bg-card rounded-full shadow-lg border flex items-center justify-center hover:bg-secondary transition-colors">
+                    <Camera className="h-4 w-4 text-muted-foreground" size={16} />
                   </button>
                 </div>
                 <div className="min-w-0">
@@ -128,14 +128,14 @@ export default function AdminProfilePage() {
 
               <div className="grid grid-cols-1 gap-4">
                 <div className="space-y-2">
-                  <Label className="flex items-center gap-2"><UserIcon className="h-4 w-4" /> Full Name</Label>
+                  <Label className="flex items-center gap-2"><UserIcon className="h-4 w-4" size={16} /> Full Name</Label>
                   <Input
                     value={formData.name}
                     onChange={(e) => setFormData({...formData, name: e.target.value})}
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label className="flex items-center gap-2"><Mail className="h-4 w-4" /> Email</Label>
+                  <Label className="flex items-center gap-2"><Mail className="h-4 w-4" size={16} /> Email</Label>
                   <Input
                     type="email"
                     value={formData.email}
@@ -145,7 +145,7 @@ export default function AdminProfilePage() {
               </div>
 
               <Button type="submit" className="w-full h-12 shadow-lg shadow-primary/20" disabled={savingProfile}>
-                {savingProfile ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                {savingProfile ? <Loader2 className="mr-2 h-4 w-4 animate-spin" size={16} /> : <Save className="mr-2 h-4 w-4" size={16} />}
                 Save profile
               </Button>
             </form>
@@ -154,7 +154,7 @@ export default function AdminProfilePage() {
 
         <Card className="border-none shadow-sm">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-lg"><KeyRound className="h-5 w-5 text-primary" /> Reset Password</CardTitle>
+            <CardTitle className="flex items-center gap-2 text-lg"><KeyRound className="h-5 w-5 text-primary" size={20} /> Reset Password</CardTitle>
             <CardDescription>Choose a new password for your account.</CardDescription>
           </CardHeader>
           <CardContent>
@@ -176,7 +176,7 @@ export default function AdminProfilePage() {
                 />
               </div>
               <Button type="submit" className="w-full h-11" disabled={savingPassword}>
-                {savingPassword ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <KeyRound className="mr-2 h-4 w-4" />}
+                {savingPassword ? <Loader2 className="mr-2 h-4 w-4 animate-spin" size={16} /> : <KeyRound className="mr-2 h-4 w-4" size={16} />}
                 Update password
               </Button>
             </form>

@@ -2,7 +2,7 @@
 
 import { useAttendanceSync } from '@/context/attendance-sync-context';
 import { Progress } from '@/components/ui/progress';
-import { Loader2, CheckCircle2 } from 'lucide-react';
+import { Loading02, CheckCircle } from '@untitledui/icons';
 import { cn } from '@/lib/utils';
 
 export function AttendanceSyncPopover() {
@@ -16,14 +16,14 @@ export function AttendanceSyncPopover() {
 
   return (
     <div className={cn(
-      "fixed bottom-6 right-6 w-80 bg-white border rounded-2xl shadow-2xl p-4 transition-all duration-500 z-[100]",
+      "fixed bottom-6 right-6 w-80 bg-card border rounded-2xl shadow-2xl p-4 transition-all duration-500 z-[100]",
       "animate-in slide-in-from-bottom-10"
     )}>
       <div className="flex items-center gap-3 mb-3">
         {isComplete ? (
-          <CheckCircle2 className="h-5 w-5 text-emerald-500" />
+          <CheckCircle className="h-5 w-5 text-success" size={20} />
         ) : (
-          <Loader2 className="h-5 w-5 text-primary animate-spin" />
+          <Loading02 className="h-5 w-5 text-primary animate-spin" size={20} />
         )}
         <span className="font-bold text-sm">
           {isComplete ? 'Attendance sync complete!' : 'Syncing attendance…'}

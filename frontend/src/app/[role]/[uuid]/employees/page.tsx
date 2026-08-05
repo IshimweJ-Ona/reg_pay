@@ -8,12 +8,11 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent } from "@/components/ui/card";
 import {
-  Search, Filter, UserPlus, Eye, Users,
-  MapPin, Building2, CreditCard, Activity, Edit, Trash2, MoreVertical,
-  Loader2
-} from 'lucide-react';
+  SearchMd, FilterFunnel01, UserPlus01, Eye, Users01,
+  MarkerPin01, Building02, BankNote01, Activity, Edit05, UserX01, DotsVertical,
+  Loading02, Download01, Upload01
+} from '@untitledui/icons';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -57,8 +56,18 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { 
-  createAllowance, 
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { PageHeader } from '@/components/layout/page-header';
+import { StatCard } from '@/components/ui/stat-card';
+import { StatusBadge } from '@/components/ui/status-badge';
+import {
+  createAllowance,
   updateAllowance,
   getAllowances,
   createEmployeeDeduction,
@@ -72,10 +81,10 @@ import {
 import { useAuth } from '@/context/auth-context';
 import { userFriendlyError } from '@/lib/error-message';
 import { exportToCSV, exportToExcel } from '@/lib/export-utils';
-import { Download, Upload } from 'lucide-react';
 import { bulkImportEmployees } from '@/api/employees';
 import { getMonthlyTaxes, MonthlyTax } from '@/api/system-config';
 import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 
 const formatRwf = (value: number) => `RWF ${value.toLocaleString()}`;
 
@@ -230,7 +239,7 @@ export default function EmployeeDirectoryPage() {
   );
   const canManageDeductions = hasPermission('deductions.manage');
   const canReadPaymentStructures = hasPermission('payment-structures.read') || canManageDeductions;
-  const handleDownloadTemplate = () => {
+  const handleDownloadTemplate = async () => {
     // Branch managers create employees only in their own branch (the backend
     // auto-assigns working_location_id, see employees.service.ts bulkImport),
     // so no working_location column is needed for them. `/departments` is
@@ -245,59 +254,154 @@ export default function EmployeeDirectoryPage() {
       'department', 'employment_category', 'basic_salary', 'daily_rate', 'tax_percentage',
     ];
 
-    const wb = XLSX.utils.book_new();
+    try {
+      const workbook = new ExcelJS.Workbook();
+      workbook.creator = 'REG Pay';
+      workbook.created = new Date();
 
-    // --- Sheet 1: Instructions (opens first) ---------------------------
-    // The free xlsx library this app uses cannot write real Excel
-    // data-validation dropdowns into cells (that requires SheetJS Pro), so
-    // rather than silently shipping a template that looks like it should
-    // have dropdowns but doesn't, we say so plainly and point at the exact
-    // list to copy from.
-    const instructionRows: any[][] = [
-      ['EMPLOYEE BULK IMPORT — READ THIS FIRST'],
-      [],
-      ['1. Fill in the "Employees" sheet. Do not rename or reorder its columns.'],
-      ['2. first_name and last_name are the only required columns — everything else can be left blank.'],
-      ['3. This file does not have clickable dropdowns (a spreadsheet-library limitation), so for the'],
-      ['   department / employment_category' + (isBranchManagerActor ? '' : ' / working_location') + ' columns, copy the exact spelling from the "Reference" sheet.'],
-      ['   A name that does not match exactly (extra space, different capitalization of a whole word, typo) will be rejected — the importer will tell you which row and which value it could not match.'],
-      ['4. gender must be exactly MALE or FEMALE (all caps).'],
-      ['5. Dates (contract_start_date, contract_end_date) must be in YYYY-MM-DD format, e.g. 2026-01-31.'],
-      ['6. basic_salary, daily_rate, and tax_percentage must be plain numbers — no currency symbols or commas.'],
-      ['7. Every row needs a unique national_id and email if you provide them — duplicates will be rejected.'],
-      [isBranchManagerActor
-        ? `8. You don't need a working_location column — every employee you import is automatically placed in your branch (${user?.location ?? 'your branch'}).`
-        : '8. working_location is required if your account can manage more than one branch, so the importer knows where each row belongs.'],
-      [],
-      ['If ANY row fails validation, the whole file is rejected with a row-by-row explanation — nothing is partially imported.'],
-    ];
-    const instructionsWs = XLSX.utils.aoa_to_sheet(instructionRows);
-    instructionsWs['!cols'] = [{ wch: 110 }];
-    XLSX.utils.book_append_sheet(wb, instructionsWs, 'Instructions');
+      // --- The only sheet the user ever needs to touch or upload ---------
+      const sheet = workbook.addWorksheet('Employees');
 
-    // --- Sheet 2: Employees (genuinely empty — just headers) -----------
-    const ws = XLSX.utils.aoa_to_sheet([headers]);
-    XLSX.utils.book_append_sheet(wb, ws, 'Employees');
+      const headerRow = sheet.getRow(1);
+      headers.forEach((h, i) => {
+        const cell = headerRow.getCell(i + 1);
+        cell.value = h;
+        cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF2C3E50' } };
+        cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+        cell.border = {
+          top: { style: 'thin' },
+          left: { style: 'thin' },
+          bottom: { style: 'thin' },
+          right: { style: 'thin' },
+        };
+      });
+      headerRow.height = 26;
+      headers.forEach((_, i) => { sheet.getColumn(i + 1).width = 22; });
+      sheet.views = [{ state: 'frozen', ySplit: 1 }];
 
-    // --- Sheet 3: Reference (valid values to copy from exactly) --------
-    const referenceRows: any[][] = [['Valid Departments'], ...relevantDepartments.map((d: any) => [d.name])];
-    referenceRows.push([]);
-    referenceRows.push(['Valid Employment Categories']);
-    paymentCategories.forEach((c: any) => referenceRows.push([c.name]));
-    if (!isBranchManagerActor) {
-      referenceRows.push([]);
-      referenceRows.push(['Valid Branches (Working Locations)']);
-      locations.forEach((l: any) => referenceRows.push([l.name]));
+      const colOf = (name: string) => headers.indexOf(name) + 1; // 1-based; 0 means absent
+      const genderCol = colOf('gender');
+      const departmentCol = colOf('department');
+      const categoryCol = colOf('employment_category');
+      const locationCol = colOf('working_location'); // 0 for branch managers
+      const startDateCol = colOf('contract_start_date');
+      const endDateCol = colOf('contract_end_date');
+
+      // --- Hidden lookup sheet the dropdowns above pull their options from.
+      // It's "veryHidden" (not just "hidden"), so it never appears as a tab
+      // in Excel at all — there is nothing to fill in or upload except the
+      // "Employees" sheet. It automatically reflects whatever departments /
+      // employment categories / branches currently exist, so a department
+      // added today shows up in the dropdown the next time this template is
+      // downloaded.
+      const listSheet = workbook.addWorksheet('Lists', { state: 'veryHidden' });
+      const departmentNames = relevantDepartments.map((d: any) => d.name).filter(Boolean);
+      const categoryNames = paymentCategories.map((c: any) => c.name).filter(Boolean);
+      const locationNames = isBranchManagerActor ? [] : locations.map((l: any) => l.name).filter(Boolean);
+      listSheet.getCell(1, 1).value = 'department';
+      listSheet.getCell(1, 2).value = 'employment_category';
+      listSheet.getCell(1, 3).value = 'working_location';
+      departmentNames.forEach((name: string, i: number) => { listSheet.getCell(i + 2, 1).value = name; });
+      categoryNames.forEach((name: string, i: number) => { listSheet.getCell(i + 2, 2).value = name; });
+      locationNames.forEach((name: string, i: number) => { listSheet.getCell(i + 2, 3).value = name; });
+
+      // --- Pre-format enough blank rows for a full import (matches the
+      // backend's 500-row cap) with real dropdowns and a real date picker,
+      // so most mistakes are caught by Excel itself before the file is ever
+      // uploaded. ---
+      const ROWS = 500;
+      const minDate = new Date(2000, 0, 1);
+      const maxDate = new Date(2100, 11, 31);
+
+      for (let r = 2; r <= ROWS + 1; r++) {
+        const row = sheet.getRow(r);
+
+        if (genderCol) {
+          row.getCell(genderCol).dataValidation = {
+            type: 'list',
+            formulae: ['"MALE,FEMALE"'],
+            allowBlank: true,
+            showErrorMessage: true,
+            errorStyle: 'error',
+            errorTitle: 'Invalid gender',
+            error: 'Please pick MALE or FEMALE from the dropdown.',
+          };
+        }
+
+        if (departmentCol && departmentNames.length > 0) {
+          row.getCell(departmentCol).dataValidation = {
+            type: 'list',
+            formulae: [`Lists!$A$2:$A$${departmentNames.length + 1}`],
+            allowBlank: true,
+            showErrorMessage: true,
+            errorStyle: 'error',
+            errorTitle: 'Unknown department',
+            error: 'Please pick a department from the dropdown — it must already exist in the system.',
+          };
+        }
+
+        if (categoryCol && categoryNames.length > 0) {
+          row.getCell(categoryCol).dataValidation = {
+            type: 'list',
+            formulae: [`Lists!$B$2:$B$${categoryNames.length + 1}`],
+            allowBlank: true,
+            showErrorMessage: true,
+            errorStyle: 'error',
+            errorTitle: 'Unknown employment category',
+            error: 'Please pick an employment category from the dropdown — it must already exist in the system.',
+          };
+        }
+
+        if (locationCol && locationNames.length > 0) {
+          row.getCell(locationCol).dataValidation = {
+            type: 'list',
+            formulae: [`Lists!$C$2:$C$${locationNames.length + 1}`],
+            allowBlank: true,
+            showErrorMessage: true,
+            errorStyle: 'error',
+            errorTitle: 'Unknown branch',
+            error: 'Please pick a branch from the dropdown — it must already exist in the system.',
+          };
+        }
+
+        for (const dateCol of [startDateCol, endDateCol]) {
+          if (!dateCol) continue;
+          const cell = row.getCell(dateCol);
+          cell.numFmt = 'yyyy-mm-dd';
+          cell.dataValidation = {
+            type: 'date',
+            operator: 'between',
+            formulae: [minDate, maxDate],
+            allowBlank: true,
+            showErrorMessage: true,
+            errorStyle: 'error',
+            errorTitle: 'Invalid date',
+            error: 'Our system only accepts real dates in YYYY-MM-DD format (e.g. 2026-01-31). Please enter a valid date.',
+            showInputMessage: true,
+            promptTitle: 'Date format',
+            prompt: 'Enter the date as YYYY-MM-DD, e.g. 2026-01-31.',
+          };
+        }
+      }
+
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'employee_bulk_import_template.xlsx';
+      a.click();
+      URL.revokeObjectURL(url);
+
+      toast({
+        title: 'Template downloaded',
+        description: `Fill in the "Employees" sheet only — first_name and last_name are the only required columns. Use the dropdowns for gender, department, employment category${isBranchManagerActor ? '' : ' and branch'}, and the date fields for contract dates (YYYY-MM-DD).`,
+      });
+    } catch (err) {
+      console.error('Template generation error:', err);
+      toast({ variant: 'destructive', title: 'Template Error', description: 'Could not generate the template file.' });
     }
-    referenceRows.push([]);
-    referenceRows.push(['Valid Gender Values']);
-    referenceRows.push(['MALE']);
-    referenceRows.push(['FEMALE']);
-    const refWs = XLSX.utils.aoa_to_sheet(referenceRows);
-    XLSX.utils.book_append_sheet(wb, refWs, 'Reference');
-
-    XLSX.writeFile(wb, 'employee_bulk_import_template.xlsx');
-    toast({ title: 'Template downloaded', description: 'Read the Instructions sheet first, then fill in the empty Employees sheet.' });
   };
 
   const handleBulkImport = async () => {
@@ -310,10 +414,19 @@ export default function EmployeeDirectoryPage() {
       const reader = new FileReader();
       reader.onload = async (evt) => {
         try {
-          const wb = XLSX.read(evt.target?.result, { type: 'binary', raw: false });
-          const ws = wb.Sheets[wb.SheetNames[0]];
+          // cellDates: true makes cells that Excel stored as real dates
+          // (contract_start_date / contract_end_date, filled via the
+          // template's date pickers) come back as JS Date objects instead
+          // of raw serial numbers like 46052.
+          const wb = XLSX.read(evt.target?.result, { type: 'binary', raw: false, cellDates: true });
+          // The template's only fillable/uploadable tab is "Employees" — a
+          // hidden "Lists" sheet backs its dropdowns but is never meant to
+          // be read here. Fall back to the first sheet for older templates
+          // or hand-built files that don't use that sheet name.
+          const sheetName = wb.SheetNames.includes('Employees') ? 'Employees' : wb.SheetNames[0];
+          const ws = wb.Sheets[sheetName];
           const raw = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][];
-          
+
           if (!raw || raw.length < 2) {
             toast({ variant: "destructive", title: "Import Rejected", description: "File is empty or has no data rows." });
             setImportingBulk(false);
@@ -321,24 +434,30 @@ export default function EmployeeDirectoryPage() {
           }
 
           const headers: string[] = raw[0].map((h: any) => String(h ?? '').trim().toLowerCase());
-          
-          // Expected columns: first_name, last_name, email, phone_number, national_id, gender, 
-          // contract_start_date, contract_end_date, department_id, working_location_id, 
+
+          // Expected columns: first_name, last_name, email, phone_number, national_id, gender,
+          // contract_start_date, contract_end_date, department_id, working_location_id,
           // employment_category_id, basic_salary, daily_rate, tax_percentage
           const employeeItems: any[] = [];
           const skippedRows: string[] = [];
-          
+
           for (let i = 1; i < raw.length; i++) {
             const row = raw[i];
             if (!row || row.every((cell) => cell === undefined || cell === null || String(cell).trim() === '')) continue; // fully blank row, ignore silently
 
             const item: any = {};
             headers.forEach((header: string, idx: number) => {
-              if (header && row[idx] !== undefined && row[idx] !== null && row[idx] !== '') {
-                item[header] = String(row[idx]).trim();
-              }
+              const cellValue = row[idx];
+              if (!header || cellValue === undefined || cellValue === null || cellValue === '') return;
+              // A real Excel date (from the template's date-picker columns)
+              // arrives as a JS Date here — convert it to the plain
+              // YYYY-MM-DD string our system expects instead of stringifying
+              // the Date object itself.
+              item[header] = cellValue instanceof Date
+                ? cellValue.toISOString().split('T')[0]
+                : String(cellValue).trim();
             });
-            
+
             if (item.first_name && item.last_name) {
               employeeItems.push(item);
             } else {
@@ -446,9 +565,29 @@ export default function EmployeeDirectoryPage() {
 
             const datePattern = /^\d{4}-\d{2}-\d{2}$/;
             for (const dateField of ['contract_start_date', 'contract_end_date']) {
-              if (item[dateField] && !datePattern.test(item[dateField])) {
-                rowErrors.push(`Row ${rowNum}: ${dateField} "${item[dateField]}" must be in YYYY-MM-DD format.`);
+              const value = item[dateField];
+              if (!value) continue;
+              const isValidCalendarDate = datePattern.test(value) && !Number.isNaN(new Date(value).getTime());
+              if (!isValidCalendarDate) {
+                rowErrors.push(
+                  `Row ${rowNum}: ${dateField} "${value}" is not in the format our system uses. Our system only accepts dates as YYYY-MM-DD (e.g. 2026-01-31).`,
+                );
               }
+            }
+
+            // A contract can't end before (or the same day) it starts —
+            // catch this here with the exact row number instead of letting
+            // it fail as a generic error once it reaches the server.
+            if (
+              item.contract_start_date &&
+              item.contract_end_date &&
+              datePattern.test(item.contract_start_date) &&
+              datePattern.test(item.contract_end_date) &&
+              new Date(item.contract_end_date).getTime() <= new Date(item.contract_start_date).getTime()
+            ) {
+              rowErrors.push(
+                `Row ${rowNum}: contract_end_date "${item.contract_end_date}" must be later than contract_start_date "${item.contract_start_date}".`,
+              );
             }
 
             for (const numField of ['basic_salary', 'daily_rate', 'tax_percentage']) {
@@ -491,7 +630,7 @@ export default function EmployeeDirectoryPage() {
             toast({
               variant: "destructive",
               title: `${rowErrors.length} issue(s) found — nothing was imported`,
-              description: `${rowErrors.slice(0, 3).join(' ')}${rowErrors.length > 3 ? ` (+${rowErrors.length - 3} more)` : ''} Check the Reference/Instructions sheets, fix, and re-upload.`,
+              description: `${rowErrors.slice(0, 3).join(' ')}${rowErrors.length > 3 ? ` (+${rowErrors.length - 3} more)` : ''} Fix these in the "Employees" sheet and re-upload.`,
             });
             setImportingBulk(false);
             return;
@@ -770,23 +909,23 @@ export default function EmployeeDirectoryPage() {
 
   const getStatusBadge = (status: Employee['status'], pauseReason?: string) => {
     switch (status) {
-      case 'ACTIVE': 
-        return <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/20">Active</Badge>;
-      case 'SUSPENDED': 
-        return <Badge variant="destructive">Suspended</Badge>;
-      case 'TERMINATED': 
-        return <Badge variant="outline" className="text-muted-foreground">Terminated</Badge>;
+      case 'ACTIVE':
+        return <StatusBadge label="Active" tone="success" />;
+      case 'SUSPENDED':
+        return <StatusBadge label="Suspended" tone="destructive" />;
+      case 'TERMINATED':
+        return <StatusBadge label="Terminated" tone="secondary" />;
       case 'PAUSED':
         const isContractExpired = pauseReason && (
-          pauseReason.toLowerCase().includes('contract') || 
+          pauseReason.toLowerCase().includes('contract') ||
           pauseReason.toLowerCase().includes('expired') ||
           pauseReason.toLowerCase().includes('ended')
         );
         return (
           <div className="flex flex-col gap-1 items-start">
-            <Badge className="bg-amber-500/10 text-amber-600 border-amber-500/20">Paused</Badge>
+            <StatusBadge label="Paused" tone="warning" />
             {isContractExpired ? (
-              <span className="text-[10px] font-bold text-amber-600 italic leading-tight" title={pauseReason}>
+              <span className="text-[10px] font-bold text-warning italic leading-tight" title={pauseReason}>
                 Contract working days have ended
               </span>
             ) : pauseReason ? (
@@ -796,8 +935,8 @@ export default function EmployeeDirectoryPage() {
             ) : null}
           </div>
         );
-      default: 
-        return <Badge variant="outline">{status}</Badge>;
+      default:
+        return <StatusBadge label={String(status)} tone="secondary" />;
     }
   };
 
@@ -828,15 +967,48 @@ export default function EmployeeDirectoryPage() {
       return;
     }
 
+    const selectedCategory = paymentCategories.find(
+      (category) =>
+        category.id === newEmployee.employment_category_id ||
+        category.uuid === newEmployee.employment_category_id,
+    );
+    const selectedFrequency = selectedCategory?.payroll_frequency;
+
+    if (selectedFrequency !== 'MONTHLY') {
+      const startDate = newEmployee.contract_start_date;
+      const endDate = newEmployee.contract_end_date;
+
+      if (startDate && endDate && new Date(endDate).getTime() <= new Date(startDate).getTime()) {
+        toast({
+          variant: "destructive",
+          title: "Invalid contract dates",
+          description: "The contract end date must be later than the contract start date.",
+        });
+        return;
+      }
+
+      // editingEmployee still holds the values as they were before this
+      // edit, so this is genuinely the *previous* contract's end date —
+      // only relevant when the start date is actually being changed
+      // (i.e. a new contract is being set up).
+      const previousEndDate = editingEmployee.contract_end_date;
+      if (
+        startDate &&
+        previousEndDate &&
+        startDate !== editingEmployee.contract_start_date &&
+        new Date(startDate).getTime() <= new Date(previousEndDate).getTime()
+      ) {
+        toast({
+          variant: "destructive",
+          title: "Invalid contract start date",
+          description: `The new contract must start after the previous contract's end date (${previousEndDate}).`,
+        });
+        return;
+      }
+    }
+
     setIsSubmitting(true);
     try {
-      const selectedCategory = paymentCategories.find(
-        (category) =>
-          category.id === newEmployee.employment_category_id ||
-          category.uuid === newEmployee.employment_category_id,
-      );
-      const selectedFrequency = selectedCategory?.payroll_frequency;
-      
       const contractDays = selectedFrequency !== 'MONTHLY'
         ? getDaysBetween(newEmployee.contract_start_date, newEmployee.contract_end_date)
         : 0;
@@ -971,6 +1143,25 @@ export default function EmployeeDirectoryPage() {
   const handleCreate = async () => {
     if (!newEmployee.first_name || !newEmployee.last_name || !newEmployee.national_id) {
       toast({ variant: "destructive", title: "Missing Information", description: "Names and National ID are mandatory." });
+      return;
+    }
+
+    const newEmployeeCategory = paymentCategories.find(
+      (category) =>
+        category.id === newEmployee.employment_category_id ||
+        category.uuid === newEmployee.employment_category_id,
+    );
+    if (
+      newEmployeeCategory?.payroll_frequency !== 'MONTHLY' &&
+      newEmployee.contract_start_date &&
+      newEmployee.contract_end_date &&
+      new Date(newEmployee.contract_end_date).getTime() <= new Date(newEmployee.contract_start_date).getTime()
+    ) {
+      toast({
+        variant: "destructive",
+        title: "Invalid contract dates",
+        description: "The contract end date must be later than the contract start date.",
+      });
       return;
     }
 
@@ -1173,71 +1364,65 @@ export default function EmployeeDirectoryPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-headline font-bold">Employee Assets</h1>
-          <p className="text-muted-foreground">Comprehensive database of all registered corporate personnel.</p>
-        </div>
-        <div className="flex items-center gap-3">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" className="h-11 px-6 shadow-sm border-dashed">
-                <Download className="mr-2 h-4 w-4" /> Export Data
+      <PageHeader
+        title="Employee Assets"
+        description="Comprehensive database of all registered corporate personnel."
+        actions={
+          <>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" className="h-11 px-6 shadow-sm border-dashed">
+                  <Download01 className="mr-2 h-4 w-4 text-black" size={16} /> Export Data
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent>
+                <DropdownMenuItem onClick={() => handleExport('csv')}>Export as CSV</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleExport('excel')}>Export as Excel</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            {canCreateEmployee && (
+              <Button
+                variant="outline"
+                className="h-11 px-6 border-dashed"
+                onClick={() => setIsBulkImportOpen(true)}
+              >
+                <Upload01 className="mr-2 h-4 w-4 text-black" size={16} /> Bulk Import
               </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent>
-              <DropdownMenuItem onClick={() => handleExport('csv')}>Export as CSV</DropdownMenuItem>
-              <DropdownMenuItem onClick={() => handleExport('excel')}>Export as Excel</DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-          {canCreateEmployee && (
-            <Button 
-              variant="outline"
-              className="h-11 px-6 border-dashed"
-              onClick={() => setIsBulkImportOpen(true)}
-            >
-              <Upload className="mr-2 h-4 w-4" /> Bulk Import
-            </Button>
-          )}
-          {canCreateEmployee && (
-            <Button 
-              className="h-11 px-6 shadow-lg shadow-primary/20"
-              onClick={() => setIsAddingEmployee(true)}
-            >
-              <UserPlus className="mr-2 h-4 w-4" /> Create Employee
-            </Button>
-          )}
-        </div>
-      </div>
+            )}
+            {canCreateEmployee && (
+              <Button
+                className="h-11 px-6 shadow-lg shadow-primary/20"
+                onClick={() => setIsAddingEmployee(true)}
+              >
+                <UserPlus01 className="mr-2 h-4 w-4 text-primary-foreground" size={16} /> Create Employee
+              </Button>
+            )}
+          </>
+        }
+      />
 
-      <Card className="border-none shadow-sm w-fit">
-        <CardContent className="py-4 px-5 flex items-center gap-4">
-          <div className="h-11 w-11 rounded-xl bg-primary/10 flex items-center justify-center">
-            <Users className="h-5 w-5 text-primary" />
-          </div>
-          <div>
-            <p className="text-2xl font-bold leading-none">{filtered.length}</p>
-            <p className="text-xs text-muted-foreground mt-1">
-              {activeFilterCount > 0 || searchTerm ? 'Matching employees' : 'Total employees'}
-            </p>
-          </div>
-        </CardContent>
-      </Card>
+      <StatCard
+        icon={<Users01 size={20} />}
+        label={activeFilterCount > 0 || searchTerm ? 'Matching employees' : 'Total employees'}
+        value={filtered.length}
+        tone="primary"
+        className="w-fit"
+      />
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="relative col-span-2">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <SearchMd className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-black" size={16} />
           <Input
             placeholder="Search by ID, Name, Department..."
-            className="pl-10 h-11 border-none bg-white shadow-sm"
+            className="pl-10 h-11 border-none bg-card shadow-sm"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
         </div>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="outline" className="h-11 gap-2 border-dashed bg-white">
-              <Filter className="h-4 w-4" />
+            <Button variant="outline" className="h-11 gap-2 border-dashed bg-card">
+              <FilterFunnel01 className="h-4 w-4 text-black" size={16} />
               More Filters
               {activeFilterCount > 0 && <Badge variant="secondary">{activeFilterCount}</Badge>}
             </Button>
@@ -1246,111 +1431,118 @@ export default function EmployeeDirectoryPage() {
             {!isLocationScopedManager && (
               <>
                 <DropdownMenuLabel className="px-0">Working Location</DropdownMenuLabel>
-                <select
-                  aria-label="Filter by working location"
-                  className="mb-3 h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                <Select
                   value={filters.location}
-                  onChange={(event) =>
+                  onValueChange={(value) =>
                     setFilters((current) => ({
                       ...current,
-                      location: event.target.value,
+                      location: value,
                       department: 'ALL',
                     }))
                   }
                 >
-                  <option value="ALL">All scoped locations</option>
-                  {locations.map((location) => (
-                    <option key={location.uuid} value={String(location.id ?? location.uuid)}>
-                      {formatDisplayName(location.name)}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger aria-label="Filter by working location" className="mb-3 h-9 text-sm">
+                    <SelectValue placeholder="All scoped locations" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ALL">All scoped locations</SelectItem>
+                    {locations.map((location) => (
+                      <SelectItem key={location.uuid} value={String(location.id ?? location.uuid)}>
+                        {formatDisplayName(location.name)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </>
             )}
 
             <DropdownMenuLabel className="px-0">Department</DropdownMenuLabel>
-            <select
-              aria-label="Filter by department"
-              className="mb-3 h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+            <Select
               value={filters.department}
-              onChange={(event) =>
-                setFilters((current) => ({ ...current, department: event.target.value }))
-              }
+              onValueChange={(value) => setFilters((current) => ({ ...current, department: value }))}
             >
-              <option value="ALL">All scoped departments</option>
-              {departments
-                .filter(
-                  (department) =>
-                    filters.location === 'ALL' ||
-                    String(department.working_location_id) === filters.location,
-                )
-                .map((department) => (
-                  <option key={department.uuid} value={String(department.id ?? department.uuid)}>
-                    {formatDisplayName(department.name)}
-                  </option>
-                ))}
-            </select>
+              <SelectTrigger aria-label="Filter by department" className="mb-3 h-9 text-sm">
+                <SelectValue placeholder="All scoped departments" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ALL">All scoped departments</SelectItem>
+                {departments
+                  .filter(
+                    (department) =>
+                      filters.location === 'ALL' ||
+                      String(department.working_location_id) === filters.location,
+                  )
+                  .map((department) => (
+                    <SelectItem key={department.uuid} value={String(department.id ?? department.uuid)}>
+                      {formatDisplayName(department.name)}
+                    </SelectItem>
+                  ))}
+              </SelectContent>
+            </Select>
 
             <DropdownMenuLabel className="px-0">Employment Category</DropdownMenuLabel>
-            <select
-              aria-label="Filter by employment category"
-              className="mb-3 h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+            <Select
               value={filters.category}
-              onChange={(event) =>
-                setFilters((current) => ({ ...current, category: event.target.value }))
-              }
+              onValueChange={(value) => setFilters((current) => ({ ...current, category: value }))}
             >
-              <option value="ALL">All categories</option>
-              {paymentCategories.map((category) => (
-                <option key={category.uuid ?? category.id} value={String(category.id ?? category.uuid)}>
-                  {category.name}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger aria-label="Filter by employment category" className="mb-3 h-9 text-sm">
+                <SelectValue placeholder="All categories" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ALL">All categories</SelectItem>
+                {paymentCategories.map((category) => (
+                  <SelectItem key={category.uuid ?? category.id} value={String(category.id ?? category.uuid)}>
+                    {category.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
 
             {assignableTaxOptions.length > 0 && (
               <>
                 <DropdownMenuLabel className="px-0">Tax Type</DropdownMenuLabel>
-                <select
-                  aria-label="Filter by tax type"
-                  className="mb-3 h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                <Select
                   value={filters.tax}
-                  onChange={(event) =>
-                    setFilters((current) => ({ ...current, tax: event.target.value }))
-                  }
+                  onValueChange={(value) => setFilters((current) => ({ ...current, tax: value }))}
                 >
-                  <option value="ALL">All tax assignments</option>
-                  {assignableTaxOptions.map(({ tax, deductionType }) => (
-                    <option key={tax.uuid} value={String(deductionType.id)}>
-                      {tax.name}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger aria-label="Filter by tax type" className="mb-3 h-9 text-sm">
+                    <SelectValue placeholder="All tax assignments" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ALL">All tax assignments</SelectItem>
+                    {assignableTaxOptions.map(({ tax, deductionType }) => (
+                      <SelectItem key={tax.uuid} value={String(deductionType.id)}>
+                        {tax.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </>
             )}
 
             <DropdownMenuLabel className="px-0">Status</DropdownMenuLabel>
-            <select
-              aria-label="Filter by employee status"
-              className="mb-3 h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+            <Select
               value={filters.status}
-              onChange={(event) =>
-                setFilters((current) => ({ ...current, status: event.target.value }))
-              }
+              onValueChange={(value) => setFilters((current) => ({ ...current, status: value }))}
             >
-              <option value="ALL">All statuses</option>
-              <option value="ACTIVE">Active</option>
-              <option value="SUSPENDED">Suspended</option>
-              <option value="PENDING">Pending</option>
-              <option value="REJECTED">Rejected</option>
-            </select>
+              <SelectTrigger aria-label="Filter by employee status" className="mb-3 h-9 text-sm">
+                <SelectValue placeholder="All statuses" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ALL">All statuses</SelectItem>
+                <SelectItem value="ACTIVE">Active</SelectItem>
+                <SelectItem value="SUSPENDED">Suspended</SelectItem>
+                <SelectItem value="PENDING">Pending</SelectItem>
+                <SelectItem value="REJECTED">Rejected</SelectItem>
+              </SelectContent>
+            </Select>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={resetFilters}>Clear filters</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
 
-      <div className="bg-white rounded-2xl border shadow-sm overflow-hidden">
+      <div className="bg-card rounded-2xl border border-border shadow-sm overflow-hidden">
         <Table>
           <TableHeader className="bg-secondary/50">
             <TableRow>
@@ -1373,7 +1565,7 @@ export default function EmployeeDirectoryPage() {
                 <TableRow className="bg-secondary/40 hover:bg-secondary/40">
                   <TableCell colSpan={6} className="py-2">
                     <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-muted-foreground">
-                      <MapPin className="h-3.5 w-3.5" /> {emp.location || 'Unassigned location'}
+                      <MarkerPin01 className="h-3.5 w-3.5" size={14} /> {emp.location || 'Unassigned location'}
                       <span className="font-normal normal-case text-muted-foreground/80">
                         · {locationCounts[emp.location] ?? 0} employee{(locationCounts[emp.location] ?? 0) === 1 ? '' : 's'}
                       </span>
@@ -1399,10 +1591,10 @@ export default function EmployeeDirectoryPage() {
                 <TableCell>
                   <div className="flex flex-col gap-1">
                     <div className="flex items-center gap-1.5 text-xs font-medium">
-                      <Building2 className="h-3 w-3 text-muted-foreground" /> {emp.department}
+                      <Building02 className="h-3 w-3 text-muted-foreground" size={12} /> {emp.department}
                     </div>
                     <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                      <MapPin className="h-3 w-3" /> {emp.location}
+                      <MarkerPin01 className="h-3 w-3" size={12} /> {emp.location}
                     </div>
                     <Badge variant="outline" className="w-fit text-[10px]">
                       {emp.employmentCategory}
@@ -1411,12 +1603,12 @@ export default function EmployeeDirectoryPage() {
                 </TableCell>
                 <TableCell>
                   <div className="flex items-center gap-1.5 font-bold">
-                    <CreditCard className="h-4 w-4 text-emerald-600" /> {formatRwf(emp.salary)}
+                    <BankNote01 className="h-4 w-4 text-success" size={16} /> {formatRwf(emp.salary)}
                   </div>
                 </TableCell>
                 <TableCell>
                   <div className="flex items-center gap-2">
-                    <Activity className="h-4 w-4 text-blue-500" />
+                    <Activity className="h-4 w-4 text-info" size={16} />
                     <div className="flex flex-col">
                       <span className="text-sm font-medium">{emp.attendanceRate}%</span>
                       <span className="text-[10px] text-muted-foreground">
@@ -1431,12 +1623,12 @@ export default function EmployeeDirectoryPage() {
                 <TableCell>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon"><MoreVertical className="h-4 w-4" /></Button>
+                      <Button variant="ghost" size="icon"><DotsVertical className="h-4 w-4 text-black" size={16} /></Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
                       {canUpdateEmployee && (
                         <DropdownMenuItem onClick={() => handleEditClick(emp)}>
-                          <Edit className="mr-2 h-4 w-4" /> Edit Profile
+                          <Edit05 className="mr-2 h-4 w-4" size={16} /> Edit Profile
                         </DropdownMenuItem>
                       )}
                       {hasPermission('employees.transfer') && (
@@ -1466,18 +1658,18 @@ export default function EmployeeDirectoryPage() {
                             setTransferDepartments([]);
                           }
                         }}>
-                          <MapPin className="mr-2 h-4 w-4" /> Transfer Employee
+                          <MarkerPin01 className="mr-2 h-4 w-4" size={16} /> Transfer Employee
                         </DropdownMenuItem>
                       )}
                       <DropdownMenuItem onClick={() => handleViewDetails(emp)}>
-                        <Eye className="mr-2 h-4 w-4" /> View Details
+                        <Eye className="mr-2 h-4 w-4" size={16} /> View Details
                       </DropdownMenuItem>
                       {hasPermission('employees.suspend') && (
-                        <DropdownMenuItem 
+                        <DropdownMenuItem
                           className="text-destructive"
                           onClick={() => setDeleteId(emp.id)}
                         >
-                          <Trash2 className="mr-2 h-4 w-4" /> Terminate
+                          <UserX01 className="mr-2 h-4 w-4" size={16} /> Terminate
                         </DropdownMenuItem>
                       )}
                     </DropdownMenuContent>
@@ -1563,7 +1755,7 @@ export default function EmployeeDirectoryPage() {
             <div className="space-y-2">
               <Label>Phone Number</Label>
               <div className="relative">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 font-medium">+250</span>
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground font-medium">+250</span>
                 <Input 
                   placeholder="788 000 000"
                   value={newEmployee.phone_number}
@@ -1583,39 +1775,40 @@ export default function EmployeeDirectoryPage() {
             {!isLocationScopedManager && (
               <div className="space-y-2">
                 <Label>Location</Label>
-                <select 
-                  aria-label="Employee location"
-                  className="w-full h-10 px-3 rounded-md border border-input bg-background"
+                <Select
                   value={newEmployee.working_location_id}
-                  onChange={e => handleLocationChange(e.target.value)}
+                  onValueChange={(value) => handleLocationChange(value)}
                 >
-                  <option value="">Select Location</option>
-                  {locations.map(l => <option key={l.uuid} value={l.uuid}>{formatDisplayName(l.name)}</option>)}
-                </select>
+                  <SelectTrigger aria-label="Employee location" className="w-full">
+                    <SelectValue placeholder="Select Location" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {locations.map(l => <SelectItem key={l.uuid} value={l.uuid}>{formatDisplayName(l.name)}</SelectItem>)}
+                  </SelectContent>
+                </Select>
               </div>
             )}
             <div className="space-y-2">
               <Label>Department</Label>
-              <select 
-                aria-label="Employee department"
-                className="w-full h-10 px-3 rounded-md border border-input bg-background"
+              <Select
                 value={newEmployee.department_id}
-                onChange={e => setNewEmployee(p => ({...p, department_id: e.target.value}))}
+                onValueChange={(value) => setNewEmployee(p => ({...p, department_id: value}))}
                 disabled={!isLocationScopedManager && !newEmployee.working_location_id}
               >
-                <option value="">{isLocationScopedManager || newEmployee.working_location_id ? "Select Department" : "Select Location First"}</option>
-                {filteredDepartments.map(d => <option key={d.uuid} value={d.uuid}>{formatDisplayName(d.name)}</option>)}
-              </select>
+                <SelectTrigger aria-label="Employee department" className="w-full">
+                  <SelectValue placeholder={isLocationScopedManager || newEmployee.working_location_id ? "Select Department" : "Select Location First"} />
+                </SelectTrigger>
+                <SelectContent>
+                  {filteredDepartments.map(d => <SelectItem key={d.uuid} value={d.uuid}>{formatDisplayName(d.name)}</SelectItem>)}
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="space-y-2">
               <Label>Payment Category</Label>
-              <select
-                aria-label="Employee payment category"
-                className="w-full h-10 px-3 rounded-md border border-input bg-background font-bold text-xs"
+              <Select
                 value={newEmployee.employment_category_id}
-                onChange={e => {
-                  const catId = e.target.value;
+                onValueChange={(catId) => {
                   const cat = paymentCategories.find(c => c.id === catId || c.uuid === catId);
                   setNewEmployee(p => {
                     const next = { ...p, employment_category_id: catId };
@@ -1628,13 +1821,17 @@ export default function EmployeeDirectoryPage() {
                   });
                 }}
               >
-                <option value="">Select Category</option>
+                <SelectTrigger aria-label="Employee payment category" className="w-full font-bold text-xs">
+                  <SelectValue placeholder="Select Category" />
+                </SelectTrigger>
+                <SelectContent>
                 {paymentCategories.map(category => (
-                  <option key={category.id} value={category.id}>
+                  <SelectItem key={category.id} value={category.id}>
                     {category.name}
-                  </option>
+                  </SelectItem>
                 ))}
-              </select>
+                </SelectContent>
+              </Select>
             </div>
 
             {selectedFrequency && selectedFrequency !== 'MONTHLY' && (
@@ -1702,25 +1899,25 @@ export default function EmployeeDirectoryPage() {
                   <p className="text-[10px] text-muted-foreground italic mt-1">* PIT applies automatically. Other configured taxes can be assigned below.</p>
                 </div>
 
-                <div className="p-3 bg-emerald-50 border border-emerald-100 rounded-xl space-y-3">
-                  <p className="text-[10px] font-bold text-emerald-700 uppercase tracking-widest">Employee Benefits (Allowances)</p>
+                <div className="p-3 bg-success/10 border border-success/20 rounded-xl space-y-3">
+                  <p className="text-[10px] font-bold text-success uppercase tracking-widest">Employee Benefits (Allowances)</p>
                   <div className="space-y-2">
-                    <Label className="text-emerald-800">Allowance Title</Label>
+                    <Label className="text-success">Allowance Title</Label>
                     <Input
                       placeholder="e.g. Transport Allowance"
                       value={newEmployee.allowance_title}
                       onChange={e => setNewEmployee(p => ({ ...p, allowance_title: e.target.value }))}
-                      className="bg-white border-emerald-200"
+                      className="bg-card border-success/30"
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label className="text-emerald-800">Allowance Amount (RWF)</Label>
+                    <Label className="text-success">Allowance Amount (RWF)</Label>
                     <Input
                       type="number"
                       placeholder="e.g. 50000"
                       value={newEmployee.allowance_amount}
                       onChange={e => setNewEmployee(p => ({ ...p, allowance_amount: e.target.value }))}
-                      className="bg-white border-emerald-200"
+                      className="bg-card border-success/30"
                     />
                   </div>
                 </div>
@@ -1753,45 +1950,45 @@ export default function EmployeeDirectoryPage() {
                 </div>
 
                 {getDaysBetween(newEmployee.contract_start_date, newEmployee.contract_end_date) > 21 ? (
-                  <div className="p-3 bg-emerald-50 border border-emerald-100 rounded-xl space-y-3">
-                    <p className="text-[10px] font-bold text-emerald-700 uppercase tracking-widest">Full Benefits Applied (&gt; 21 Days)</p>
+                  <div className="p-3 bg-success/10 border border-success/20 rounded-xl space-y-3">
+                    <p className="text-[10px] font-bold text-success uppercase tracking-widest">Full Benefits Applied (&gt; 21 Days)</p>
                     <div className="space-y-2">
-                      <Label className="text-emerald-800">Allowance Title</Label>
+                      <Label className="text-success">Allowance Title</Label>
                       <Input
                         placeholder="e.g. Performance Bonus"
                         value={newEmployee.allowance_title}
                         onChange={e => setNewEmployee(p => ({ ...p, allowance_title: e.target.value }))}
-                        className="bg-white border-emerald-200"
+                        className="bg-card border-success/30"
                       />
                     </div>
                     <div className="space-y-2">
-                      <Label className="text-emerald-800">Allowance Amount (RWF)</Label>
+                      <Label className="text-success">Allowance Amount (RWF)</Label>
                       <Input
                         type="number"
                         placeholder="e.g. 50000"
                         value={newEmployee.allowance_amount}
                         onChange={e => setNewEmployee(p => ({ ...p, allowance_amount: e.target.value }))}
-                        className="bg-white border-emerald-200"
+                        className="bg-card border-success/30"
                       />
                     </div>
                   </div>
                 ) : (
-                  <p className="text-[10px] text-amber-600 italic">* Benefits are only applied for contracts over 21 days.</p>
+                  <p className="text-[10px] text-warning italic">* Benefits are only applied for contracts over 21 days.</p>
                 )}
               </div>
             )}
 
             {editingEmployee && canManageDeductions && (
-              <div className="p-3 bg-slate-50 border rounded-xl space-y-4">
+              <div className="p-3 bg-secondary/30 border border-border rounded-xl space-y-4">
                 <div className="flex items-center justify-between gap-3">
-                  <p className="text-[10px] font-bold text-slate-700 uppercase tracking-widest">Employee Deductions / Taxes</p>
+                  <p className="text-[10px] font-bold text-foreground uppercase tracking-widest">Employee Deductions / Taxes</p>
                   <Badge variant="outline">{editDeductions.filter((deduction) => deduction.is_active).length} Active</Badge>
                 </div>
 
                 {selectedFrequency === 'MONTHLY' ? (
                   <>
                     {editDeductions.length > 0 && (
-                      <div className="divide-y rounded-lg border bg-white">
+                      <div className="divide-y rounded-lg border border-border bg-card">
                         {editDeductions.map((deduction) => {
                           const type = deduction.deduction_type;
                           const matchingTax = monthlyTaxes.find(
@@ -1828,7 +2025,7 @@ export default function EmployeeDirectoryPage() {
                           return (
                             <label
                               key={tax.uuid}
-                              className="flex cursor-pointer items-start gap-3 rounded-lg border bg-white p-3"
+                              className="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-card p-3"
                             >
                               <Checkbox
                                 checked={checked}
@@ -1861,7 +2058,7 @@ export default function EmployeeDirectoryPage() {
                     </div>
                   </>
                 ) : (
-                  <p className="rounded-lg border bg-white p-3 text-xs text-muted-foreground">
+                  <p className="rounded-lg border border-border bg-card p-3 text-xs text-muted-foreground">
                     Additional tax deductions can only be assigned to employees in the Monthly payment category.
                   </p>
                 )}
@@ -1880,7 +2077,7 @@ export default function EmployeeDirectoryPage() {
             >
                {isSubmitting ? (
                  <>
-                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                   <Loading02 className="mr-2 h-4 w-4 animate-spin" size={16} />
                    {editingEmployee ? 'Updating...' : 'Creating...'}
                  </>
                ) : (
@@ -1981,7 +2178,7 @@ export default function EmployeeDirectoryPage() {
                             {deduction.is_active ? 'Active' : 'Inactive'} · effective {new Date(matchingTax?.effective_from ?? deduction.start_date).toLocaleDateString()}
                           </p>
                         </div>
-                        <Badge className="bg-emerald-500/10 text-emerald-700 border-emerald-500/20">
+                        <Badge className="bg-success/10 text-success border-success/20">
                           {value}
                         </Badge>
                       </div>
@@ -2031,9 +2228,10 @@ export default function EmployeeDirectoryPage() {
                             {isOvertime && ' · overtime payable'}
                           </p>
                         </div>
-                        <Badge className={rec.attendance_status === 'PRESENT' ? 'bg-emerald-500/10 text-emerald-600' : 'bg-rose-500/10 text-rose-600'}>
-                          {rec.attendance_status}
-                        </Badge>
+                        <StatusBadge
+                          label={rec.attendance_status}
+                          tone={rec.attendance_status === 'PRESENT' ? 'success' : 'destructive'}
+                        />
                       </div>
                     );
                   }) : (
@@ -2067,11 +2265,11 @@ export default function EmployeeDirectoryPage() {
         setIsBulkImportOpen(open);
         if (!open) setImportFile(null);
       }}>
-        <DialogContent className="max-w-md bg-white rounded-3xl p-6 border shadow-lg">
+        <DialogContent className="max-w-md bg-card rounded-3xl p-6 border border-border shadow-lg">
           <DialogHeader>
             <DialogTitle className="text-xl font-bold">Bulk Import Employees</DialogTitle>
-            <DialogDescription className="text-sm text-slate-500">
-              Download the template, fill it in, then upload it here. Required columns are first_name and last_name; the rest are optional.
+            <DialogDescription className="text-sm text-muted-foreground">
+              Download the template and fill in its "Employees" sheet only — that's the one and only sheet to upload back here. Required columns are first_name and last_name; the rest are optional. Gender, department, employment category{isBranchManagerActor ? '' : ' and branch'} are dropdowns, and contract dates use the YYYY-MM-DD format our system requires.
               {isBranchManagerActor && ' Employees you import are automatically assigned to your branch.'}
             </DialogDescription>
           </DialogHeader>
@@ -2082,22 +2280,22 @@ export default function EmployeeDirectoryPage() {
             onClick={handleDownloadTemplate}
             className="w-full h-10 rounded-xl text-xs font-semibold border-dashed"
           >
-            <Download className="mr-2 h-4 w-4" /> Download Template
+            <Download01 className="mr-2 h-4 w-4 text-black" size={16} /> Download Template
           </Button>
 
           <div className="space-y-4 my-4">
             <div
-              className="border-2 border-dashed border-slate-200 hover:border-slate-300 transition-colors rounded-2xl p-6 text-center cursor-pointer bg-slate-50/50"
+              className="border-2 border-dashed border-border hover:border-muted-foreground/50 transition-colors rounded-2xl p-6 text-center cursor-pointer bg-secondary/20"
               onClick={() => {
                 const el = document.getElementById('bulk-employee-file-input');
                 el?.click();
               }}
             >
-              <Upload className="mx-auto h-8 w-8 text-slate-400 mb-2" />
-              <p className="text-xs text-slate-600 font-medium">
+              <Upload01 className="mx-auto h-8 w-8 text-muted-foreground mb-2" size={32} />
+              <p className="text-xs text-foreground font-medium">
                 {importFile ? importFile.name : 'Click to select Excel/CSV file'}
               </p>
-              <p className="text-[10px] text-slate-400 mt-1">Maximum size 5MB, up to 500 employees</p>
+              <p className="text-[10px] text-muted-foreground mt-1">Maximum size 5MB, up to 500 employees</p>
               <input
                 id="bulk-employee-file-input"
                 type="file"
@@ -2125,11 +2323,11 @@ export default function EmployeeDirectoryPage() {
             <Button
               onClick={handleBulkImport}
               disabled={!importFile || importingBulk}
-              className="h-10 rounded-xl text-xs font-semibold px-6 bg-slate-900 text-white hover:bg-slate-800"
+              className="h-10 rounded-xl text-xs font-semibold px-6 bg-accent text-accent-foreground hover:bg-accent/90"
             >
               {importingBulk ? (
                 <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  <Loading02 className="mr-2 h-4 w-4 animate-spin" size={16} />
                   Importing...
                 </>
               ) : (
@@ -2141,7 +2339,7 @@ export default function EmployeeDirectoryPage() {
       </Dialog>
 
       <Dialog open={!!transferEmployeeData} onOpenChange={(open) => !open && setTransferEmployeeData(null)}>
-        <DialogContent className="sm:max-w-[425px] bg-white border-none shadow-2xl rounded-2xl">
+        <DialogContent className="sm:max-w-[425px] bg-card border-none shadow-2xl rounded-2xl">
           <DialogHeader>
             <DialogTitle className="text-xl font-headline font-bold">Transfer Employee</DialogTitle>
             <DialogDescription className="text-muted-foreground text-sm">
@@ -2151,60 +2349,61 @@ export default function EmployeeDirectoryPage() {
           <div className="grid gap-5 py-4">
             <div className="rounded-2xl bg-secondary/10 p-4 text-xs space-y-2 border border-secondary/20">
               <p className="font-bold text-[10px] uppercase tracking-wider text-muted-foreground">Employee details</p>
-              <p className="font-bold text-base text-slate-800">{transferEmployeeData?.fullName}</p>
-              
-              <div className="grid grid-cols-2 gap-4 pt-3 mt-2 border-t border-slate-200/60">
+              <p className="font-bold text-base text-foreground">{transferEmployeeData?.fullName}</p>
+
+              <div className="grid grid-cols-2 gap-4 pt-3 mt-2 border-t border-border">
                 <div>
                   <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider">Current Location</p>
-                  <p className="font-bold text-xs text-slate-700 mt-1">{transferEmployeeData?.location || 'Unassigned'}</p>
+                  <p className="font-bold text-xs text-foreground mt-1">{transferEmployeeData?.location || 'Unassigned'}</p>
                 </div>
                 <div>
                   <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider">Current Department</p>
-                  <p className="font-bold text-xs text-slate-700 mt-1">{transferEmployeeData?.department || 'Unassigned'}</p>
+                  <p className="font-bold text-xs text-foreground mt-1">{transferEmployeeData?.department || 'Unassigned'}</p>
                 </div>
               </div>
             </div>
 
             <div className="space-y-2">
-              <Label className="text-xs font-bold text-slate-700 uppercase tracking-wider">Target Location</Label>
-              <select
-                aria-label="Target Location"
-                className="w-full h-11 px-3 rounded-xl border border-slate-200 bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-                value={transferLocationId}
-                onChange={(e) => handleTransferLocationChange(e.target.value)}
-              >
-                <option value="">Select Location</option>
-                {transferLocations.map(l => (
-                  <option key={l.uuid} value={l.uuid}>
-                    {formatDisplayName(l.name)}
-                  </option>
-                ))}
-              </select>
+              <Label className="text-xs font-bold text-foreground uppercase tracking-wider">Target Location</Label>
+              <Select value={transferLocationId} onValueChange={(value) => handleTransferLocationChange(value)}>
+                <SelectTrigger aria-label="Target Location" className="w-full h-11 rounded-xl text-sm">
+                  <SelectValue placeholder="Select Location" />
+                </SelectTrigger>
+                <SelectContent>
+                  {transferLocations.map(l => (
+                    <SelectItem key={l.uuid} value={l.uuid}>
+                      {formatDisplayName(l.name)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="space-y-2">
-              <Label className="text-xs font-bold text-slate-700 uppercase tracking-wider">Target Department</Label>
-              <select
-                aria-label="Target Department"
-                className="w-full h-11 px-3 rounded-xl border border-slate-200 bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+              <Label className="text-xs font-bold text-foreground uppercase tracking-wider">Target Department</Label>
+              <Select
                 value={transferDepartmentId}
-                onChange={(e) => setTransferDepartmentId(e.target.value)}
+                onValueChange={setTransferDepartmentId}
                 disabled={!transferLocationId}
               >
-                <option value="">{transferLocationId ? "Select Department" : "Select Location First"}</option>
-                {transferDepartments.map(d => (
-                  <option key={d.uuid} value={d.uuid}>
-                    {formatDisplayName(d.name)}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger aria-label="Target Department" className="w-full h-11 rounded-xl text-sm">
+                  <SelectValue placeholder={transferLocationId ? "Select Department" : "Select Location First"} />
+                </SelectTrigger>
+                <SelectContent>
+                  {transferDepartments.map(d => (
+                    <SelectItem key={d.uuid} value={d.uuid}>
+                      {formatDisplayName(d.name)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="space-y-2">
-              <Label className="text-xs font-bold text-slate-700 uppercase tracking-wider">Reason for Transfer</Label>
+              <Label className="text-xs font-bold text-foreground uppercase tracking-wider">Reason for Transfer</Label>
               <textarea
                 aria-label="Reason for Transfer"
-                className="w-full min-h-[90px] p-3 rounded-xl border border-slate-200 bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                className="w-full min-h-[90px] p-3 rounded-xl border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                 placeholder="Describe the reason for transfer..."
                 value={transferReason}
                 onChange={(e) => setTransferReason(e.target.value)}
@@ -2218,7 +2417,7 @@ export default function EmployeeDirectoryPage() {
             <Button className="rounded-xl bg-primary hover:bg-primary/95" onClick={handleTransferSubmit} disabled={isSubmitting || !transferLocationId || !transferDepartmentId}>
               {isSubmitting ? (
                 <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  <Loading02 className="mr-2 h-4 w-4 animate-spin" size={16} />
                   Submitting...
                 </>
               ) : (

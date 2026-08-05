@@ -6,16 +6,15 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 import Link from 'next/link';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
-import { LogIn, UserPlus, Eye, EyeOff } from 'lucide-react';
-import Image from 'next/image';
+import { LogIn01, UserPlus01, Eye, EyeOff } from '@untitledui/icons';
 import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/hooks/use-toast';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { getWorkingLocations, getDepartments, WorkingLocation, Department } from '@/api/working_locations';
+import { AuthShell } from '@/components/auth/auth-shell';
 
 const loginSchema = z.object({
   identifier: z.string().min(3, "Email or Phone number is required"),
@@ -132,282 +131,261 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="relative min-h-screen flex items-center justify-center overflow-hidden bg-slate-950 px-4">
-      {/* Liquid Animation Background */}
-      <div className="absolute inset-0 z-0">
-        <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] bg-red-600/20 rounded-full blur-[120px] animate-blob" />
-        <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] bg-blue-600/20 rounded-full blur-[120px] animate-blob animation-delay-2000" />
-        <div className="absolute top-[20%] right-[10%] w-[40%] h-[40%] bg-purple-600/10 rounded-full blur-[100px] animate-blob animation-delay-4000" />
-        <div className="absolute bottom-[20%] left-[10%] w-[30%] h-[30%] bg-red-500/10 rounded-full blur-[80px] animate-blob animation-delay-6000" />
-      </div>
-      
-      <div className="z-10 w-full max-w-[450px]">
-        <div className="flex flex-col items-center mb-8">
-          <div className="bg-white p-2 rounded-2xl shadow-xl mb-4 border-2 border-primary/10 overflow-hidden">
-            <Image 
-              src="/pics/reg-logo.png" 
-              alt="REG Logo" 
-              width={60} 
-              height={60} 
-              className="h-[60px] w-[60px] object-contain"
-            />
-          </div>
-          <h1 className="text-4xl font-headline font-bold mb-2">
-            <span className="text-white">Welcome to </span>
-            <span className="text-red-600">REG </span>
-            <span className="text-[#1e1b4b]">System</span>
-          </h1>
-          <p className="text-white/80 font-medium">Enterprise Payment Systems</p>
-        </div>
-
-        <Card className="shadow-2xl border-none bg-white">
-          <CardHeader className="pb-2">
-            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-              <TabsList className="grid w-full grid-cols-2 bg-gray-100">
-                <TabsTrigger value="login" className="data-[state=active]:bg-white text-[#1e1b4b]">Login</TabsTrigger>
-                <TabsTrigger value="register" className="data-[state=active]:bg-white text-[#1e1b4b]">Register</TabsTrigger>
-              </TabsList>
-            </Tabs>
-          </CardHeader>
-          <CardContent className="pt-4">
-            <Tabs value={activeTab}>
-              <TabsContent value="login">
-                <Form {...loginForm}>
-                  <form onSubmit={loginForm.handleSubmit(onLoginSubmit)} className="space-y-4">
-                    <FormField
-                      control={loginForm.control}
-                      name="identifier"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel className="text-[#1e1b4b]">Email / Phone number</FormLabel>
-                          <FormControl>
-                            <Input placeholder="admin@regnexus.com or +250..." {...field} className="border-[#1e1b4b]/20" />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={loginForm.control}
-                      name="password"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel className="text-[#1e1b4b]">Password</FormLabel>
-                          <FormControl>
-                            <div className="relative">
-                              <Input type={showPassword ? "text" : "password"} placeholder="••••••••" {...field} className="border-[#1e1b4b]/20 pr-10" />
-                              <button 
-                                type="button"
-                                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-[#1e1b4b]"
-                                onClick={() => setShowPassword(!showPassword)}
-                              >
-                                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-                              </button>
-                            </div>
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <div className="flex items-center justify-between py-1">
-                      <div className="flex items-center space-x-2">
-                        <input 
-                          type="checkbox" 
-                          id="remember" 
-                          checked={rememberMe} 
-                          onChange={(e) => setRememberMe(e.target.checked)}
-                          className="w-4 h-4 text-red-600 border-gray-300 rounded focus:ring-red-500"
-                        />
-                        <label htmlFor="remember" className="text-sm font-medium text-[#1e1b4b] cursor-pointer">Remember me</label>
-                      </div>
-                      <Button asChild variant="link" className="h-auto p-0 text-sm font-medium text-red-600">
-                        <Link href="/auth/forgot-password">Forgot password?</Link>
-                      </Button>
-                    </div>
-                    <Button type="submit" className="w-full font-semibold h-11 bg-red-600 hover:bg-red-700 active:shadow-[0_0_15px_rgba(30,27,75,0.4)] transition-all" disabled={loginForm.formState.isSubmitting}>
-                      <LogIn className="mr-2 h-4 w-4" /> Sign In
-                    </Button>
-                  </form>
-                </Form>
-              </TabsContent>
-              <TabsContent value="register">
-                <Form {...registerForm}>
-                  <form onSubmit={registerForm.handleSubmit(onRegisterSubmit)} className="space-y-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      <FormField
-                        control={registerForm.control}
-                        name="first_name"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel className="text-[#1e1b4b]">First Name</FormLabel>
-                            <FormControl>
-                              <Input placeholder="John" {...field} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={registerForm.control}
-                        name="last_name"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel className="text-[#1e1b4b]">Last Name</FormLabel>
-                            <FormControl>
-                              <Input placeholder="Doe" {...field} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    </div>
-                    <FormField
-                      control={registerForm.control}
-                      name="email"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel className="text-[#1e1b4b]">Email Address</FormLabel>
-                          <FormControl>
-                            <Input placeholder="john@company.com" {...field} />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={registerForm.control}
-                      name="phone_number"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel className="text-[#1e1b4b]">Phone Number</FormLabel>
-                          <FormControl>
-                            <div className="relative">
-                              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 font-medium">+250</span>
-                              <Input placeholder="788000000" {...field} className="pl-14" />
-                            </div>
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={registerForm.control}
-                      name="gender"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel className="text-[#1e1b4b]">Gender</FormLabel>
-                          <Select onValueChange={field.onChange} defaultValue={field.value}>
-                            <FormControl>
-                              <SelectTrigger>
-                                <SelectValue placeholder="Select gender" />
-                              </SelectTrigger>
-                            </FormControl>
-                            <SelectContent>
-                              <SelectItem value="MALE">Male</SelectItem>
-                              <SelectItem value="FEMALE">Female</SelectItem>
-                            </SelectContent>
-                          </Select>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={registerForm.control}
-                      name="working_location_id"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel className="text-[#1e1b4b]">Working Location</FormLabel>
-                          <Select onValueChange={(value) => { field.onChange(value); handleWorkingLocationChange(value); }} value={field.value}>
-                            <FormControl>
-                              <SelectTrigger>
-                                <SelectValue placeholder="Select working location" />
-                              </SelectTrigger>
-                            </FormControl>
-                            <SelectContent>
-                              {workingLocations.map((location) => (
-                                <SelectItem key={location.uuid} value={location.uuid}>
-                                  {location.name}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={registerForm.control}
-                      name="department_id"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel className="text-[#1e1b4b]">Department</FormLabel>
-                          <Select onValueChange={field.onChange} value={field.value} disabled={!selectedWorkingLocation}>
-                            <FormControl>
-                              <SelectTrigger>
-                                <SelectValue placeholder={selectedWorkingLocation ? "Select department" : "Select location first"} />
-                              </SelectTrigger>
-                            </FormControl>
-                            <SelectContent>
-                              {departments.map((dept) => (
-                                <SelectItem key={dept.uuid} value={dept.uuid}>
-                                  {dept.name}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={registerForm.control}
-                      name="password"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel className="text-[#1e1b4b]">Password</FormLabel>
-                          <FormControl>
-                            <div className="relative">
-                              <Input type={showPassword ? "text" : "password"} placeholder="••••••••" {...field} className="pr-10" />
-                              <button 
-                                type="button"
-                                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500"
-                                onClick={() => setShowPassword(!showPassword)}
-                              >
-                                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-                              </button>
-                            </div>
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={registerForm.control}
-                      name="confirmPassword"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel className="text-[#1e1b4b]">Confirm Password</FormLabel>
-                          <FormControl>
-                            <Input type="password" placeholder="••••••••" {...field} />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <Button type="submit" className="w-full font-semibold h-11 bg-red-600 hover:bg-red-700 active:shadow-[0_0_15px_rgba(30,27,75,0.4)] transition-all" disabled={registerForm.formState.isSubmitting}>
-                      <UserPlus className="mr-2 h-4 w-4" /> Create Account
-                    </Button>
-                  </form>
-                </Form>
-              </TabsContent>
-            </Tabs>
-          </CardContent>
-        </Card>
-        
-        <p className="text-center mt-6 text-white/40 text-sm">
-          Protected by AES-256 Enterprise Encryption
+    <AuthShell
+      illustration="/illustrations/auth-secure-login.svg"
+      illustrationAlt="Secure login illustration"
+      title="Welcome to REG Payment System"
+      subtitle="Sign in to manage payroll, attendance, and workforce payments across Rwanda Energy Group with enterprise-grade security."
+    >
+      <div className="mb-8">
+        <h1 className="font-headline text-2xl font-bold text-foreground mb-1">
+          {activeTab === "login" ? "Sign in to your account" : "Create your account"}
+        </h1>
+        <p className="text-muted-foreground text-sm">
+          {activeTab === "login" ? "Enter your credentials to continue" : "Fill in your details to request access"}
         </p>
       </div>
-    </div>
+
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+        <TabsList className="grid w-full grid-cols-2 bg-muted mb-6">
+          <TabsTrigger value="login" className="data-[state=active]:bg-background text-foreground">Login</TabsTrigger>
+          <TabsTrigger value="register" className="data-[state=active]:bg-background text-foreground">Register</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="login">
+          <Form {...loginForm}>
+            <form onSubmit={loginForm.handleSubmit(onLoginSubmit)} className="space-y-4">
+              <FormField
+                control={loginForm.control}
+                name="identifier"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-foreground">Email / Phone number</FormLabel>
+                    <FormControl>
+                      <Input placeholder="admin@regnexus.com or +250..." {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={loginForm.control}
+                name="password"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-foreground">Password</FormLabel>
+                    <FormControl>
+                      <div className="relative">
+                        <Input type={showPassword ? "text" : "password"} placeholder="••••••••" {...field} className="pr-10" />
+                        <button
+                          type="button"
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-black hover:text-foreground"
+                          onClick={() => setShowPassword(!showPassword)}
+                        >
+                          {showPassword ? <EyeOff size={18} className="text-black" /> : <Eye size={18} className="text-black" />}
+                        </button>
+                      </div>
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <div className="flex items-center justify-between py-1">
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    id="remember"
+                    checked={rememberMe}
+                    onChange={(e) => setRememberMe(e.target.checked)}
+                    className="w-4 h-4 text-primary border-border rounded focus:ring-ring"
+                  />
+                  <label htmlFor="remember" className="text-sm font-medium text-foreground cursor-pointer">Remember me</label>
+                </div>
+                <Button asChild variant="link" className="h-auto p-0 text-sm font-medium text-primary">
+                  <Link href="/auth/forgot-password">Forgot password?</Link>
+                </Button>
+              </div>
+              <Button type="submit" className="w-full font-semibold h-11 bg-primary hover:bg-primary/90 transition-colors" disabled={loginForm.formState.isSubmitting}>
+                <LogIn01 className="mr-2 h-4 w-4 text-white" size={16} /> Sign In
+              </Button>
+            </form>
+          </Form>
+        </TabsContent>
+        <TabsContent value="register">
+          <Form {...registerForm}>
+            <form onSubmit={registerForm.handleSubmit(onRegisterSubmit)} className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <FormField
+                  control={registerForm.control}
+                  name="first_name"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-foreground">First Name</FormLabel>
+                      <FormControl>
+                        <Input placeholder="John" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={registerForm.control}
+                  name="last_name"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-foreground">Last Name</FormLabel>
+                      <FormControl>
+                        <Input placeholder="Doe" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+              <FormField
+                control={registerForm.control}
+                name="email"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-foreground">Email Address</FormLabel>
+                    <FormControl>
+                      <Input placeholder="john@company.com" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={registerForm.control}
+                name="phone_number"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-foreground">Phone Number</FormLabel>
+                    <FormControl>
+                      <div className="relative">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground font-medium">+250</span>
+                        <Input placeholder="788000000" {...field} className="pl-14" />
+                      </div>
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={registerForm.control}
+                name="gender"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-foreground">Gender</FormLabel>
+                    <Select onValueChange={field.onChange} defaultValue={field.value}>
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select gender" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="MALE">Male</SelectItem>
+                        <SelectItem value="FEMALE">Female</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={registerForm.control}
+                name="working_location_id"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-foreground">Working Location</FormLabel>
+                    <Select onValueChange={(value) => { field.onChange(value); handleWorkingLocationChange(value); }} value={field.value}>
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select working location" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {workingLocations.map((location) => (
+                          <SelectItem key={location.uuid} value={location.uuid}>
+                            {location.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={registerForm.control}
+                name="department_id"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-foreground">Department</FormLabel>
+                    <Select onValueChange={field.onChange} value={field.value} disabled={!selectedWorkingLocation}>
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder={selectedWorkingLocation ? "Select department" : "Select location first"} />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {departments.map((dept) => (
+                          <SelectItem key={dept.uuid} value={dept.uuid}>
+                            {dept.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={registerForm.control}
+                name="password"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-foreground">Password</FormLabel>
+                    <FormControl>
+                      <div className="relative">
+                        <Input type={showPassword ? "text" : "password"} placeholder="••••••••" {...field} className="pr-10" />
+                        <button
+                          type="button"
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-black"
+                          onClick={() => setShowPassword(!showPassword)}
+                        >
+                          {showPassword ? <EyeOff size={18} className="text-black" /> : <Eye size={18} className="text-black" />}
+                        </button>
+                      </div>
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={registerForm.control}
+                name="confirmPassword"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-foreground">Confirm Password</FormLabel>
+                    <FormControl>
+                      <Input type="password" placeholder="••••••••" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <Button type="submit" className="w-full font-semibold h-11 bg-primary hover:bg-primary/90 transition-colors" disabled={registerForm.formState.isSubmitting}>
+                <UserPlus01 className="mr-2 h-4 w-4 text-white" size={16} /> Create Account
+              </Button>
+            </form>
+          </Form>
+        </TabsContent>
+      </Tabs>
+
+      <p className="text-center mt-8 text-muted-foreground text-xs">
+        Protected by AES-256 Enterprise Encryption
+      </p>
+    </AuthShell>
   );
 }
