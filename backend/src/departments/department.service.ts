@@ -155,16 +155,6 @@ export class DepartmentsService {
     }
 
     const q = normalizeSearch(qInput);
-    // Cache key includes the actor's working_location_id and user ID so that
-    // one actor's branch-scoped response never leaks to a different actor
-    // scoped to a different branch under a colliding key. SUPER_ADMIN calls
-    // without a specific location get 'all' (no branch scope to collide on).
-    const actorId = actor?.userId ?? 'anonymous';
-    const cacheKey = `departments_${workingLocationId ?? 'all'}_${q}_${actorId}`;
-
-    const cached = await this.cacheManager.get(cacheKey);
-    if (cached) return cached as any;
-
     const departments = await this.prisma.departments.findMany({
       where: {
         working_location_id: workingLocationId,
@@ -181,6 +171,11 @@ export class DepartmentsService {
       include: {
         working_locations: true,
         _count: { select: { users: true, employees: true } },
+        department_deactivation_requests: {
+          where: { status: 'PENDING' },
+          orderBy: { created_at: 'desc' },
+          take: 1,
+        },
       },
       orderBy: { name: 'asc' },
     });
@@ -188,7 +183,6 @@ export class DepartmentsService {
     const result = {
       departments: departments.map((d) => serializeDepartment(d)),
     };
-    await this.cacheManager.set(cacheKey, result, 60000);
     return result;
   }
 
@@ -272,38 +266,48 @@ export class DepartmentsService {
   async deleteDepartment(uuid: string, actor: CurrentUserType) {
     const current = await this.prisma.departments.findUnique({
       where: { uuid },
+      include: {
+        working_locations: true,
+        _count: { select: { users: true, employees: true } },
+        department_deactivation_requests: {
+          where: { status: 'PENDING' },
+          orderBy: { created_at: 'desc' },
+          take: 1,
+        },
+      },
     });
     if (!current) throw new NotFoundException('Department not found.');
     this.ensureActorCanManageDepartment(actor, current.working_location_id);
 
-    await this.prisma.$transaction(async (tx) => {
-      await tx.departments.updateMany({
-        where: {
-          code: current.code,
-          working_location_id: current.working_location_id,
-          status: 'ACTIVE',
-        },
-        data: { status: 'INACTIVE' },
-      });
+    if (current.status === 'INACTIVE') {
+      return {
+        message: 'Department is already archived.',
+        status: 'ARCHIVED',
+        department: serializeDepartment(current),
+      };
+    }
 
-      await tx.audit_logs.create({
-        data: {
-          user_id: BigInt(actor.userId),
-          entity_table: 'departments',
-          entity_id: current.id,
-          module_name: 'DEPARTMENTS',
-          activity_type: ACTIVITY_TYPE.UPDATE,
-          activity_description: 'Soft deleted department for working location.',
-          action: AUDIT_ACTION.UPDATED,
-          old_values: { status: current.status },
-          new_values: { status: 'INACTIVE' },
-        },
-      });
-    });
+    const remainingEmployees = await this.countAssignedEmployees(current.id);
 
-    await this.cacheManager.del('working_locations');
-    this.notificationsService.broadcast({ type: 'departments_updated' });
-    return { message: 'Department deleted' };
+    if (remainingEmployees > 0) {
+      return this.requestDepartmentDeactivation(
+        current,
+        actor,
+        remainingEmployees,
+      );
+    }
+
+    const archived = await this.archiveDepartmentNow(
+      current.id,
+      actor.userId,
+      'Archived empty department for working location.',
+    );
+
+    return {
+      message: 'Department archived.',
+      status: 'ARCHIVED',
+      department: serializeDepartment(archived),
+    };
   }
 
   // Toggles a department "on" for one specific working location - the
@@ -330,8 +334,12 @@ export class DepartmentsService {
     );
 
     const existing = await this.prisma.departments.findFirst({
-      where: { code, working_location_id: workingLocationId },
+      where: {
+        working_location_id: workingLocationId,
+        OR: [{ code }, { name: dto.name }],
+      },
       include: { working_locations: true },
+      orderBy: [{ status: 'desc' }, { created_at: 'asc' }],
     });
 
     if (existing?.status === 'ACTIVE') {
@@ -342,8 +350,8 @@ export class DepartmentsService {
     const activeDepartments = await this.prisma.departments.findMany({
       where: {
         status: 'ACTIVE',
-        code: { not: code },
         working_location_id: workingLocationId,
+        ...(existing ? { id: { not: existing.id } } : {}),
       },
       select: { name: true },
     });
@@ -360,7 +368,12 @@ export class DepartmentsService {
       const saved = existing
         ? await tx.departments.update({
             where: { id: existing.id },
-            data: { status: 'ACTIVE', name: dto.name, description: dto.description },
+            data: {
+              status: 'ACTIVE',
+              name: dto.name,
+              description: dto.description,
+              updated_at: new Date(),
+            },
             include: { working_locations: true },
           })
         : await tx.departments.create({
@@ -389,16 +402,278 @@ export class DepartmentsService {
           old_values: existing
             ? { status: existing.status }
             : Prisma.JsonNull,
-          new_values: { status: 'ACTIVE', code, name: dto.name },
+          new_values: {
+            status: 'ACTIVE',
+            code: saved.code,
+            name: dto.name,
+          },
         },
       });
 
-      return saved;
+      await tx.department_deactivation_requests.updateMany({
+        where: { department_id: saved.id, status: 'PENDING' },
+        data: {
+          status: 'CANCELLED',
+          remaining_employee_count: 0,
+          completed_by: BigInt(actor.userId),
+          completed_at: new Date(),
+          updated_at: new Date(),
+        },
+      });
+
+      return tx.departments.findUniqueOrThrow({
+        where: { id: saved.id },
+        include: {
+          working_locations: true,
+          _count: { select: { users: true, employees: true } },
+          department_deactivation_requests: {
+            where: { status: 'PENDING' },
+            orderBy: { created_at: 'desc' },
+            take: 1,
+          },
+        },
+      });
+    });
+
+    await this.cacheManager.del('working_locations');
+    await this.notificationsService.notifyBranchManager(workingLocationId, {
+      senderId: actor.userId,
+      title: 'Department Available Again',
+      message: `${result.name} is now available again at ${result.working_locations.name}.`,
+      type: 'DEPARTMENT_REACTIVATED',
+      referenceId: result.uuid,
+      metadata: {
+        department_uuid: result.uuid,
+        department_id: result.id.toString(),
+        working_location_id: result.working_location_id.toString(),
+      },
+    });
+    this.notificationsService.broadcast({ type: 'departments_updated' });
+    return serializeDepartment(result);
+  }
+
+  async archivePendingDepartmentIfEmpty(
+    departmentId: bigint,
+    actorUserId: string | bigint,
+  ) {
+    const pending =
+      await this.prisma.department_deactivation_requests.findFirst({
+        where: { department_id: departmentId, status: 'PENDING' },
+        include: {
+          departments: { include: { working_locations: true } },
+        },
+      });
+
+    if (!pending) return null;
+
+    const remainingEmployees = await this.countAssignedEmployees(departmentId);
+
+    if (remainingEmployees > 0) {
+      await this.prisma.department_deactivation_requests.update({
+        where: { id: pending.id },
+        data: {
+          remaining_employee_count: remainingEmployees,
+          updated_at: new Date(),
+        },
+      });
+      return null;
+    }
+
+    const archived = await this.archiveDepartmentNow(
+      departmentId,
+      actorUserId,
+      'Automatically archived department after all employees were transferred.',
+    );
+
+    await this.notificationsService.notifyBranchManager(
+      pending.working_location_id,
+      {
+        senderId: actorUserId,
+        title: 'Department Archived Automatically',
+        message: `${pending.departments.name} at ${pending.departments.working_locations.name} has been archived because all employees were transferred.`,
+        type: 'DEPARTMENT_ARCHIVED',
+        referenceId: pending.departments.uuid,
+        metadata: {
+          department_uuid: pending.departments.uuid,
+          department_id: pending.department_id.toString(),
+          working_location_id: pending.working_location_id.toString(),
+        },
+      },
+    );
+
+    return archived;
+  }
+
+  private async requestDepartmentDeactivation(
+    department: Record<string, any>,
+    actor: CurrentUserType,
+    remainingEmployees: number,
+  ) {
+    const { request, created } = await this.prisma.$transaction(async (tx) => {
+      const existing = await tx.department_deactivation_requests.findFirst({
+        where: { department_id: department.id, status: 'PENDING' },
+      });
+
+      const saved = existing
+        ? await tx.department_deactivation_requests.update({
+            where: { id: existing.id },
+            data: {
+              remaining_employee_count: remainingEmployees,
+              updated_at: new Date(),
+            },
+          })
+        : await tx.department_deactivation_requests.create({
+            data: {
+              uuid: generateUUID(),
+              department_id: department.id,
+              working_location_id: department.working_location_id,
+              requested_by: BigInt(actor.userId),
+              requested_employee_count: remainingEmployees,
+              remaining_employee_count: remainingEmployees,
+              reason:
+                'Department archive requested while employees are still assigned.',
+              updated_at: new Date(),
+            },
+          });
+
+      await tx.audit_logs.create({
+        data: {
+          user_id: BigInt(actor.userId),
+          entity_table: 'departments',
+          entity_id: department.id,
+          module_name: 'DEPARTMENTS',
+          activity_type: ACTIVITY_TYPE.UPDATE,
+          activity_description: existing
+            ? 'Refreshed pending department archive request.'
+            : 'Requested department archive pending employee transfers.',
+          action: AUDIT_ACTION.UPDATED,
+          old_values: { status: department.status },
+          new_values: {
+            status: 'PENDING_TRANSFER',
+            remaining_employee_count: remainingEmployees,
+          },
+        },
+      });
+
+      return { request: saved, created: !existing };
+    });
+
+    if (created) {
+      await this.notificationsService.notifyBranchManager(
+        department.working_location_id,
+        {
+          senderId: actor.userId,
+          title: 'Transfer Employees Before Department Archive',
+          message: `${department.name} at ${department.working_locations?.name ?? 'this working location'} has ${remainingEmployees} employee${remainingEmployees === 1 ? '' : 's'} assigned. Please transfer all employees out of this department; REG Pay will archive it automatically when the department is empty.`,
+          type: 'DEPARTMENT_DEACTIVATION_REQUIRED',
+          referenceId: request.uuid,
+          metadata: {
+            department_uuid: department.uuid,
+            department_id: department.id.toString(),
+            working_location_id: department.working_location_id.toString(),
+            remaining_employee_count: remainingEmployees,
+          },
+        },
+      );
+    }
+
+    await this.cacheManager.del('working_locations');
+    this.notificationsService.broadcast({ type: 'departments_updated' });
+
+    return {
+      message: `Archive is pending. ${remainingEmployees} employee${remainingEmployees === 1 ? '' : 's'} must be transferred out first.`,
+      status: 'PENDING_TRANSFER',
+      remaining_employee_count: remainingEmployees,
+      pending_deactivation: {
+        uuid: request.uuid,
+        requested_employee_count: request.requested_employee_count,
+        remaining_employee_count: request.remaining_employee_count,
+        requested_at: request.created_at,
+      },
+      department: serializeDepartment({
+        ...department,
+        department_deactivation_requests: [request],
+      }),
+    };
+  }
+
+  private async archiveDepartmentNow(
+    departmentId: bigint,
+    actorUserId: string | bigint,
+    activityDescription: string,
+  ) {
+    const archived = await this.prisma.$transaction(async (tx) => {
+      const before = await tx.departments.findUnique({
+        where: { id: departmentId },
+        include: {
+          working_locations: true,
+          _count: { select: { users: true, employees: true } },
+        },
+      });
+
+      if (!before) {
+        throw new NotFoundException('Department not found.');
+      }
+
+      if (before.status !== 'INACTIVE') {
+        await tx.departments.update({
+          where: { id: departmentId },
+          data: { status: 'INACTIVE', updated_at: new Date() },
+        });
+      }
+
+      await tx.department_deactivation_requests.updateMany({
+        where: { department_id: departmentId, status: 'PENDING' },
+        data: {
+          status: 'COMPLETED',
+          remaining_employee_count: 0,
+          completed_by: BigInt(actorUserId),
+          completed_at: new Date(),
+          updated_at: new Date(),
+        },
+      });
+
+      await tx.audit_logs.create({
+        data: {
+          user_id: BigInt(actorUserId),
+          entity_table: 'departments',
+          entity_id: departmentId,
+          module_name: 'DEPARTMENTS',
+          activity_type: ACTIVITY_TYPE.UPDATE,
+          activity_description: activityDescription,
+          action: AUDIT_ACTION.UPDATED,
+          old_values: { status: before.status },
+          new_values: { status: 'INACTIVE' },
+        },
+      });
+
+      return tx.departments.findUniqueOrThrow({
+        where: { id: departmentId },
+        include: {
+          working_locations: true,
+          _count: { select: { users: true, employees: true } },
+          department_deactivation_requests: {
+            where: { status: 'PENDING' },
+            orderBy: { created_at: 'desc' },
+            take: 1,
+          },
+        },
+      });
     });
 
     await this.cacheManager.del('working_locations');
     this.notificationsService.broadcast({ type: 'departments_updated' });
-    return serializeDepartment(result);
+
+    return archived;
+  }
+
+  private countAssignedEmployees(departmentId: bigint) {
+    return this.prisma.employees.count({
+      where: {
+        department_id: departmentId,
+        deleted_at: null,
+      },
+    });
   }
 
   private async resolveWorkingLocationId(value: string) {

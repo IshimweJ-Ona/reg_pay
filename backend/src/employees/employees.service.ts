@@ -25,6 +25,7 @@ import { hasEffectivePermission } from '../common/utils/effective-permissions.ut
 import { generateUUID } from '../common/utils/uuid.util';
 import { buildAuditDiff } from '../common/utils/audit-diff.util';
 import { PrismaService } from '../prisma/prisma.service';
+import { DepartmentsService } from '../departments/department.service';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { SuspendEmployeeDto } from './dto/suspend-employee.dto';
 import { TransferEmployeeDto } from './dto/transfer-employee.dto';
@@ -41,6 +42,7 @@ export class EmployeesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
+    private readonly departmentsService: DepartmentsService,
     @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
   ) {}
 
@@ -76,6 +78,10 @@ export class EmployeesService {
     const categoryId = dto.employment_category_id
       ? this.toBigInt(dto.employment_category_id, 'employment_category_id')
       : null;
+
+    if (departmentId) {
+      await this.ensureDepartmentCanReceiveEmployees(departmentId);
+    }
 
     if (workingLocationId && departmentId) {
       await this.ensureOrganization(workingLocationId, departmentId);
@@ -475,6 +481,13 @@ export class EmployeesService {
       ? this.toBigInt(dto.employment_category_id, 'employment_category_id')
       : undefined;
 
+    if (
+      departmentId !== undefined &&
+      employee.department_id !== departmentId
+    ) {
+      await this.ensureDepartmentCanReceiveEmployees(departmentId);
+    }
+
     const updated = await this.prisma.$transaction(async (tx) => {
       if (dto.email) {
         const existing = await tx.employees.findFirst({
@@ -718,6 +731,17 @@ export class EmployeesService {
     });
 
     await this.clearEmployeeCache();
+
+    if (
+      employee.department_id &&
+      employee.department_id !== (updated.department_id ?? null)
+    ) {
+      await this.departmentsService.archivePendingDepartmentIfEmpty(
+        employee.department_id,
+        actor.userId,
+      );
+    }
+
     this.notificationsService.broadcast({ type: 'employees_updated' });
 
     return this.serializeEmployee(updated);
@@ -750,6 +774,10 @@ export class EmployeesService {
     const categoryId = dto.employment_category_id
       ? this.toBigInt(dto.employment_category_id, 'employment_category_id')
       : employee.employment_category_id;
+
+    if (employee.department_id !== departmentId) {
+      await this.ensureDepartmentCanReceiveEmployees(departmentId);
+    }
 
     if (!categoryId) {
       throw new BadRequestException(
@@ -926,6 +954,17 @@ export class EmployeesService {
       });
 
       await this.clearEmployeeCache();
+
+      if (
+        request.old_department_id &&
+        request.old_department_id !== request.new_department_id
+      ) {
+        await this.departmentsService.archivePendingDepartmentIfEmpty(
+          request.old_department_id,
+          actor.userId,
+        );
+      }
+
       this.notificationsService.broadcast({ type: 'employees_updated' });
 
       return this.serializeEmployee(updated);
@@ -1050,6 +1089,10 @@ export class EmployeesService {
         const categoryId = item.employment_category_id
           ? this.toBigInt(item.employment_category_id, 'employment_category_id')
           : null;
+
+        if (departmentId) {
+          await this.ensureDepartmentCanReceiveEmployees(departmentId);
+        }
 
         if (workingLocationId && departmentId) {
           await this.ensureOrganization(workingLocationId, departmentId);
@@ -1486,6 +1529,20 @@ export class EmployeesService {
     }
 
     return request;
+  }
+
+  private async ensureDepartmentCanReceiveEmployees(departmentId: bigint) {
+    const pending =
+      await this.prisma.department_deactivation_requests.findFirst({
+        where: { department_id: departmentId, status: 'PENDING' },
+        include: { departments: { select: { name: true } } },
+      });
+
+    if (pending) {
+      throw new BadRequestException(
+        `${pending.departments.name} is pending archive. Reactivate the department before assigning employees to it.`,
+      );
+    }
   }
 
   private async ensureOrganization(

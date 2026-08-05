@@ -68,13 +68,18 @@ export class AllExceptionsFilter implements ExceptionFilter {
       responseBody.details = details;
     }
 
-    // LOG THE ERROR TO TERMINAL
-    this.logger.error(
-      `[${httpStatus}] ${httpAdapter.getRequestMethod(ctx.getRequest())} ${httpAdapter.getRequestUrl(ctx.getRequest())}`,
-    );
-    this.logger.error(
-      exception instanceof Error ? exception.stack : JSON.stringify(exception),
-    );
+    const logLine = `[${httpStatus}] ${httpAdapter.getRequestMethod(ctx.getRequest())} ${httpAdapter.getRequestUrl(ctx.getRequest())}`;
+
+    if (Number(httpStatus) >= Number(HttpStatus.INTERNAL_SERVER_ERROR)) {
+      this.logger.error(logLine);
+      this.logger.error(
+        exception instanceof Error
+          ? exception.stack
+          : JSON.stringify(exception),
+      );
+    } else {
+      this.logger.warn(logLine);
+    }
 
     httpAdapter.reply(ctx.getResponse(), responseBody, httpStatus);
   }

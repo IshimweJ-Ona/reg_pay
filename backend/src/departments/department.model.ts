@@ -26,6 +26,12 @@ export interface SerializedDepartment {
   working_location?: Record<string, any>;
   user_count: number;
   employee_count: number;
+  pending_deactivation: {
+    uuid: string;
+    requested_employee_count: number;
+    remaining_employee_count: number;
+    requested_at: Date;
+  } | null;
 }
 
 export function serializeDepartment(
@@ -39,6 +45,11 @@ export function serializeDepartment(
   const workingLocation =
     department.working_locations ?? department.working_location;
   const counts = department._count ?? {};
+  const pendingRequest = Array.isArray(
+    department.department_deactivation_requests,
+  )
+    ? department.department_deactivation_requests[0]
+    : (department.pending_deactivation ?? null);
 
   return {
     id: department.id.toString(),
@@ -58,5 +69,15 @@ export function serializeDepartment(
       : undefined,
     user_count: counts.users ?? 0,
     employee_count: counts.employees ?? 0,
+    pending_deactivation: pendingRequest
+      ? {
+          uuid: pendingRequest.uuid,
+          requested_employee_count:
+            pendingRequest.requested_employee_count ?? 0,
+          remaining_employee_count:
+            pendingRequest.remaining_employee_count ?? 0,
+          requested_at: pendingRequest.created_at,
+        }
+      : null,
   };
 }

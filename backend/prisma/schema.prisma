@@ -166,10 +166,36 @@ model departments {
   time_records                                                      time_records[]
   transactions                                                      transactions[]
   ikimina_memberships                                               ikimina_memberships[]
+  department_deactivation_requests                                  department_deactivation_requests[]
 
   @@unique([working_location_id, code], map: "Departments_working_location_id_code_key")
   @@unique([working_location_id, name], map: "Departments_working_location_id_name_key")
   @@index([working_location_id], map: "idx_department_location")
+}
+
+model department_deactivation_requests {
+  id                       BigInt                                  @id @default(autoincrement())
+  uuid                     String                                  @unique(map: "Department_deactivation_requests_uuid_key") @db.Char(36)
+  department_id            BigInt
+  working_location_id      BigInt
+  requested_by             BigInt
+  completed_by             BigInt?
+  status                   department_deactivation_requests_status @default(PENDING)
+  requested_employee_count Int                                     @default(0)
+  remaining_employee_count Int                                     @default(0)
+  reason                   String?                                 @db.Text
+  created_at               DateTime                                @default(now())
+  updated_at               DateTime
+  completed_at             DateTime?
+  departments              departments                             @relation(fields: [department_id], references: [id], map: "Dept_deactivation_department_id_fkey")
+  working_locations        working_locations                       @relation(fields: [working_location_id], references: [id], map: "Dept_deactivation_location_id_fkey")
+  users_requested_by        users                                   @relation("department_deactivation_requests_requested_byTousers", fields: [requested_by], references: [id], map: "Dept_deactivation_requested_by_fkey")
+  users_completed_by        users?                                  @relation("department_deactivation_requests_completed_byTousers", fields: [completed_by], references: [id], map: "Dept_deactivation_completed_by_fkey")
+
+  @@index([department_id, status], map: "idx_dept_deactivation_department_status")
+  @@index([working_location_id, status], map: "idx_dept_deactivation_location_status")
+  @@index([requested_by], map: "idx_dept_deactivation_requested_by")
+  @@index([completed_by], map: "idx_dept_deactivation_completed_by")
 }
 
 model employee_deductions {
@@ -760,6 +786,8 @@ model users {
   notifications_notifications_sender_idTousers                          notifications[]                  @relation("notifications_sender_idTousers")
   notifications_notifications_user_idTousers                            notifications[]                  @relation("notifications_user_idTousers")
   notification_dismissals                                               notification_dismissals[]
+  department_deactivation_requests_requested                            department_deactivation_requests[] @relation("department_deactivation_requests_requested_byTousers")
+  department_deactivation_requests_completed                            department_deactivation_requests[] @relation("department_deactivation_requests_completed_byTousers")
   payment_batch_items                                                   payment_batch_items[]
   payment_batches_payment_batches_approved_byTousers                    payment_batches[]                @relation("payment_batches_approved_byTousers")
   payment_batches_payment_batches_submitted_byTousers                   payment_batches[]                @relation("payment_batches_submitted_byTousers")
@@ -804,6 +832,7 @@ model working_locations {
   deleted_at                                                           DateTime?
   branch_managers                                                      branch_managers[]
   departments                                                          departments[]
+  department_deactivation_requests                                     department_deactivation_requests[]
   employee_history_employee_history_new_location_idToworking_locations employee_history[]     @relation("employee_history_new_location_idToworking_locations")
   employee_history_employee_history_old_location_idToworking_locations employee_history[]     @relation("employee_history_old_location_idToworking_locations")
   employees                                                            employees[]
@@ -909,6 +938,12 @@ enum audit_logs_activity_type {
 enum departments_status {
   ACTIVE
   INACTIVE
+}
+
+enum department_deactivation_requests_status {
+  PENDING
+  COMPLETED
+  CANCELLED
 }
 
 enum employment_categories_status {
