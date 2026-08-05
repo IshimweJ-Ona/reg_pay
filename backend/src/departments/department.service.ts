@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
   Inject,
@@ -26,6 +27,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 
 import { CreateDepartmentDto } from './dto/create-department.dto';
 import { UpdateDepartmentDto } from './dto/update-department.dto';
+import { EnableDepartmentAtLocationDto } from './dto/enable-department-at-location.dto';
 import { serializeDepartment } from './department.model';
 
 function normalizeName(name: string): string {
@@ -302,6 +304,101 @@ export class DepartmentsService {
     await this.cacheManager.del('working_locations');
     this.notificationsService.broadcast({ type: 'departments_updated' });
     return { message: 'Department deleted' };
+  }
+
+  // Toggles a department "on" for one specific working location - the
+  // counterpart to deleteDepartment's per-location "off" toggle. Reactivates
+  // an archived (INACTIVE) row for that (code, location) pair if one exists,
+  // otherwise creates a fresh row there. SUPER_ADMIN / branches.read_all only:
+  // a branch-scoped manager can already reach this department via the normal
+  // createDepartment/deleteDepartment flow for their own branch, but assigning
+  // it to an arbitrary *other* location is a cross-branch action.
+  async enableAtLocation(
+    code: string,
+    workingLocationIdInput: string,
+    dto: EnableDepartmentAtLocationDto,
+    actor: CurrentUserType,
+  ) {
+    if (!this.canReadAllBranches(actor)) {
+      throw new ForbiddenException(
+        'Only Super Admins (or branches.read_all) can assign a department to another working location.',
+      );
+    }
+
+    const workingLocationId = await this.resolveWorkingLocationId(
+      workingLocationIdInput,
+    );
+
+    const existing = await this.prisma.departments.findFirst({
+      where: { code, working_location_id: workingLocationId },
+      include: { working_locations: true },
+    });
+
+    if (existing?.status === 'ACTIVE') {
+      return serializeDepartment(existing);
+    }
+
+    const normalizedNew = normalizeName(dto.name);
+    const activeDepartments = await this.prisma.departments.findMany({
+      where: {
+        status: 'ACTIVE',
+        code: { not: code },
+        working_location_id: workingLocationId,
+      },
+      select: { name: true },
+    });
+    const duplicate = activeDepartments.find(
+      (d) => normalizeName(d.name) === normalizedNew,
+    );
+    if (duplicate) {
+      throw new BadRequestException(
+        `A department named '${duplicate.name}' already exists at this location.`,
+      );
+    }
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const saved = existing
+        ? await tx.departments.update({
+            where: { id: existing.id },
+            data: { status: 'ACTIVE', name: dto.name, description: dto.description },
+            include: { working_locations: true },
+          })
+        : await tx.departments.create({
+            data: {
+              uuid: generateUUID(),
+              working_location_id: workingLocationId,
+              code,
+              name: dto.name,
+              description: dto.description,
+              updated_at: new Date(),
+            },
+            include: { working_locations: true },
+          });
+
+      await tx.audit_logs.create({
+        data: {
+          user_id: BigInt(actor.userId),
+          entity_table: 'departments',
+          entity_id: saved.id,
+          module_name: 'DEPARTMENTS',
+          activity_type: existing ? ACTIVITY_TYPE.UPDATE : ACTIVITY_TYPE.CREATE,
+          activity_description: existing
+            ? 'Reactivated department for working location.'
+            : 'Assigned department to an additional working location.',
+          action: existing ? AUDIT_ACTION.UPDATED : AUDIT_ACTION.CREATED,
+          old_values: existing
+            ? { status: existing.status }
+            : Prisma.JsonNull,
+          new_values: { status: 'ACTIVE', code, name: dto.name },
+        },
+      });
+
+      return saved;
+    });
+
+    await this.cacheManager.del('working_locations');
+    this.notificationsService.broadcast({ type: 'departments_updated' });
+    return serializeDepartment(result);
   }
 
   private async resolveWorkingLocationId(value: string) {

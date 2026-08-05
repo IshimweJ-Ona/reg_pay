@@ -128,6 +128,12 @@ export class EmployeesController {
     type: String,
     description: 'Filter to employees in one specific department (numeric id).',
   })
+  @ApiQuery({
+    name: 'working_location_id',
+    required: false,
+    type: String,
+    description: 'Filter to employees in one specific working location (numeric id).',
+  })
   @ApiResponse({
     status: 200,
     description: 'Employees list returned successfully ',
@@ -145,8 +151,9 @@ export class EmployeesController {
     @CurrentUser() actor: CurrentUserType,
     @Query('q') q?: string,
     @Query('department_id') departmentId?: string,
+    @Query('working_location_id') workingLocationId?: string,
   ) {
-    return this.employeesService.findAll(actor, q, departmentId);
+    return this.employeesService.findAll(actor, q, departmentId, workingLocationId);
   }
 
   // GET /employees/:uuid

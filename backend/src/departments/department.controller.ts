@@ -25,6 +25,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import type { CurrentUserType } from '../auth/types/current-user.type';
 import { CreateDepartmentDto } from './dto/create-department.dto';
 import { UpdateDepartmentDto } from './dto/update-department.dto';
+import { EnableDepartmentAtLocationDto } from './dto/enable-department-at-location.dto';
 import { DepartmentsService } from './department.service';
 
 // Kept under 'organization/departments' to preserve the existing API contract.
@@ -122,5 +123,30 @@ export class DepartmentsController {
     @CurrentUser() actor: CurrentUserType,
   ) {
     return this.departmentsService.deleteDepartment(uuid, actor);
+  }
+
+  @Permissions('departments.manage')
+  @Patch(':code/locations/:workingLocationId/enable')
+  @ApiOperation({
+    summary: 'Assign/reactivate a department at one specific working location',
+    description:
+      'Toggles a department "on" for exactly one working location - the counterpart to the /delete endpoint\'s per-location "off" toggle. Reactivates an archived row for that (code, location) pair if one exists, otherwise creates a fresh one. Super Admin / branches.read_all only.',
+  })
+  @ApiParam({ name: 'code', description: 'Department code shared across its location rows.' })
+  @ApiParam({ name: 'workingLocationId', description: 'Target working location id or uuid.' })
+  @ApiResponse({ status: 200, description: 'Department active at this location.' })
+  @ApiResponse({ status: 403, description: 'Caller lacks cross-location assignment rights.' })
+  enableAtLocation(
+    @Param('code') code: string,
+    @Param('workingLocationId') workingLocationId: string,
+    @Body() dto: EnableDepartmentAtLocationDto,
+    @CurrentUser() actor: CurrentUserType,
+  ) {
+    return this.departmentsService.enableAtLocation(
+      code,
+      workingLocationId,
+      dto,
+      actor,
+    );
   }
 }

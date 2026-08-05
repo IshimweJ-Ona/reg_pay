@@ -53,6 +53,11 @@ export class EmployeesService {
     const firstName = dto.first_name;
     const lastName = dto.last_name;
 
+    this.assertContractDatesValid(
+      this.parseContractDate(dto.contract_start_date, 'contract_start_date'),
+      this.parseContractDate(dto.contract_end_date, 'contract_end_date'),
+    );
+
     const managerScoped =
       actor?.roles?.some((role) => ['BRANCH_MANAGER'].includes(role)) &&
       !this.isSystemAdmin(actor);
@@ -254,6 +259,56 @@ export class EmployeesService {
     return fallback;
   }
 
+  /**
+   * Parses a contract/hire date string, rejecting it with a plain-English
+   * error (not a generic parser message) if it isn't a real calendar date.
+   * class-validator's @IsDateString already blocks malformed strings on the
+   * single-employee create/update endpoints, but bulk import rows aren't
+   * decorated the same way, so this is the shared backstop for both paths.
+   */
+  private parseContractDate(
+    value: string | null | undefined,
+    fieldName: string,
+  ): Date | null {
+    if (!value) return null;
+
+    const isSystemFormat = /^\d{4}-\d{2}-\d{2}$/.test(value);
+    const parsed = new Date(value);
+
+    if (!isSystemFormat || Number.isNaN(parsed.getTime())) {
+      throw new BadRequestException(
+        `${fieldName} "${value}" is not in the format our system uses. Our system only accepts dates as YYYY-MM-DD (e.g. 2026-01-31).`,
+      );
+    }
+
+    return parsed;
+  }
+
+  /**
+   * Enforces that a contract ends after it starts, and - when a new start
+   * date is being set (i.e. `previousEndDate` is passed) - that it starts
+   * after the previous contract on file ended.
+   */
+  private assertContractDatesValid(
+    startDate: Date | null,
+    endDate: Date | null,
+    previousEndDate?: Date | null,
+  ) {
+    const fmt = (d: Date) => d.toISOString().split('T')[0];
+
+    if (startDate && endDate && endDate <= startDate) {
+      throw new BadRequestException(
+        `The contract end date (${fmt(endDate)}) must be later than the contract start date (${fmt(startDate)}).`,
+      );
+    }
+
+    if (previousEndDate && startDate && startDate <= previousEndDate) {
+      throw new BadRequestException(
+        `The new contract start date (${fmt(startDate)}) must be after the previous contract's end date (${fmt(previousEndDate)}).`,
+      );
+    }
+  }
+
   // Helper to clear all employee-related caches
   private async clearEmployeeCache() {
     try {
@@ -280,9 +335,10 @@ export class EmployeesService {
     actor: CurrentUserType,
     qInput?: string,
     departmentIdInput?: string,
+    workingLocationIdInput?: string,
   ) {
     const q = normalizeSearch(qInput);
-    const cacheKey = `employees:all:${actor.userId}:${actor.working_location_id ?? ''}:${departmentIdInput ?? ''}:${q ?? ''}`;
+    const cacheKey = `employees:all:${actor.userId}:${actor.working_location_id ?? ''}:${departmentIdInput ?? ''}:${workingLocationIdInput ?? ''}:${q ?? ''}`;
 
     const cached = await this.cacheManager.get(cacheKey);
     if (cached) return cached as any;
@@ -296,6 +352,9 @@ export class EmployeesService {
         // department's id here - the scope clause still restricts the result.
         ...(departmentIdInput && isNumericId(departmentIdInput)
           ? { department_id: BigInt(departmentIdInput) }
+          : {}),
+        ...(workingLocationIdInput && isNumericId(workingLocationIdInput)
+          ? { working_location_id: BigInt(workingLocationIdInput) }
           : {}),
         ...(q
           ? {
@@ -382,6 +441,24 @@ export class EmployeesService {
   ) {
     const employee = await this.findEmployeeByUuidOrThrow(uuid);
     this.ensureActorCanAccessEmployee(actor, employee);
+
+    // A contract can't end before it starts, and a *new* contract (i.e. the
+    // start date is actually being changed) can't start before the previous
+    // one - still on file as `employee.contract_end_date` at this point -
+    // ended.
+    const nextContractStart =
+      dto.contract_start_date !== undefined
+        ? this.parseContractDate(dto.contract_start_date, 'contract_start_date')
+        : employee.contract_start_date;
+    const nextContractEnd =
+      dto.contract_end_date !== undefined
+        ? this.parseContractDate(dto.contract_end_date, 'contract_end_date')
+        : employee.contract_end_date;
+    this.assertContractDatesValid(
+      nextContractStart,
+      nextContractEnd,
+      dto.contract_start_date !== undefined ? employee.contract_end_date : null,
+    );
 
     const workingLocationId = dto.working_location_id
       ? await this.resolveWorkingLocationId(dto.working_location_id)
@@ -943,6 +1020,14 @@ export class EmployeesService {
             'First name and last name are required.',
           );
         }
+
+        this.assertContractDatesValid(
+          this.parseContractDate(
+            item.contract_start_date,
+            'contract_start_date',
+          ),
+          this.parseContractDate(item.contract_end_date, 'contract_end_date'),
+        );
 
         const managerScoped =
           actor?.roles?.some((role) => ['BRANCH_MANAGER'].includes(role)) &&

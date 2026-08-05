@@ -76,7 +76,13 @@ export class CreateEmployeeDto {
     description: 'ISO 8601 date string for the employee hire date.',
   })
   @IsOptional()
-  @IsDateString()
+  @IsDateString(
+    {},
+    {
+      message:
+        'hire_date is not in the format our system uses. Our system only accepts dates as YYYY-MM-DD (e.g. 2026-01-31).',
+    },
+  )
   hire_date?: string;
 
   @ApiPropertyOptional({
@@ -89,7 +95,13 @@ export class CreateEmployeeDto {
       'auto-calculated as daily_rate x contract days.',
   })
   @IsOptional()
-  @IsDateString()
+  @IsDateString(
+    {},
+    {
+      message:
+        'contract_start_date is not in the format our system uses. Our system only accepts dates as YYYY-MM-DD (e.g. 2026-01-31).',
+    },
+  )
   contract_start_date?: string;
 
   @ApiPropertyOptional({
@@ -102,7 +114,13 @@ export class CreateEmployeeDto {
       'auto-calculated as daily_rate x contract days.',
   })
   @IsOptional()
-  @IsDateString()
+  @IsDateString(
+    {},
+    {
+      message:
+        'contract_end_date is not in the format our system uses. Our system only accepts dates as YYYY-MM-DD (e.g. 2026-01-31).',
+    },
+  )
   contract_end_date?: string;
 
   @ApiPropertyOptional({
