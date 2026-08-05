@@ -26,6 +26,9 @@ import {
   Tooltip as RechartsTooltip,
   Legend,
   LabelList,
+  PieChart,
+  Pie,
+  Cell,
 } from 'recharts';
 import { useAuth } from '@/context/auth-context';
 import { getEmployees } from '@/api/employees';
@@ -49,6 +52,18 @@ function formatRwfCompact(value: number): string {
   if (value >= 1_000) return `${(value / 1_000).toFixed(0)}K`;
   return value.toFixed(0);
 }
+
+// Fixed-order categorical slots (see globals.css) - never cycled or reassigned by rank.
+const CHART_COLORS = [
+  'var(--chart-1)',
+  'var(--chart-2)',
+  'var(--chart-3)',
+  'var(--chart-4)',
+  'var(--chart-5)',
+  'var(--chart-6)',
+  'var(--chart-7)',
+  'var(--chart-8)',
+];
 
 export default function DashboardPage() {
   const { user, hasPermission } = useAuth();
@@ -166,6 +181,28 @@ export default function DashboardPage() {
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value);
   }, [filteredEmployees, selectedLocationId, canViewAllLocations]);
+
+  // Working-location share as a pie: every location gets its own slice, no
+  // folding, so a newly added location shows up automatically as soon as it
+  // has employees. The first 8 slices use the fixed brand hues; anything
+  // beyond that gets a generated hue (golden-angle spacing keeps neighbors
+  // visually apart) so the chart never has to drop or merge a location.
+  // "share" (not "percent") is deliberate - Recharts' <Pie label> spreads
+  // each data entry over its own computed geometry props, so a field
+  // literally named "percent" clobbers Recharts' own 0-1 fraction and the
+  // label doubles up (e.g. renders "4000%" instead of "40%").
+  const locationPieData = useMemo(() => {
+    const total = locationBreakdown.reduce((sum, d) => sum + d.value, 0);
+    if (total === 0) return [];
+    return locationBreakdown.map((d, i) => ({
+      ...d,
+      share: total > 0 ? (d.value / total) * 100 : 0,
+      color:
+        i < CHART_COLORS.length
+          ? CHART_COLORS[i]
+          : `hsl(${Math.round((i * 137.508) % 360)}, 62%, 48%)`,
+    }));
+  }, [locationBreakdown]);
 
   const pendingApprovalBatches = filteredBatches.filter((b) =>
     ['PENDING', 'IN_REVIEW', 'MANAGER_APPROVED'].includes(b.status),
@@ -455,31 +492,70 @@ export default function DashboardPage() {
             <CardDescription>Only visible to roles with cross-branch visibility (employees.read_all / SUPER_ADMIN).</CardDescription>
           </CardHeader>
           <CardContent>
-            <div style={{ height: Math.max(280, locationBreakdown.length * 42) }} className="w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={locationBreakdown}
-                  layout="vertical"
-                  margin={{ top: 4, right: 32, bottom: 4, left: 4 }}
-                  barCategoryGap={10}
-                >
-                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-                  <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
-                  <YAxis
-                    type="category"
-                    dataKey="name"
-                    width={160}
-                    tick={{ fontSize: 12 }}
-                    tickLine={false}
-                    axisLine={false}
-                  />
-                  <RechartsTooltip cursor={{ fill: 'hsl(var(--muted))' }} formatter={(value) => [value, 'Personnel']} />
-                  <Bar dataKey="value" name="Personnel" fill="hsl(var(--primary))" radius={[0, 4, 4, 0]} maxBarSize={28}>
-                    <LabelList dataKey="value" position="right" style={{ fontSize: 12, fontWeight: 600, fill: 'hsl(var(--foreground))' }} />
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
+            {selectedLocationId === 'all' ? (
+              <div className="h-[320px] w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <RechartsTooltip
+                      formatter={(value, name, item) => {
+                        const share = (item?.payload?.share ?? 0).toFixed(0);
+                        return [`${value} personnel (${share}%)`, String(name)];
+                      }}
+                    />
+                    <Legend
+                      verticalAlign="middle"
+                      align="right"
+                      layout="vertical"
+                      wrapperStyle={{ fontSize: 12, lineHeight: '20px' }}
+                    />
+                    <Pie
+                      data={locationPieData}
+                      dataKey="value"
+                      nameKey="name"
+                      cx="38%"
+                      cy="50%"
+                      innerRadius={60}
+                      outerRadius={110}
+                      paddingAngle={2}
+                      label={({ percent, value }) =>
+                        (percent ?? 0) >= 0.08 ? `${value} (${((percent ?? 0) * 100).toFixed(0)}%)` : ''
+                      }
+                      labelLine={false}
+                    >
+                      {locationPieData.map((entry) => (
+                        <Cell key={entry.name} fill={entry.color} stroke="hsl(var(--card))" strokeWidth={2} />
+                      ))}
+                    </Pie>
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <div style={{ height: Math.max(280, locationBreakdown.length * 42) }} className="w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    data={locationBreakdown}
+                    layout="vertical"
+                    margin={{ top: 4, right: 32, bottom: 4, left: 4 }}
+                    barCategoryGap={10}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                    <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
+                    <YAxis
+                      type="category"
+                      dataKey="name"
+                      width={160}
+                      tick={{ fontSize: 12 }}
+                      tickLine={false}
+                      axisLine={false}
+                    />
+                    <RechartsTooltip cursor={{ fill: 'hsl(var(--muted))' }} formatter={(value) => [value, 'Personnel']} />
+                    <Bar dataKey="value" name="Personnel" fill="hsl(var(--primary))" radius={[0, 4, 4, 0]} maxBarSize={28}>
+                      <LabelList dataKey="value" position="right" style={{ fontSize: 12, fontWeight: 600, fill: 'hsl(var(--foreground))' }} />
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
