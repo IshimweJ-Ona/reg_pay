@@ -251,7 +251,7 @@ export default function EmployeeDirectoryPage() {
       'first_name', 'last_name', 'email', 'phone_number', 'national_id',
       'gender', 'contract_start_date', 'contract_end_date',
       ...(isBranchManagerActor ? [] : ['working_location']),
-      'department', 'employment_category', 'basic_salary', 'daily_rate', 'tax_percentage',
+      'department', 'employment_category', 'basic_salary', 'daily_rate',
     ];
 
     try {
