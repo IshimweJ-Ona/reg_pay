@@ -239,7 +239,32 @@ export default function EmployeeDirectoryPage() {
   );
   const canManageDeductions = hasPermission('deductions.manage');
   const canReadPaymentStructures = hasPermission('payment-structures.read') || canManageDeductions;
-  const handleDownloadTemplate = async () => {
+  const monthlyCategories = paymentCategories.filter((c: any) => c.payroll_frequency === 'MONTHLY');
+  const dailyOrCustomCategories = paymentCategories.filter((c: any) => c.payroll_frequency !== 'MONTHLY');
+
+  // The backend only ever uses ONE of these two columns depending on the
+  // employee's employment category (see employees.service.ts bulkImport):
+  // - MONTHLY categories: daily_rate is auto-computed from basic_salary
+  //   (basic_salary / working days), so a daily_rate column is meaningless.
+  // - DAILY / CUSTOM categories: basic_salary is either unused (DAILY) or
+  //   derived from daily_rate x contract days (CUSTOM), so a basic_salary
+  //   column is meaningless.
+  // Splitting the template by frequency instead of offering one sheet with
+  // both columns avoids people filling in a column that's silently ignored.
+  const handleDownloadTemplate = async (frequencyGroup: 'MONTHLY' | 'DAILY_CUSTOM') => {
+    const relevantCategories = frequencyGroup === 'MONTHLY' ? monthlyCategories : dailyOrCustomCategories;
+
+    if (relevantCategories.length === 0) {
+      toast({
+        variant: 'destructive',
+        title: 'No matching employment categories',
+        description: frequencyGroup === 'MONTHLY'
+          ? 'There are no Monthly employment categories set up yet.'
+          : 'There are no Daily or Custom employment categories set up yet.',
+      });
+      return;
+    }
+
     // Branch managers create employees only in their own branch (the backend
     // auto-assigns working_location_id, see employees.service.ts bulkImport),
     // so no working_location column is needed for them. `/departments` is
@@ -251,7 +276,8 @@ export default function EmployeeDirectoryPage() {
       'first_name', 'last_name', 'email', 'phone_number', 'national_id',
       'gender', 'contract_start_date', 'contract_end_date',
       ...(isBranchManagerActor ? [] : ['working_location']),
-      'department', 'employment_category', 'basic_salary', 'daily_rate',
+      'department', 'employment_category',
+      ...(frequencyGroup === 'MONTHLY' ? ['basic_salary'] : ['daily_rate']),
     ];
 
     try {
@@ -297,7 +323,7 @@ export default function EmployeeDirectoryPage() {
       // downloaded.
       const listSheet = workbook.addWorksheet('Lists', { state: 'veryHidden' });
       const departmentNames = relevantDepartments.map((d: any) => d.name).filter(Boolean);
-      const categoryNames = paymentCategories.map((c: any) => c.name).filter(Boolean);
+      const categoryNames = relevantCategories.map((c: any) => c.name).filter(Boolean);
       const locationNames = isBranchManagerActor ? [] : locations.map((l: any) => l.name).filter(Boolean);
       listSheet.getCell(1, 1).value = 'department';
       listSheet.getCell(1, 2).value = 'employment_category';
@@ -390,13 +416,15 @@ export default function EmployeeDirectoryPage() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'employee_bulk_import_template.xlsx';
+      a.download = frequencyGroup === 'MONTHLY'
+        ? 'employee_bulk_import_template_monthly.xlsx'
+        : 'employee_bulk_import_template_daily_custom.xlsx';
       a.click();
       URL.revokeObjectURL(url);
 
       toast({
         title: 'Template downloaded',
-        description: `Fill in the "Employees" sheet only — first_name and last_name are the only required columns. Use the dropdowns for gender, department, employment category${isBranchManagerActor ? '' : ' and branch'}, and the date fields for contract dates (YYYY-MM-DD).`,
+        description: `Fill in the "Employees" sheet only — first_name and last_name are the only required columns. Use the dropdowns for gender, department, employment category${isBranchManagerActor ? '' : ' and branch'}, and the date fields for contract dates (YYYY-MM-DD). This template only lists ${frequencyGroup === 'MONTHLY' ? 'Monthly' : 'Daily and Custom'} employment categories — use the other template for the rest.`,
       });
     } catch (err) {
       console.error('Template generation error:', err);
@@ -2269,19 +2297,29 @@ export default function EmployeeDirectoryPage() {
           <DialogHeader>
             <DialogTitle className="text-xl font-bold">Bulk Import Employees</DialogTitle>
             <DialogDescription className="text-sm text-muted-foreground">
-              Download the template and fill in its "Employees" sheet only — that's the one and only sheet to upload back here. Required columns are first_name and last_name; the rest are optional. Gender, department, employment category{isBranchManagerActor ? '' : ' and branch'} are dropdowns, and contract dates use the YYYY-MM-DD format our system requires.
+              Download the template that matches the employees you're importing, and fill in its "Employees" sheet only — that's the one and only sheet to upload back here. Required columns are first_name and last_name; the rest are optional. Gender, department, employment category{isBranchManagerActor ? '' : ' and branch'} are dropdowns, and contract dates use the YYYY-MM-DD format our system requires. Import Monthly and Daily/Custom employees separately, since each uses a different template.
               {isBranchManagerActor && ' Employees you import are automatically assigned to your branch.'}
             </DialogDescription>
           </DialogHeader>
 
-          <Button
-            type="button"
-            variant="outline"
-            onClick={handleDownloadTemplate}
-            className="w-full h-10 rounded-xl text-xs font-semibold border-dashed"
-          >
-            <Download01 className="mr-2 h-4 w-4 text-black" size={16} /> Download Template
-          </Button>
+          <div className="grid grid-cols-2 gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => handleDownloadTemplate('MONTHLY')}
+              className="h-10 rounded-xl text-xs font-semibold border-dashed"
+            >
+              <Download01 className="mr-2 h-4 w-4 text-black" size={16} /> Monthly
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => handleDownloadTemplate('DAILY_CUSTOM')}
+              className="h-10 rounded-xl text-xs font-semibold border-dashed"
+            >
+              <Download01 className="mr-2 h-4 w-4 text-black" size={16} /> Daily / Custom
+            </Button>
+          </div>
 
           <div className="space-y-4 my-4">
             <div
