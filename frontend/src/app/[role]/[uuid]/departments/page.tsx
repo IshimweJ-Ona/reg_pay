@@ -196,7 +196,10 @@ export default function DepartmentsManagementPage() {
       return {
         location: loc,
         departmentRow: departmentRow ?? null,
-        isActive: departmentRow?.status === 'ACTIVE',
+        isPendingArchive: Boolean(departmentRow?.pending_deactivation),
+        isActive:
+          departmentRow?.status === 'ACTIVE' &&
+          !departmentRow?.pending_deactivation,
       };
     });
   }, [selectedGroup, allLocations, canReadAllBranches]);
@@ -206,8 +209,15 @@ export default function DepartmentsManagementPage() {
     setTogglingLocationId(row.location.id);
     try {
       if (row.isActive) {
-        await deleteDepartment(row.departmentRow.uuid);
-        toast({ title: "Removed", description: `${selectedGroup.name} disabled at ${row.location.name}.` });
+        const result = await deleteDepartment(row.departmentRow.uuid);
+        if (result?.status === 'PENDING_TRANSFER') {
+          toast({
+            title: "Transfer required",
+            description: result.message ?? `${selectedGroup.name} will be archived after employees are transferred.`,
+          });
+        } else {
+          toast({ title: "Removed", description: `${selectedGroup.name} disabled at ${row.location.name}.` });
+        }
       } else {
         await enableDepartmentAtLocation(selectedGroup.code, row.location.id, {
           name: selectedGroup.name,
@@ -273,8 +283,15 @@ export default function DepartmentsManagementPage() {
     try {
       const dept = departments.find(d => d.id === archiveId);
       if (dept) {
-        await deleteDepartment(dept.uuid);
-        toast({ variant: "destructive", title: "Department Archived", description: "The unit has been removed from active view." });
+        const result = await deleteDepartment(dept.uuid);
+        if (result?.status === 'PENDING_TRANSFER') {
+          toast({
+            title: "Transfer required",
+            description: result.message ?? "The department will be archived after employees are transferred.",
+          });
+        } else {
+          toast({ variant: "destructive", title: "Department Archived", description: "The unit has been removed from active view." });
+        }
         setSelectedLocationDept(null);
         loadData();
       }
@@ -495,17 +512,22 @@ export default function DepartmentsManagementPage() {
               ? locationToggleRows.map((row) => (
                   <div
                     key={row.location.id}
-                    className={`w-full flex items-center justify-between py-3 px-1 rounded-lg transition-colors ${row.isActive ? 'hover:bg-secondary/40 cursor-pointer' : ''}`}
-                    onClick={() => row.isActive && openLocationDetail(row.departmentRow)}
+                    className={`w-full flex items-center justify-between py-3 px-1 rounded-lg transition-colors ${row.departmentRow ? 'hover:bg-secondary/40 cursor-pointer' : ''}`}
+                    onClick={() => row.departmentRow && openLocationDetail(row.departmentRow)}
                   >
                     <div className="flex items-center gap-2">
                       <MapPin className="h-4 w-4 text-muted-foreground" size={16} />
                       <div className="flex flex-col">
                         <span className={`font-semibold text-sm ${row.isActive ? '' : 'text-muted-foreground'}`}>{row.location.name}</span>
+                        {row.isPendingArchive && (
+                          <span className="text-[11px] font-medium text-amber-600">
+                            Pending transfer: {row.departmentRow.pending_deactivation?.remaining_employee_count ?? row.departmentRow.employee_count ?? 0} employee{(row.departmentRow.pending_deactivation?.remaining_employee_count ?? row.departmentRow.employee_count ?? 0) === 1 ? '' : 's'}
+                          </span>
+                        )}
                       </div>
                     </div>
                     <div className="flex items-center gap-3">
-                      {row.isActive && (
+                      {row.departmentRow && (
                         <>
                           <Badge variant="secondary" className="font-bold">
                             <Users className="h-3 w-3 mr-1" size={12} /> {row.departmentRow.user_count ?? 0}
@@ -521,7 +543,7 @@ export default function DepartmentsManagementPage() {
                         onClick={(e) => e.stopPropagation()}
                         onCheckedChange={() => handleToggleLocation(row)}
                       />
-                      {row.isActive && <ChevronRight className="h-4 w-4 text-muted-foreground" size={16} />}
+                      {row.departmentRow && <ChevronRight className="h-4 w-4 text-muted-foreground" size={16} />}
                     </div>
                   </div>
                 ))
