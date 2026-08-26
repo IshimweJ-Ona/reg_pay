@@ -124,6 +124,13 @@ export const PERMISSION_MODULES: PermissionModule[] = [
       { key: 'system-config.manage', name: 'Manage System Settings', description: 'Change global settings like the overtime rate and default work hours.' },
     ],
   },
+  {
+    module: 'POSITIONS',
+    permissions: [
+      { key: 'positions.read', name: 'View Positions', description: 'See the list of positions for assigning employees.' },
+      { key: 'positions.manage', name: 'Manage Positions', description: 'Create, edit, and archive positions and their default pay/deduction/allowance templates.' },
+    ],
+  },
 ];
 
 export const ALL_PERMISSION_KEYS = PERMISSION_MODULES.flatMap(
@@ -152,6 +159,7 @@ export const IMPLIED_PERMISSIONS: Record<string, string[]> = {
   'ikimina.read_all': ['ikimina.read'],
   'audit.read_all': ['audit.view'],
   'branches.manage': ['departments.manage', 'branch-manager.manage'],
+  'positions.manage': ['positions.read'],
 };
 
 export function expandPermissionKeys(permissions: string[]) {

@@ -1,6 +1,9 @@
 "use client";
 
 import { useEffect, useState, useRef, Suspense } from 'react';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { useForm } from 'react-hook-form';
+import { z } from 'zod';
 import { 
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow 
 } from "@/components/ui/table";
@@ -60,7 +63,7 @@ import { User } from '@/types/auth';
 import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/hooks/use-toast';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { getUsers, suspendUser, reactivateUser, updateUserPermissionOverride, bulkUploadProfileImages, assignUserRoles, approveUser, rejectUser, updateUser, uploadUserAvatar } from '@/api/users';
+import { getUsers, suspendUser, reactivateUser, updateUserPermissionOverride, bulkUploadProfileImages, assignUserRoles, approveUser, rejectUser, updateUser, uploadUserAvatar, createUser } from '@/api/users';
 import { getRoles } from '@/api/roles';
 import { getPermissions } from '@/api/permissions';
 import { getWorkingLocations, getDepartments } from '@/api/working_locations';
@@ -95,6 +98,40 @@ function mapApiUser(apiUser: any): User {
     avatar_url: apiUser.avatar_url,
   };
 }
+
+const createUserSchema = z.object({
+  first_name: z.string().trim().min(1, "First name is required."),
+  last_name: z.string().trim().min(1, "Last name is required."),
+  email: z
+    .string()
+    .trim()
+    .regex(/^[a-zA-Z0-9._%+-]+@(gmail\.com|reg\.com|yahoo\.com|reg\.rw)$/, "Use a Gmail, Yahoo, reg.com, or reg.rw email."),
+  phone_number: z
+    .string()
+    .trim()
+    .regex(/^\+2507[2389][0-9]{7}$/, "Use a valid Rwanda number, for example +250788000000."),
+  password: z
+    .string()
+    .regex(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d.*\d)(?=.*[@$!%*?&]).{5,}$/, "Use 5+ characters with uppercase, lowercase, two digits, and one symbol."),
+  gender: z.enum(["MALE", "FEMALE"]),
+  working_location_id: z.string().optional(),
+  department_id: z.string().optional(),
+  role_ids: z.array(z.string()).min(1, "Select at least one role."),
+});
+
+type CreateUserFormValues = z.infer<typeof createUserSchema>;
+
+const createUserDefaults: CreateUserFormValues = {
+  first_name: "",
+  last_name: "",
+  email: "",
+  phone_number: "",
+  password: "",
+  gender: "MALE",
+  working_location_id: "",
+  department_id: "",
+  role_ids: [],
+};
 
 export default function UsersManagementPage() {
   return (
@@ -153,6 +190,16 @@ function UsersManagementContent() {
   const [isUpdatingAssignment, setIsUpdatingAssignment] = useState(false);
   const [isDataLoading, setIsDataLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [isCreateUserOpen, setIsCreateUserOpen] = useState(false);
+  const [isCreatingUser, setIsCreatingUser] = useState(false);
+  const createUserForm = useForm<CreateUserFormValues>({
+    resolver: zodResolver(createUserSchema),
+    defaultValues: createUserDefaults,
+  });
+  const createWorkingLocationId = createUserForm.watch('working_location_id');
+  const createDepartmentId = createUserForm.watch('department_id');
+  const createRoleIds = createUserForm.watch('role_ids');
+  const createGender = createUserForm.watch('gender');
 
   // Pending-user approval panel state
   const [approveWorkingLocationId, setApproveWorkingLocationId] = useState('');
@@ -192,6 +239,7 @@ function UsersManagementContent() {
       const canSeeRoleList =
         hasPermission('roles.manage') ||
         hasPermission('roles.manage_own_location') ||
+        hasPermission('users.create') ||
         hasPermission('users.update') ||
         hasPermission('users.approve');
 
@@ -215,7 +263,7 @@ function UsersManagementContent() {
         }
       }
 
-      if (hasPermission('users.approve') || canUpdateUsers) {
+      if (hasPermission('users.create') || hasPermission('users.approve') || canUpdateUsers) {
         try {
           const [locRes, depRes] = await Promise.all([
             canReadAllBranches ? getWorkingLocations() : Promise.resolve({ working_locations: [] }),
@@ -234,6 +282,72 @@ function UsersManagementContent() {
       }
     } finally {
       setIsDataLoading(false);
+    }
+  };
+
+  const resetCreateUserForm = () => {
+    createUserForm.reset({
+      ...createUserDefaults,
+      working_location_id: canReadAllBranches ? "" : (currentUser?.location_id ?? ""),
+    });
+  };
+
+  const openCreateUserDialog = () => {
+    resetCreateUserForm();
+    setIsCreateUserOpen(true);
+  };
+
+  const toggleCreateUserRole = (roleId: string, checked: boolean) => {
+    const currentRoles = createUserForm.getValues("role_ids");
+    createUserForm.setValue(
+      "role_ids",
+      checked
+        ? Array.from(new Set([...currentRoles, roleId]))
+        : currentRoles.filter((id) => id !== roleId),
+      { shouldDirty: true, shouldValidate: true },
+    );
+  };
+
+  const handleCreateUser = async (values: CreateUserFormValues) => {
+    const workingLocationId = canReadAllBranches
+      ? values.working_location_id
+      : (currentUser?.location_id ?? values.working_location_id);
+
+    if (canReadAllBranches && !workingLocationId) {
+      createUserForm.setError("working_location_id", {
+        message: "Select a branch before creating this user.",
+      });
+      return;
+    }
+
+    setIsCreatingUser(true);
+    try {
+      await createUser({
+        first_name: values.first_name.trim(),
+        last_name: values.last_name.trim(),
+        email: values.email.trim(),
+        phone_number: values.phone_number.trim(),
+        password: values.password,
+        gender: values.gender,
+        working_location_id: workingLocationId || undefined,
+        department_id: values.department_id || undefined,
+        role_ids: values.role_ids,
+      });
+      toast({
+        title: "User Created",
+        description: "The account is active and login details were sent by email.",
+      });
+      setIsCreateUserOpen(false);
+      resetCreateUserForm();
+      loadData();
+    } catch (error: any) {
+      toast({
+        variant: "destructive",
+        title: "Create Failed",
+        description: userFriendlyError(error, "Could not create this user."),
+      });
+    } finally {
+      setIsCreatingUser(false);
     }
   };
 
@@ -434,7 +548,7 @@ function UsersManagementContent() {
                 </Button>
             </PermissionGate>
             <PermissionGate permission="users.create">
-                <Button className="h-11 px-6 shadow-sm shadow-primary/20">
+                <Button className="h-11 px-6 shadow-sm shadow-primary/20" onClick={openCreateUserDialog}>
                     <UserPlus className="mr-2 h-4 w-4" size={16} /> Create User
                 </Button>
             </PermissionGate>
@@ -901,6 +1015,242 @@ function UsersManagementContent() {
           </SheetFooter>
         </SheetContent>
       </Sheet>
+
+      <Dialog open={isCreateUserOpen} onOpenChange={(open) => {
+        setIsCreateUserOpen(open);
+        if (!open) resetCreateUserForm();
+      }}>
+        <DialogContent className="sm:max-w-3xl max-h-[90vh] overflow-y-auto">
+          <form onSubmit={createUserForm.handleSubmit(handleCreateUser)} className="space-y-6">
+            <DialogHeader>
+              <DialogTitle>Create User</DialogTitle>
+              <DialogDescription>
+                Create an active account and email the login details to the user.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="create-first-name">First name</Label>
+                <Input
+                  id="create-first-name"
+                  {...createUserForm.register("first_name")}
+                  autoComplete="given-name"
+                />
+                {createUserForm.formState.errors.first_name?.message && (
+                  <p className="text-xs font-medium text-destructive">
+                    {createUserForm.formState.errors.first_name.message}
+                  </p>
+                )}
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="create-last-name">Last name</Label>
+                <Input
+                  id="create-last-name"
+                  {...createUserForm.register("last_name")}
+                  autoComplete="family-name"
+                />
+                {createUserForm.formState.errors.last_name?.message && (
+                  <p className="text-xs font-medium text-destructive">
+                    {createUserForm.formState.errors.last_name.message}
+                  </p>
+                )}
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="create-email">Email</Label>
+                <Input
+                  id="create-email"
+                  type="email"
+                  {...createUserForm.register("email")}
+                  autoComplete="email"
+                />
+                {createUserForm.formState.errors.email?.message && (
+                  <p className="text-xs font-medium text-destructive">
+                    {createUserForm.formState.errors.email.message}
+                  </p>
+                )}
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="create-phone">Phone number</Label>
+                <Input
+                  id="create-phone"
+                  {...createUserForm.register("phone_number")}
+                  placeholder="+250788000000"
+                  autoComplete="tel"
+                />
+                {createUserForm.formState.errors.phone_number?.message && (
+                  <p className="text-xs font-medium text-destructive">
+                    {createUserForm.formState.errors.phone_number.message}
+                  </p>
+                )}
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="create-password">Password</Label>
+                <Input
+                  id="create-password"
+                  type="password"
+                  {...createUserForm.register("password")}
+                  autoComplete="new-password"
+                />
+                {createUserForm.formState.errors.password?.message && (
+                  <p className="text-xs font-medium text-destructive">
+                    {createUserForm.formState.errors.password.message}
+                  </p>
+                )}
+              </div>
+              <div className="space-y-1.5">
+                <Label>Gender</Label>
+                <Select
+                  value={createGender}
+                  onValueChange={(value) =>
+                    createUserForm.setValue(
+                      "gender",
+                      value as CreateUserFormValues["gender"],
+                      { shouldDirty: true, shouldValidate: true },
+                    )
+                  }
+                >
+                  <SelectTrigger className="bg-card">
+                    <SelectValue placeholder="Select gender" />
+                  </SelectTrigger>
+                  <SelectContent position="item-aligned">
+                    <SelectItem value="MALE">Male</SelectItem>
+                    <SelectItem value="FEMALE">Female</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className={cn("grid gap-4", canReadAllBranches ? "sm:grid-cols-2" : "sm:grid-cols-1")}>
+              {canReadAllBranches && (
+                <div className="space-y-1.5">
+                  <Label>Branch</Label>
+                  <Select
+                    value={createWorkingLocationId || "none"}
+                    onValueChange={(value) => {
+                      createUserForm.setValue("working_location_id", value === "none" ? "" : value, {
+                        shouldDirty: true,
+                        shouldValidate: true,
+                      });
+                      createUserForm.setValue("department_id", "", {
+                        shouldDirty: true,
+                        shouldValidate: true,
+                      });
+                    }}
+                  >
+                    <SelectTrigger className="bg-card">
+                      <SelectValue placeholder="Select branch" />
+                    </SelectTrigger>
+                    <SelectContent position="item-aligned" className="max-h-[320px]">
+                      <SelectItem value="none">Select branch</SelectItem>
+                      {locations.map((location: any) => (
+                        <SelectItem key={location.uuid ?? location.id} value={location.uuid ?? location.id}>
+                          {location.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {createUserForm.formState.errors.working_location_id?.message && (
+                    <p className="text-xs font-medium text-destructive">
+                      {createUserForm.formState.errors.working_location_id.message}
+                    </p>
+                  )}
+                </div>
+              )}
+              <div className="space-y-1.5">
+                <Label>Department</Label>
+                <Select
+                  value={createDepartmentId || "none"}
+                  onValueChange={(value) =>
+                    createUserForm.setValue("department_id", value === "none" ? "" : value, {
+                      shouldDirty: true,
+                      shouldValidate: true,
+                    })
+                  }
+                >
+                  <SelectTrigger className="bg-card">
+                    <SelectValue placeholder="No department" />
+                  </SelectTrigger>
+                  <SelectContent position="item-aligned" className="max-h-[320px]">
+                    <SelectItem value="none">No department</SelectItem>
+                    {departments
+                      .filter((department: any) =>
+                        departmentBelongsToLocation(
+                          department,
+                          createWorkingLocationId || currentUser?.location_id || "",
+                        ),
+                      )
+                      .map((department: any) => (
+                        <SelectItem key={department.uuid ?? department.id} value={department.uuid ?? department.id}>
+                          {department.name}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <Label className="text-base font-bold">Role</Label>
+                <Badge variant="outline">{createRoleIds.length} selected</Badge>
+              </div>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                {roles.map((role: any) => {
+                  const roleId = role.uuid ?? role.id;
+                  const isAssigned = createRoleIds.includes(roleId);
+                  const isProtected = role.name === "SUPER_ADMIN" && !currentUser?.roles?.includes("SUPER_ADMIN");
+
+                  return (
+                    <label
+                      key={roleId}
+                      className={cn(
+                        "flex min-h-11 items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm",
+                        isProtected ? "cursor-not-allowed opacity-60" : "cursor-pointer hover:bg-secondary/30",
+                      )}
+                    >
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 accent-primary"
+                        checked={isAssigned}
+                        disabled={isProtected}
+                        onChange={(event) => toggleCreateUserRole(roleId, event.target.checked)}
+                      />
+                      <span className="min-w-0 flex-1 truncate font-medium">
+                        {role.name.replace("_", " ")}
+                      </span>
+                      {role.working_location?.name && (
+                        <span className="text-[10px] text-muted-foreground">
+                          {role.working_location.name}
+                        </span>
+                      )}
+                    </label>
+                  );
+                })}
+                {roles.length === 0 && (
+                  <InlineStateNote className="sm:col-span-2">
+                    No roles are available for this scope. Create a role before creating users.
+                  </InlineStateNote>
+                )}
+              </div>
+              {createUserForm.formState.errors.role_ids?.message && (
+                <p className="text-xs font-medium text-destructive">
+                  {createUserForm.formState.errors.role_ids.message}
+                </p>
+              )}
+            </div>
+
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setIsCreateUserOpen(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={isCreatingUser || roles.length === 0} className="min-w-36">
+                {isCreatingUser ? "Creating..." : "Create User"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       {/* Bulk Upload Dialog */}
       <Dialog open={isBulkUploadOpen} onOpenChange={setIsBulkUploadOpen}>

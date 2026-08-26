@@ -109,8 +109,8 @@ export function Sidebar({ type }: SidebarProps) {
   const mobileItems = visibleSections.flatMap((section) => section.items);
 
   return (
-    <aside className="sticky top-0 z-30 flex w-full shrink-0 flex-col border-b border-border bg-card lg:h-screen lg:w-72 lg:border-b-0 lg:border-r">
-      <div className="flex items-center gap-2 px-4 py-3 lg:p-6">
+    <aside className="sticky top-0 z-30 flex w-full shrink-0 flex-col border-b border-border bg-card lg:h-screen lg:w-64 lg:border-b-0 lg:border-r">
+      <div className="flex items-center gap-2 px-4 py-3 lg:p-5">
         <div className="shrink-0 rounded-lg border border-border bg-white p-1">
           <Image src="/pics/reg-logo.png" alt="REG Logo" width={32} height={32} className="h-8 w-8 object-contain" />
         </div>
@@ -120,7 +120,7 @@ export function Sidebar({ type }: SidebarProps) {
         </div>
       </div>
 
-      <div className="hidden px-6 mb-4 items-center gap-4 lg:flex">
+      <div className="mb-4 hidden items-center gap-4 px-5 lg:flex">
         <NotificationBell type={type} />
       </div>
 
@@ -147,7 +147,7 @@ export function Sidebar({ type }: SidebarProps) {
         })}
       </div>
 
-      <ScrollArea className="hidden flex-1 px-4 lg:block">
+      <ScrollArea className="hidden flex-1 px-3 lg:block">
         <nav className="space-y-5 py-2 pb-6">
           {visibleSections.map((section) => {
             return (
@@ -183,7 +183,7 @@ export function Sidebar({ type }: SidebarProps) {
         </nav>
       </ScrollArea>
 
-      <div className="mt-auto hidden border-t border-border bg-secondary/5 p-4 lg:block">
+      <div className="mt-auto hidden border-t border-border bg-secondary/5 p-3 lg:block">
         <div className="mb-4 flex items-center gap-3 rounded-lg border border-border bg-card p-2 shadow-sm">
           <Avatar className="h-10 w-10 border border-border shadow-sm">
             <AvatarImage src={getAvatarUrl(user?.avatar_url)} />

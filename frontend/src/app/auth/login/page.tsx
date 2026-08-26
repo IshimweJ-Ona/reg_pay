@@ -31,7 +31,7 @@ const registerSchema = z.object({
   gender: z.enum(['MALE', 'FEMALE']),
   working_location_id: z.string().optional(),
   department_id: z.string().optional(),
-  password: z.string().regex(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{5,}$/, "Min 5 chars, 2 digits, 1 uppercase, 1 lowercase, 1 symbol"),
+  password: z.string().regex(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d.*\d)(?=.*[^A-Za-z0-9\s])\S{5,}$/, "Min 5 characters, 2 digits, 1 uppercase, 1 lowercase, 1 symbol"),
   confirmPassword: z.string(),
 }).refine((data) => data.password === data.confirmPassword, {
   message: "Passwords don't match",
