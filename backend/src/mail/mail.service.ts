@@ -1,10 +1,35 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
 
+type UserCreatedEmailInput = {
+  recipientName: string;
+  creatorName: string;
+  creatorEmail: string;
+  roleNames: string[];
+  password: string;
+};
+
 @Injectable()
 export class MailService {
   private readonly logger = new Logger(MailService.name);
   private transporter: nodemailer.Transporter | null = null;
+
+  private escapeHtml(value: string) {
+    return value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+
+  private getFrontendUrl(path: string) {
+    const baseUrl = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(
+      /\/+$/,
+      '',
+    );
+    return `${baseUrl}${path.startsWith('/') ? path : `/${path}`}`;
+  }
 
   private getTransporter(): nodemailer.Transporter | null {
     if (this.transporter) return this.transporter;
@@ -41,7 +66,7 @@ export class MailService {
 
     try {
       await transporter.sendMail({ from, to, subject, html });
-    } catch (error) {
+    } catch (error: any) {
       this.logger.error(`Failed to send email to ${to}: ${error.message}`);
       if (process.env.NODE_ENV === 'production') {
         throw error;
@@ -68,6 +93,25 @@ export class MailService {
       `<p>Your account has been approved. Use the code below to verify your account and sign in:</p>
        <p style="font-size: 24px; font-weight: bold; letter-spacing: 4px;">${code}</p>
        <p>This code expires at ${expiresLocal}.</p>`,
+    );
+  }
+
+  async sendUserCreatedEmail(to: string, input: UserCreatedEmailInput) {
+    const loginUrl = this.getFrontendUrl('/auth/login');
+    const roleText = input.roleNames.length
+      ? input.roleNames.join(', ')
+      : 'No role assigned';
+
+    await this.send(
+      to,
+      'Your REG Pay account is ready',
+      `<p>Hello ${this.escapeHtml(input.recipientName)},</p>
+       <p>${this.escapeHtml(input.creatorName)} (${this.escapeHtml(input.creatorEmail)}) has created your REG Pay account.</p>
+       <p><strong>Role:</strong> ${this.escapeHtml(roleText)}</p>
+       <p><strong>Email:</strong> ${this.escapeHtml(to)}</p>
+       <p><strong>Password:</strong> ${this.escapeHtml(input.password)}</p>
+       <p>Your account has been verified by the administrator and is ready to use.</p>
+       <p><a href="${this.escapeHtml(loginUrl)}">Open REG Pay</a></p>`,
     );
   }
 }

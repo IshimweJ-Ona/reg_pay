@@ -40,6 +40,7 @@ export class RolesController {
   @Permissions(
     'roles.manage',
     'roles.manage_own_location',
+    'users.create',
     'users.update',
     'users.approve',
   )
@@ -47,7 +48,7 @@ export class RolesController {
   @ApiOperation({
     summary: 'List roles',
     description:
-      'Returns global roles plus, for a branch-scoped role manager, roles scoped to their own branch. Cached for 10 minutes. Requires roles.manage, roles.manage_own_location, users.update, or users.approve.',
+      'Returns global roles plus, for a branch-scoped role manager, roles scoped to their own branch. Cached for 10 minutes. Requires roles.manage, roles.manage_own_location, users.create, users.update, or users.approve.',
   })
   @ApiResponse({
     status: 200,

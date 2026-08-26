@@ -82,9 +82,19 @@ export class UsersService {
       ? await this.resolveRoleIds(data.role_ids)
       : [];
 
+    if (actor && roleIds.length === 0) {
+      throw new BadRequestException(
+        'Choose at least one role before creating a user.',
+      );
+    }
+
     const permissionIds = data.permission_ids?.length
       ? await this.resolvePermissionIds(data.permission_ids)
       : [];
+
+    if (actor && roleIds.length) {
+      await this.ensureActorCanAssignRoles(actor, roleIds);
+    }
 
     if (workingLocationId) {
       await this.ensureWorkingLocationExists(workingLocationId);
@@ -112,6 +122,13 @@ export class UsersService {
       await this.ensurePermissionsExist(permissionIds);
     }
 
+    const assignedRoles = roleIds.length
+      ? await this.prisma.roles.findMany({
+          where: { id: { in: roleIds } },
+          select: { id: true, name: true },
+        })
+      : [];
+
     const user = await this.prisma.$transaction(async (tx) => {
       const created = await tx.users.create({
         data: {
@@ -124,8 +141,8 @@ export class UsersService {
           gender: data.gender,
           department_id: departmentId,
           working_location_id: workingLocationId,
-          // user pending by default
-          status: 'INACTIVE',
+          status: actor ? 'ACTIVE' : 'INACTIVE',
+          is_verified: !!actor,
           updated_at: new Date(),
         },
       });
@@ -159,10 +176,12 @@ export class UsersService {
             entity_id: created.id,
             module_name: 'USER_MANAGEMENT',
             activity_type: 'CREATE' as any,
-            activity_description: 'Created pending user account.',
+            activity_description: actor
+              ? 'Created active user account.'
+              : 'Created pending user account.',
             action: 'CREATED' as any,
             new_values: {
-              status: 'INACTIVE',
+              status: actor ? 'ACTIVE' : 'INACTIVE',
               working_location_id: workingLocationId?.toString() ?? null,
               department_id: departmentId?.toString() ?? null,
               role_ids: roleIds.map((roleId) => roleId.toString()),
@@ -182,8 +201,22 @@ export class UsersService {
 
     await this.clearUserCaches();
 
+    if (actor) {
+      await this.mailService.sendUserCreatedEmail(user.email, {
+        recipientName: `${user.first_name} ${user.last_name}`.trim(),
+        creatorName:
+          `${actor.first_name ?? ''} ${actor.last_name ?? ''}`.trim() ||
+          actor.email,
+        creatorEmail: actor.email,
+        roleNames: assignedRoles.map((role) => role.name),
+        password: data.password,
+      });
+    }
+
     return {
-      message: 'Registration submitted successfully. Awaiting admin approval.',
+      message: actor
+        ? 'User created and login details were emailed.'
+        : 'Registration submitted successfully. Awaiting admin approval.',
       user: this.serializeUser(user),
     };
   }
@@ -817,6 +850,15 @@ export class UsersService {
       : null;
 
     for (const role of roles) {
+      if (
+        this.isBranchManager(actor) &&
+        ['BRANCH_MANAGER', 'SUPER_ADMIN'].includes(role.name)
+      ) {
+        throw new BadRequestException(
+          'Branch managers cannot assign Branch Manager or Super Admin roles.',
+        );
+      }
+
       if (
         role.working_location_id &&
         (!actorLocation || role.working_location_id !== actorLocation)
