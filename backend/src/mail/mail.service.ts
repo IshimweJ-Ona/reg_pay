@@ -6,7 +6,13 @@ type UserCreatedEmailInput = {
   creatorName: string;
   creatorEmail: string;
   roleNames: string[];
-  password: string;
+  setPasswordUrl: string;
+  expiresAt: Date;
+};
+
+type MailContent = {
+  text: string;
+  html: string;
 };
 
 @Injectable()
@@ -21,14 +27,6 @@ export class MailService {
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#039;');
-  }
-
-  private getFrontendUrl(path: string) {
-    const baseUrl = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(
-      /\/+$/,
-      '',
-    );
-    return `${baseUrl}${path.startsWith('/') ? path : `/${path}`}`;
   }
 
   private getTransporter(): nodemailer.Transporter | null {
@@ -55,7 +53,7 @@ export class MailService {
     return this.transporter;
   }
 
-  private async send(to: string, subject: string, html: string) {
+  private async send(to: string, subject: string, content: MailContent) {
     const transporter = this.getTransporter();
     const from = process.env.SMTP_FROM || 'REG Pay <no-reply@regpay.local>';
 
@@ -65,7 +63,13 @@ export class MailService {
     }
 
     try {
-      await transporter.sendMail({ from, to, subject, html });
+      await transporter.sendMail({
+        from,
+        to,
+        subject,
+        text: content.text,
+        html: content.html,
+      });
     } catch (error: any) {
       this.logger.error(`Failed to send email to ${to}: ${error.message}`);
       if (process.env.NODE_ENV === 'production') {
@@ -79,9 +83,19 @@ export class MailService {
     await this.send(
       to,
       'Reset your REG Pay password',
-      `<p>We received a request to reset your REG Pay password.</p>
-       <p><a href="${resetUrl}">Click here to reset your password</a></p>
-       <p>This link expires at ${expiresLocal}. If you didn't request this, you can ignore this email.</p>`,
+      {
+        text: [
+          'We received a request to reset your REG Pay password.',
+          '',
+          `Reset your password: ${resetUrl}`,
+          '',
+          `This link expires at ${expiresLocal}.`,
+          "If you didn't request this, you can ignore this email.",
+        ].join('\n'),
+        html: `<p>We received a request to reset your REG Pay password.</p>
+         <p><a href="${this.escapeHtml(resetUrl)}">Click here to reset your password</a></p>
+         <p>This link expires at ${this.escapeHtml(expiresLocal)}. If you didn't request this, you can ignore this email.</p>`,
+      },
     );
   }
 
@@ -90,28 +104,51 @@ export class MailService {
     await this.send(
       to,
       'Your REG Pay verification code',
-      `<p>Your account has been approved. Use the code below to verify your account and sign in:</p>
-       <p style="font-size: 24px; font-weight: bold; letter-spacing: 4px;">${code}</p>
-       <p>This code expires at ${expiresLocal}.</p>`,
+      {
+        text: [
+          'Your account has been approved.',
+          '',
+          `Verification code: ${code}`,
+          '',
+          `This code expires at ${expiresLocal}.`,
+        ].join('\n'),
+        html: `<p>Your account has been approved. Use the code below to verify your account and sign in:</p>
+         <p style="font-size: 24px; font-weight: bold; letter-spacing: 4px;">${this.escapeHtml(code)}</p>
+         <p>This code expires at ${this.escapeHtml(expiresLocal)}.</p>`,
+      },
     );
   }
 
   async sendUserCreatedEmail(to: string, input: UserCreatedEmailInput) {
-    const loginUrl = this.getFrontendUrl('/auth/login');
     const roleText = input.roleNames.length
       ? input.roleNames.join(', ')
       : 'No role assigned';
+    const expiresLocal = input.expiresAt.toUTCString();
 
     await this.send(
       to,
-      'Your REG Pay account is ready',
-      `<p>Hello ${this.escapeHtml(input.recipientName)},</p>
-       <p>${this.escapeHtml(input.creatorName)} (${this.escapeHtml(input.creatorEmail)}) has created your REG Pay account.</p>
-       <p><strong>Role:</strong> ${this.escapeHtml(roleText)}</p>
-       <p><strong>Email:</strong> ${this.escapeHtml(to)}</p>
-       <p><strong>Password:</strong> ${this.escapeHtml(input.password)}</p>
-       <p>Your account has been verified by the administrator and is ready to use.</p>
-       <p><a href="${this.escapeHtml(loginUrl)}">Open REG Pay</a></p>`,
+      'Set up your REG Pay account',
+      {
+        text: [
+          `Hello ${input.recipientName},`,
+          '',
+          `${input.creatorName} (${input.creatorEmail}) created your REG Pay account.`,
+          `Role: ${roleText}`,
+          `Email: ${to}`,
+          '',
+          `Set your password: ${input.setPasswordUrl}`,
+          '',
+          `This one-time link expires at ${expiresLocal}.`,
+          'If you were not expecting this account, contact your administrator.',
+        ].join('\n'),
+        html: `<p>Hello ${this.escapeHtml(input.recipientName)},</p>
+         <p>${this.escapeHtml(input.creatorName)} (${this.escapeHtml(input.creatorEmail)}) created your REG Pay account.</p>
+         <p><strong>Role:</strong> ${this.escapeHtml(roleText)}</p>
+         <p><strong>Email:</strong> ${this.escapeHtml(to)}</p>
+         <p><a href="${this.escapeHtml(input.setPasswordUrl)}">Set your REG Pay password</a></p>
+         <p>This one-time link expires at ${this.escapeHtml(expiresLocal)}.</p>
+         <p>If you were not expecting this account, contact your administrator.</p>`,
+      },
     );
   }
 }

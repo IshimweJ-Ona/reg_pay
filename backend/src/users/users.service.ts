@@ -34,6 +34,7 @@ import type { CurrentUserType } from '../auth/types/current-user.type';
 import { RejectTransferDto } from '../common/dto/reject-transfer.dto';
 import { RequestTransferDto } from '../common/dto/request-transfer.dto';
 import { ApproveUserDto } from './dto/approve-user.dto';
+import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UpdateUserPermissionOverrideDto } from './dto/update-user-permission-override.dto';
 
@@ -54,7 +55,15 @@ export class UsersService {
     @Inject(CACHE_MANAGER) private cacheManager: cacheManager.Cache,
   ) {}
 
-  async createUser(data: RegisterDto, actor?: CurrentUserType) {
+  private getFrontendUrl(path: string) {
+    const baseUrl = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(
+      /\/+$/,
+      '',
+    );
+    return `${baseUrl}${path.startsWith('/') ? path : `/${path}`}`;
+  }
+
+  async createUser(data: RegisterDto | CreateUserDto, actor?: CurrentUserType) {
     const existingUser = await this.prisma.users.findFirst({
       where: {
         OR: [{ email: data.email }, { phone_number: data.phone_number }],
@@ -129,6 +138,20 @@ export class UsersService {
         })
       : [];
 
+    const submittedPassword = 'password' in data ? data.password : undefined;
+    const passwordForHash = actor
+      ? crypto.randomBytes(32).toString('hex')
+      : submittedPassword;
+
+    if (!passwordForHash) {
+      throw new BadRequestException('Password is required for registration.');
+    }
+
+    const resetPasswordToken = actor ? generateUUID() : null;
+    const resetPasswordExpires = actor
+      ? new Date(Date.now() + 60 * 60 * 1000)
+      : null;
+
     const user = await this.prisma.$transaction(async (tx) => {
       const created = await tx.users.create({
         data: {
@@ -137,7 +160,9 @@ export class UsersService {
           last_name: data.last_name,
           email: data.email,
           phone_number: data.phone_number,
-          password_hash: await hashPassword(data.password),
+          password_hash: await hashPassword(passwordForHash),
+          reset_password_token: resetPasswordToken,
+          reset_password_expires: resetPasswordExpires,
           gender: data.gender,
           department_id: departmentId,
           working_location_id: workingLocationId,
@@ -188,6 +213,8 @@ export class UsersService {
               permission_ids: permissionIds.map((permissionId) =>
                 permissionId.toString(),
               ),
+              password_setup_required: true,
+              reset_password_expires: resetPasswordExpires?.toISOString(),
             },
           },
         });
@@ -209,13 +236,16 @@ export class UsersService {
           actor.email,
         creatorEmail: actor.email,
         roleNames: assignedRoles.map((role) => role.name),
-        password: data.password,
+        setPasswordUrl: this.getFrontendUrl(
+          `/auth/reset-password/${resetPasswordToken}`,
+        ),
+        expiresAt: resetPasswordExpires!,
       });
     }
 
     return {
       message: actor
-        ? 'User created and login details were emailed.'
+        ? 'User created and a password setup link was emailed.'
         : 'Registration submitted successfully. Awaiting admin approval.',
       user: this.serializeUser(user),
     };

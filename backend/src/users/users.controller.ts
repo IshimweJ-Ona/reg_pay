@@ -30,9 +30,9 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import type { CurrentUserType } from '../auth/types/current-user.type';
 import { RejectTransferDto } from '../common/dto/reject-transfer.dto';
 import { RequestTransferDto } from '../common/dto/request-transfer.dto';
-import { RegisterDto } from '../auth/dto/register.dto';
 import { ApproveUserDto } from './dto/approve-user.dto';
 import { AssignUserRolesDto } from './dto/assign-user-roles.dto';
+import { CreateUserDto } from './dto/create-user.dto';
 import { RejectUserDto } from './dto/reject-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UpdateUserPermissionOverrideDto } from './dto/update-user-permission-override.dto';
@@ -50,8 +50,9 @@ export class UsersController {
   @ApiOperation({
     summary: 'Create a new user manually',
     description:
-      'Allows administrators to manually create a user account. The user will be created with ACTIVE status if approved immediately, or PENDING if status is not specified.',
+      'Allows administrators to manually create an active user account. The user receives a one-time email link to set their own password.',
   })
+  @ApiBody({ type: CreateUserDto })
   @ApiResponse({ status: 201, description: 'User created successfully.' })
   @ApiResponse({ status: 400, description: 'Invalid input data.' })
   @ApiResponse({
@@ -62,7 +63,7 @@ export class UsersController {
     status: 409,
     description: 'Conflict. Email or phone number already exists.',
   })
-  create(@Body() dto: RegisterDto, @CurrentUser() actor: CurrentUserType) {
+  create(@Body() dto: CreateUserDto, @CurrentUser() actor: CurrentUserType) {
     return this.usersService.createUser(dto, actor);
   }
 
