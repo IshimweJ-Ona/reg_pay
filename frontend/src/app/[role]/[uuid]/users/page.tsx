@@ -110,9 +110,6 @@ const createUserSchema = z.object({
     .string()
     .trim()
     .regex(/^\+2507[2389][0-9]{7}$/, "Use a valid Rwanda number, for example +250788000000."),
-  password: z
-    .string()
-    .regex(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d.*\d)(?=.*[@$!%*?&]).{5,}$/, "Use 5+ characters with uppercase, lowercase, two digits, and one symbol."),
   gender: z.enum(["MALE", "FEMALE"]),
   working_location_id: z.string().optional(),
   department_id: z.string().optional(),
@@ -126,7 +123,6 @@ const createUserDefaults: CreateUserFormValues = {
   last_name: "",
   email: "",
   phone_number: "",
-  password: "",
   gender: "MALE",
   working_location_id: "",
   department_id: "",
@@ -327,7 +323,6 @@ function UsersManagementContent() {
         last_name: values.last_name.trim(),
         email: values.email.trim(),
         phone_number: values.phone_number.trim(),
-        password: values.password,
         gender: values.gender,
         working_location_id: workingLocationId || undefined,
         department_id: values.department_id || undefined,
@@ -335,7 +330,7 @@ function UsersManagementContent() {
       });
       toast({
         title: "User Created",
-        description: "The account is active and login details were sent by email.",
+        description: "The account is active and a password setup link was sent by email.",
       });
       setIsCreateUserOpen(false);
       resetCreateUserForm();
@@ -1025,7 +1020,7 @@ function UsersManagementContent() {
             <DialogHeader>
               <DialogTitle>Create User</DialogTitle>
               <DialogDescription>
-                Create an active account and email the login details to the user.
+                Create an active account and email a one-time password setup link to the user.
               </DialogDescription>
             </DialogHeader>
 
@@ -1081,20 +1076,6 @@ function UsersManagementContent() {
                 {createUserForm.formState.errors.phone_number?.message && (
                   <p className="text-xs font-medium text-destructive">
                     {createUserForm.formState.errors.phone_number.message}
-                  </p>
-                )}
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="create-password">Password</Label>
-                <Input
-                  id="create-password"
-                  type="password"
-                  {...createUserForm.register("password")}
-                  autoComplete="new-password"
-                />
-                {createUserForm.formState.errors.password?.message && (
-                  <p className="text-xs font-medium text-destructive">
-                    {createUserForm.formState.errors.password.message}
                   </p>
                 )}
               </div>

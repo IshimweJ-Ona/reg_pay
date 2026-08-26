@@ -1,5 +1,17 @@
-import type { RegisterUserPayload } from "./auth";
+import type { Gender } from "./auth";
 import api from "./axios";
+
+export interface CreateUserPayload {
+    first_name: string;
+    last_name: string;
+    email: string;
+    phone_number: string;
+    gender: Gender;
+    department_id?: string;
+    working_location_id?: string;
+    role_ids?: string[];
+    permission_ids?: string[];
+}
 
 export interface ApproveUserPayload {
     working_location_id?: string;
@@ -19,7 +31,7 @@ export interface UpdateUserPayload {
     department_id?: string | null;
 }
 
-export const createUser = async (payload: Partial<RegisterUserPayload>) => {
+export const createUser = async (payload: CreateUserPayload) => {
     const response = await api.post("/users", payload);
     return response.data;
 };
