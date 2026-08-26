@@ -3,6 +3,7 @@ import {
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
+import * as crypto from 'crypto';
 import { JwtService } from '@nestjs/jwt';
 import {
   audit_logs_activity_type as ACTIVITY_TYPE,
@@ -13,10 +14,13 @@ import { isNumericId, requireUuidOrNumeric } from '../common/utils/lookup.util';
 import { generateUUID } from '../common/utils/uuid.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { MailService } from '../mail/mail.service';
 import { REFRESH_TOKEN_EXPIRES_IN_DAYS } from './constants/auth.constants';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { VerifyAccountDto } from './dto/verify-account.dto';
+import { ResendVerificationCodeDto } from './dto/resend-verification-code.dto';
 import { JwtPayload } from './interfaces/jwt-payload.interface';
 import { comparePassword, hashPassword } from './utils/password.util';
 import { signAccessToken, signRefreshToken } from './utils/token.util';
@@ -47,6 +51,7 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly notificationsService: NotificationsService,
+    private readonly mailService: MailService,
   ) {}
 
   private normalizeDeviceInfo(info: string | string[] | undefined): string {
@@ -223,52 +228,11 @@ export class AuthService {
         );
       }
 
-      const payload = await this.buildPayload(user.id);
-      const tokens = await this.createTokenPair(payload);
-
-      await this.prisma.$transaction([
-        this.prisma.user_sessions.create({
-          data: {
-            uuid: generateUUID(),
-            user_id: user.id,
-            refresh_token_hash: hashToken(tokens.refresh_token),
-            device_info: this.normalizeDeviceInfo(context.deviceInfo),
-            ip_address: context.ipAddress,
-            expires_at: this.getRefreshExpiryDate(),
-          },
-        }),
-        this.prisma.users.update({
-          where: { id: user.id },
-          data: { last_login_at: new Date() },
-        }),
-      ]);
-
-      await this.writeLoginAudit(user.id, context.ipAddress, true);
-
-      const roles = user.user_roles.map((r) => r.roles.name);
-      let rolePath = 'users';
-      if (roles.includes('SUPER_ADMIN')) {
-        rolePath = 'super_admin';
-      } else if (roles.includes('BRANCH_MANAGER')) {
-        rolePath = 'branch_manager';
-      } else if (
-        roles.includes('HR') ||
-        roles.includes('HR_MANAGER') ||
-        roles.includes('HR_ADMIN')
-      ) {
-        rolePath = 'hr';
-      } else if (roles.includes('ACCOUNTANT') || roles.includes('FINANCE')) {
-        rolePath = 'finance';
-      } else if (roles.includes('ATTENDANT')) {
-        rolePath = 'attendant';
+      if (user.status === 'ACTIVE' && !user.is_verified) {
+        throw new UnauthorizedException('ACCOUNT_NOT_VERIFIED');
       }
 
-      let redirectUrl = `/${rolePath}/${user.uuid}`;
-      if (user.status === 'PENDING') {
-        redirectUrl = `/auth/pending/${user.uuid}`;
-      }
-
-      return { ...tokens, redirectUrl, uuid: user.uuid, status: user.status };
+      return await this.issueSession(user, context);
     } catch (error) {
       if (
         error instanceof UnauthorizedException ||
@@ -281,6 +245,58 @@ export class AuthService {
         `An unexpected error occurred during login. ${error.message || ''}`,
       );
     }
+  }
+
+  // Shared by login() (after password + status checks) and verifyAccount()
+  // (after a valid verification code proves account control) - issues a
+  // fresh token pair/session for an already-authenticated user.
+  private async issueSession(user: any, context: RequestContext) {
+    const payload = await this.buildPayload(user.id);
+    const tokens = await this.createTokenPair(payload);
+
+    await this.prisma.$transaction([
+      this.prisma.user_sessions.create({
+        data: {
+          uuid: generateUUID(),
+          user_id: user.id,
+          refresh_token_hash: hashToken(tokens.refresh_token),
+          device_info: this.normalizeDeviceInfo(context.deviceInfo),
+          ip_address: context.ipAddress,
+          expires_at: this.getRefreshExpiryDate(),
+        },
+      }),
+      this.prisma.users.update({
+        where: { id: user.id },
+        data: { last_login_at: new Date() },
+      }),
+    ]);
+
+    await this.writeLoginAudit(user.id, context.ipAddress, true);
+
+    const roles = user.user_roles.map((r: any) => r.roles.name);
+    let rolePath = 'users';
+    if (roles.includes('SUPER_ADMIN')) {
+      rolePath = 'super_admin';
+    } else if (roles.includes('BRANCH_MANAGER')) {
+      rolePath = 'branch_manager';
+    } else if (
+      roles.includes('HR') ||
+      roles.includes('HR_MANAGER') ||
+      roles.includes('HR_ADMIN')
+    ) {
+      rolePath = 'hr';
+    } else if (roles.includes('ACCOUNTANT') || roles.includes('FINANCE')) {
+      rolePath = 'finance';
+    } else if (roles.includes('ATTENDANT')) {
+      rolePath = 'attendant';
+    }
+
+    let redirectUrl = `/${rolePath}/${user.uuid}`;
+    if (user.status === 'PENDING') {
+      redirectUrl = `/auth/pending/${user.uuid}`;
+    }
+
+    return { ...tokens, redirectUrl, uuid: user.uuid, status: user.status };
   }
 
   async me(userId: string) {
@@ -554,7 +570,7 @@ export class AuthService {
 
     if (!user) {
       return {
-        message: 'If an account exists, a reset token has been generated.',
+        message: 'If an account exists, a reset link has been emailed to it.',
       };
     }
 
@@ -570,10 +586,16 @@ export class AuthService {
       },
     });
 
+    const resetUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/auth/reset-password/${token}`;
+    await this.mailService.sendPasswordResetEmail(user.email, resetUrl, expires);
+
     return {
-      message: 'Reset token generated.',
-      reset_token: token,
-      expires_at: expires.toISOString(),
+      message: 'If an account exists, a reset link has been emailed to it.',
+      // Only surfaced outside production, so local/dev testing doesn't
+      // require a working SMTP setup just to exercise this flow.
+      ...(process.env.NODE_ENV !== 'production'
+        ? { reset_token: token, expires_at: expires.toISOString() }
+        : {}),
     };
   }
 
@@ -614,6 +636,82 @@ export class AuthService {
     });
 
     return { message: 'Password reset successfully.' };
+  }
+
+  private generateVerificationCode(): string {
+    return crypto.randomInt(100000, 999999).toString();
+  }
+
+  private async issueVerificationCode(userId: bigint, email: string) {
+    const code = this.generateVerificationCode();
+    const expires = new Date();
+    expires.setMinutes(expires.getMinutes() + 30);
+
+    await this.prisma.users.update({
+      where: { id: userId },
+      data: {
+        verification_code_hash: hashToken(code),
+        verification_code_expires: expires,
+      },
+    });
+
+    await this.mailService.sendVerificationCodeEmail(email, code, expires);
+    return expires;
+  }
+
+  async verifyAccount(dto: VerifyAccountDto, context: RequestContext = {}) {
+    const user = await this.prisma.users.findFirst({
+      where: {
+        OR: [{ email: dto.identifier }, { phone_number: dto.identifier }],
+        deleted_at: null,
+      },
+      include: {
+        user_roles: { include: { roles: true } },
+      },
+    });
+
+    if (
+      !user ||
+      user.is_verified ||
+      !user.verification_code_hash ||
+      !user.verification_code_expires ||
+      user.verification_code_expires < new Date() ||
+      user.verification_code_hash !== hashToken(dto.code)
+    ) {
+      throw new UnauthorizedException(
+        'Verification code is invalid or has expired.',
+      );
+    }
+
+    await this.prisma.users.update({
+      where: { id: user.id },
+      data: {
+        is_verified: true,
+        verification_code_hash: null,
+        verification_code_expires: null,
+      },
+    });
+
+    return this.issueSession(user, context);
+  }
+
+  async resendVerificationCode(dto: ResendVerificationCodeDto) {
+    const user = await this.prisma.users.findFirst({
+      where: {
+        OR: [{ email: dto.identifier }, { phone_number: dto.identifier }],
+        deleted_at: null,
+      },
+    });
+
+    // Same response regardless of match/verified-state - anti-enumeration,
+    // matching forgotPassword()'s pattern.
+    if (user && user.status === 'ACTIVE' && !user.is_verified) {
+      await this.issueVerificationCode(user.id, user.email);
+    }
+
+    return {
+      message: 'If your account needs verification, a new code has been emailed to it.',
+    };
   }
 
   async updateProfile(userId: string, dto: UpdateProfileDto) {

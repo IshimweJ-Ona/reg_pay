@@ -26,6 +26,7 @@ import { generateUUID } from '../common/utils/uuid.util';
 import { buildAuditDiff } from '../common/utils/audit-diff.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { DepartmentsService } from '../departments/department.service';
+import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { SuspendEmployeeDto } from './dto/suspend-employee.dto';
 import { TransferEmployeeDto } from './dto/transfer-employee.dto';
@@ -43,8 +44,36 @@ export class EmployeesService {
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
     private readonly departmentsService: DepartmentsService,
+    private readonly cloudinaryService: CloudinaryService,
     @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
   ) {}
+
+  async uploadAvatar(uuid: string, file: Express.Multer.File) {
+    const employee = await this.prisma.employees.findUnique({
+      where: { uuid },
+    });
+    if (!employee) {
+      throw new BadRequestException('Employee not found.');
+    }
+
+    const uploaded = await this.cloudinaryService.uploadAvatar(
+      file.buffer,
+      'employees',
+      employee.uuid,
+    );
+    if (employee.avatar_public_id) {
+      await this.cloudinaryService.deleteAvatar(employee.avatar_public_id);
+    }
+    await this.prisma.employees.update({
+      where: { id: employee.id },
+      data: {
+        avatar_url: uploaded.secure_url,
+        avatar_public_id: uploaded.public_id,
+      },
+    });
+    await this.clearEmployeeCache();
+    return { avatar_url: uploaded.secure_url };
+  }
 
   async create(dto: CreateEmployeeDto, actor?: CurrentUserType) {
     if (!dto.first_name || !dto.last_name) {
@@ -75,7 +104,10 @@ export class EmployeesService {
       ? await this.resolveDepartmentId(dto.department_id, workingLocationId)
       : null;
 
-    const categoryId = dto.employment_category_id
+    const positionId = dto.position_id
+      ? this.toBigInt(dto.position_id, 'position_id')
+      : null;
+    const employmentCategoryId = dto.employment_category_id
       ? this.toBigInt(dto.employment_category_id, 'employment_category_id')
       : null;
 
@@ -87,9 +119,10 @@ export class EmployeesService {
       await this.ensureOrganization(workingLocationId, departmentId);
     }
 
-    if (categoryId) {
-      await this.ensureEmploymentCategory(categoryId);
-    }
+    const positionVariant = await this.resolvePositionEmploymentCategory(
+      positionId,
+      employmentCategoryId,
+    );
 
     this.ensureActorCanUseScope(
       actor,
@@ -154,7 +187,8 @@ export class EmployeesService {
             : null,
           department_id: departmentId,
           working_location_id: workingLocationId,
-          employment_category_id: categoryId,
+          position_id: positionId,
+          employment_category_id: employmentCategoryId,
           status: 'ACTIVE',
           created_by: actor ? BigInt(actor.userId) : null,
           updated_at: new Date(),
@@ -162,56 +196,86 @@ export class EmployeesService {
         include: this.employeeIncludes(),
       });
 
-      // Unified Salary Creation
-      if (categoryId && (dto.basic_salary || dto.daily_rate)) {
-        const category = await tx.employment_categories.findUnique({
-          where: { id: categoryId },
-        });
-        if (category) {
-          const isMonthly = category.payroll_frequency === 'MONTHLY';
-          const isCustom = category.payroll_frequency === 'CUSTOM';
-          const monthlyBasicSalary = dto.basic_salary ?? '150000';
-          const dailyRate = isMonthly
-            ? calculateMonthlyDailyRate(monthlyBasicSalary).toString()
-            : (dto.daily_rate ?? '3000');
+      // Unified Salary Creation - payroll_frequency/tax_behavior and the
+      // default salary come from this employee's specific position +
+      // employment category pairing (positionVariant), not the position
+      // alone, since the same position can offer several pay bases.
+      if (positionVariant && (dto.basic_salary || dto.daily_rate)) {
+        const category = positionVariant.employment_categories;
+        const isMonthly = category.payroll_frequency === 'MONTHLY';
+        const isCustom = category.payroll_frequency === 'CUSTOM';
+        const monthlyBasicSalary =
+          dto.basic_salary ??
+          positionVariant.default_basic_salary?.toString() ??
+          '150000';
+        const dailyRate = isMonthly
+          ? calculateMonthlyDailyRate(monthlyBasicSalary).toString()
+          : (dto.daily_rate ??
+            positionVariant.default_daily_rate?.toString() ??
+            '3000');
 
-          await tx.payment_structures.create({
-            data: {
-              uuid: generateUUID(),
-              employee_id: created.id,
-              payroll_frequency: category.payroll_frequency,
-              basic_salary: isMonthly
-                ? monthlyBasicSalary
-                : isCustom
-                  ? this.resolveCustomBasicSalary(
-                      dailyRate,
-                      created.contract_start_date,
-                      created.contract_end_date,
-                      dto.basic_salary ?? '0',
-                    )
-                  : '0',
-              daily_rate: dailyRate,
-              overtime_rate: '0',
-              tax_percentage: dto.tax_percentage ?? '0',
-              custom_work_days: null,
-              effective_from: new Date(),
-              updated_at: new Date(),
-            },
-          });
-        }
-      }
-
-      // Unified Allowance Creation
-      if (dto.allowance_title && dto.allowance_amount) {
-        await tx.allowances.create({
+        await tx.payment_structures.create({
           data: {
             uuid: generateUUID(),
             employee_id: created.id,
-            title: dto.allowance_title,
-            amount: dto.allowance_amount,
+            payroll_frequency: category.payroll_frequency,
+            basic_salary: isMonthly
+              ? monthlyBasicSalary
+              : isCustom
+                ? this.resolveCustomBasicSalary(
+                    dailyRate,
+                    created.contract_start_date,
+                    created.contract_end_date,
+                    dto.basic_salary ?? '0',
+                  )
+                : '0',
+            daily_rate: dailyRate,
+            overtime_rate:
+              positionVariant.default_overtime_rate?.toString() ?? '0',
+            tax_percentage: dto.tax_percentage ?? '0',
+            custom_work_days: null,
+            effective_from: new Date(),
             updated_at: new Date(),
           },
         });
+      }
+
+      // Allowances and deductions are inherited from the assigned position's
+      // templates, not typed by hand - keeps a new hire's benefits consistent
+      // with whatever the position is configured to offer.
+      if (positionId) {
+        const allowanceTemplates =
+          await tx.position_allowance_templates.findMany({
+            where: { position_id: positionId },
+          });
+        if (allowanceTemplates.length > 0) {
+          await tx.allowances.createMany({
+            data: allowanceTemplates.map((template) => ({
+              uuid: generateUUID(),
+              employee_id: created.id,
+              allowance_type_id: template.allowance_type_id,
+              title: template.title,
+              amount: template.default_amount,
+              description: template.description,
+              updated_at: new Date(),
+            })),
+          });
+        }
+
+        const deductionTypeLinks = await tx.position_deduction_types.findMany({
+          where: { position_id: positionId },
+        });
+        if (deductionTypeLinks.length > 0) {
+          await tx.employee_deductions.createMany({
+            data: deductionTypeLinks.map((link) => ({
+              uuid: generateUUID(),
+              employee_id: created.id,
+              deduction_type_id: link.deduction_type_id,
+              start_date: created.hire_date ?? new Date(),
+              is_active: true,
+            })),
+          });
+        }
       }
 
       if (actor) {
@@ -229,7 +293,7 @@ export class EmployeesService {
             new_values: {
               working_location_id: workingLocationId?.toString() ?? null,
               department_id: departmentId?.toString() ?? null,
-              employment_category_id: categoryId?.toString() ?? null,
+              position_id: positionId?.toString() ?? null,
             },
           },
         });
@@ -342,64 +406,57 @@ export class EmployeesService {
     qInput?: string,
     departmentIdInput?: string,
     workingLocationIdInput?: string,
+    pageInput?: number,
+    limitInput?: number,
   ) {
     const q = normalizeSearch(qInput);
-    const cacheKey = `employees:all:${actor.userId}:${actor.working_location_id ?? ''}:${departmentIdInput ?? ''}:${workingLocationIdInput ?? ''}:${q ?? ''}`;
+    // Pagination is opt-in: existing callers that never pass page/limit keep
+    // getting the full result set (many pages still filter this list
+    // client-side across criteria the API doesn't model), so only slice when
+    // a caller actually asks for a page.
+    const isPaginated = pageInput !== undefined || limitInput !== undefined;
+    const page = pageInput && pageInput > 0 ? pageInput : 1;
+    const limit = limitInput && limitInput > 0 ? limitInput : 20;
+    const cacheKey = `employees:all:${actor.userId}:${actor.working_location_id ?? ''}:${departmentIdInput ?? ''}:${workingLocationIdInput ?? ''}:${q ?? ''}:${isPaginated ? `${page}:${limit}` : 'all'}`;
 
     const cached = await this.cacheManager.get(cacheKey);
     if (cached) return cached as any;
 
-    const employees = await this.prisma.employees.findMany({
-      where: {
-        deleted_at: null,
-        ...this.employeeScopeWhere(actor),
-        // ANDed on top of the actor's own scope above, so a department- or
-        // branch-scoped actor can never widen their view by passing another
-        // department's id here - the scope clause still restricts the result.
-        ...(departmentIdInput && isNumericId(departmentIdInput)
-          ? { department_id: BigInt(departmentIdInput) }
-          : {}),
-        ...(workingLocationIdInput && isNumericId(workingLocationIdInput)
-          ? { working_location_id: BigInt(workingLocationIdInput) }
-          : {}),
-        ...(q
-          ? {
-              OR: [
-                {
-                  first_name: {
-                    contains: q,
-                  },
-                },
-                {
-                  last_name: {
-                    contains: q,
-                  },
-                },
-                {
-                  email: {
-                    contains: q,
-                  },
-                },
-                {
-                  phone_number: {
-                    contains: q,
-                  },
-                },
-                {
-                  national_id: {
-                    contains: q,
-                  },
-                },
-              ],
-            }
-          : {}),
-      },
-      distinct: ['uuid'],
-      include: this.employeeIncludes(),
-      orderBy: {
-        created_at: 'desc',
-      },
-    });
+    const where = {
+      deleted_at: null,
+      ...this.employeeScopeWhere(actor),
+      // ANDed on top of the actor's own scope above, so a department- or
+      // branch-scoped actor can never widen their view by passing another
+      // department's id here - the scope clause still restricts the result.
+      ...(departmentIdInput && isNumericId(departmentIdInput)
+        ? { department_id: BigInt(departmentIdInput) }
+        : {}),
+      ...(workingLocationIdInput && isNumericId(workingLocationIdInput)
+        ? { working_location_id: BigInt(workingLocationIdInput) }
+        : {}),
+      ...(q
+        ? {
+            OR: [
+              { first_name: { contains: q } },
+              { last_name: { contains: q } },
+              { email: { contains: q } },
+              { phone_number: { contains: q } },
+              { national_id: { contains: q } },
+            ],
+          }
+        : {}),
+    };
+
+    const [employees, total] = await Promise.all([
+      this.prisma.employees.findMany({
+        where,
+        distinct: ['uuid'],
+        include: this.employeeIncludes(),
+        orderBy: { created_at: 'desc' },
+        ...(isPaginated ? { skip: (page - 1) * limit, take: limit } : {}),
+      }),
+      this.prisma.employees.count({ where }),
+    ]);
 
     const attendanceStats = await this.getAttendanceStatsByEmployee(
       employees.map((employee) => employee.id),
@@ -412,6 +469,10 @@ export class EmployeesService {
           attendanceStats.get(employee.id.toString()),
         ),
       ),
+      total,
+      page: isPaginated ? page : 1,
+      limit: isPaginated ? limit : total,
+      totalPages: isPaginated ? Math.ceil(total / limit) : 1,
     };
     await this.cacheManager.set(cacheKey, result, 30000); // 30 seconds cache
     return result;
@@ -477,14 +538,24 @@ export class EmployeesService {
         )
       : undefined;
 
-    const categoryId = dto.employment_category_id
+    const positionId = dto.position_id
+      ? this.toBigInt(dto.position_id, 'position_id')
+      : undefined;
+    const employmentCategoryId = dto.employment_category_id
       ? this.toBigInt(dto.employment_category_id, 'employment_category_id')
       : undefined;
 
     if (
-      departmentId !== undefined &&
-      employee.department_id !== departmentId
+      positionId !== undefined &&
+      positionId !== employee.position_id &&
+      employmentCategoryId === undefined
     ) {
+      throw new BadRequestException(
+        'employment_category_id is required when changing an employee to a new position.',
+      );
+    }
+
+    if (departmentId !== undefined && employee.department_id !== departmentId) {
       await this.ensureDepartmentCanReceiveEmployees(departmentId);
     }
 
@@ -563,8 +634,9 @@ export class EmployeesService {
         employeeUpdateData.department_id = departmentId;
       if (workingLocationId !== undefined)
         employeeUpdateData.working_location_id = workingLocationId;
-      if (categoryId !== undefined)
-        employeeUpdateData.employment_category_id = categoryId;
+      if (positionId !== undefined) employeeUpdateData.position_id = positionId;
+      if (employmentCategoryId !== undefined)
+        employeeUpdateData.employment_category_id = employmentCategoryId;
       employeeUpdateData.updated_at = new Date();
 
       const saved = await tx.employees.update({
@@ -573,90 +645,106 @@ export class EmployeesService {
         include: this.employeeIncludes(),
       });
 
-      // 2. Update Salary (Payment Structure) if salary/category/contract fields changed
-      const targetCategoryId = categoryId ?? employee.employment_category_id;
+      // 2. Update Salary (Payment Structure) if salary/position/category/contract fields changed
+      const targetPositionId = positionId ?? employee.position_id;
+      const targetEmploymentCategoryId =
+        employmentCategoryId ?? employee.employment_category_id;
       const hasSalaryPatch =
         dto.basic_salary !== undefined ||
         dto.daily_rate !== undefined ||
         dto.tax_percentage !== undefined ||
         dto.contract_start_date !== undefined ||
         dto.contract_end_date !== undefined ||
-        categoryId !== undefined;
+        positionId !== undefined ||
+        employmentCategoryId !== undefined;
 
-      if (targetCategoryId && hasSalaryPatch) {
-        const category = await tx.employment_categories.findUnique({
-          where: { id: targetCategoryId },
-        });
-
-        if (category) {
-          const currentStructure = await tx.payment_structures.findFirst({
-            where: { employee_id: employee.id, effective_to: null },
+      if (targetPositionId && targetEmploymentCategoryId && hasSalaryPatch) {
+        const positionVariant =
+          await tx.position_employment_categories.findFirst({
+            where: {
+              position_id: targetPositionId,
+              employment_category_id: targetEmploymentCategoryId,
+            },
+            include: { employment_categories: true },
           });
 
-          const isMonthly = category.payroll_frequency === 'MONTHLY';
-          const isCustom = category.payroll_frequency === 'CUSTOM';
+        if (!positionVariant) {
+          throw new BadRequestException(
+            'This position does not offer the selected employment category. Choose one of the employment-category variants configured on this position.',
+          );
+        }
 
-          const resolvedMonthlyBasicSalary =
-            dto.basic_salary ??
-            (currentStructure?.basic_salary &&
-            Number(currentStructure.basic_salary) !== 0
-              ? currentStructure.basic_salary.toString()
-              : '150000');
-          const resolvedDailyRate = isMonthly
-            ? calculateMonthlyDailyRate(resolvedMonthlyBasicSalary).toString()
-            : (dto.daily_rate ??
-              (currentStructure?.daily_rate &&
-              Number(currentStructure.daily_rate) !== 0
-                ? currentStructure.daily_rate.toString()
-                : '3000'));
+        const category = positionVariant.employment_categories;
+        const currentStructure = await tx.payment_structures.findFirst({
+          where: { employee_id: employee.id, effective_to: null },
+        });
 
-          const structureData = {
-            payroll_frequency: category.payroll_frequency,
-            basic_salary: isMonthly
-              ? resolvedMonthlyBasicSalary
-              : isCustom
-                ? this.resolveCustomBasicSalary(
-                    resolvedDailyRate,
-                    saved.contract_start_date,
-                    saved.contract_end_date,
-                    dto.basic_salary ??
-                      currentStructure?.basic_salary?.toString() ??
-                      '0',
-                  )
-                : '0',
-            daily_rate: resolvedDailyRate,
-            overtime_rate: currentStructure?.overtime_rate ?? '0',
-            tax_percentage:
-              dto.tax_percentage ?? currentStructure?.tax_percentage ?? '0',
-            custom_work_days: null,
-            updated_at: new Date(),
-          };
+        const isMonthly = category.payroll_frequency === 'MONTHLY';
+        const isCustom = category.payroll_frequency === 'CUSTOM';
 
-          if (
-            currentStructure &&
-            currentStructure.payroll_frequency === category.payroll_frequency
-          ) {
-            // Update existing
-            await tx.payment_structures.update({
-              where: { id: currentStructure.id },
-              data: structureData,
-            });
-          } else {
-            // Close old and create new
-            await tx.payment_structures.updateMany({
-              where: { employee_id: employee.id, effective_to: null },
-              data: { effective_to: new Date() },
-            });
+        const resolvedMonthlyBasicSalary =
+          dto.basic_salary ??
+          (currentStructure?.basic_salary &&
+          Number(currentStructure.basic_salary) !== 0
+            ? currentStructure.basic_salary.toString()
+            : (positionVariant.default_basic_salary?.toString() ?? '150000'));
+        const resolvedDailyRate = isMonthly
+          ? calculateMonthlyDailyRate(resolvedMonthlyBasicSalary).toString()
+          : (dto.daily_rate ??
+            (currentStructure?.daily_rate &&
+            Number(currentStructure.daily_rate) !== 0
+              ? currentStructure.daily_rate.toString()
+              : (positionVariant.default_daily_rate?.toString() ?? '3000')));
 
-            await tx.payment_structures.create({
-              data: {
-                ...structureData,
-                uuid: generateUUID(),
-                employee_id: employee.id,
-                effective_from: new Date(),
-              },
-            });
-          }
+        const structureData = {
+          payroll_frequency: category.payroll_frequency,
+          basic_salary: isMonthly
+            ? resolvedMonthlyBasicSalary
+            : isCustom
+              ? this.resolveCustomBasicSalary(
+                  resolvedDailyRate,
+                  saved.contract_start_date,
+                  saved.contract_end_date,
+                  dto.basic_salary ??
+                    currentStructure?.basic_salary?.toString() ??
+                    '0',
+                )
+              : '0',
+          daily_rate: resolvedDailyRate,
+          overtime_rate:
+            currentStructure?.overtime_rate ??
+            positionVariant.default_overtime_rate?.toString() ??
+            '0',
+          tax_percentage:
+            dto.tax_percentage ?? currentStructure?.tax_percentage ?? '0',
+          custom_work_days: null,
+          updated_at: new Date(),
+        };
+
+        if (
+          currentStructure &&
+          currentStructure.payroll_frequency === category.payroll_frequency
+        ) {
+          // Update existing
+          await tx.payment_structures.update({
+            where: { id: currentStructure.id },
+            data: structureData,
+          });
+        } else {
+          // Close old and create new
+          await tx.payment_structures.updateMany({
+            where: { employee_id: employee.id, effective_to: null },
+            data: { effective_to: new Date() },
+          });
+
+          await tx.payment_structures.create({
+            data: {
+              ...structureData,
+              uuid: generateUUID(),
+              employee_id: employee.id,
+              effective_from: new Date(),
+            },
+          });
         }
       }
 
@@ -705,7 +793,7 @@ export class EmployeesService {
         'contract_end_date',
         'department_id',
         'working_location_id',
-        'employment_category_id',
+        'position_id',
       ]);
       await tx.audit_logs.create({
         data: {
@@ -771,23 +859,23 @@ export class EmployeesService {
       workingLocationId,
     );
 
-    const categoryId = dto.employment_category_id
-      ? this.toBigInt(dto.employment_category_id, 'employment_category_id')
-      : employee.employment_category_id;
+    const positionId = dto.position_id
+      ? this.toBigInt(dto.position_id, 'position_id')
+      : employee.position_id;
 
     if (employee.department_id !== departmentId) {
       await this.ensureDepartmentCanReceiveEmployees(departmentId);
     }
 
-    if (!categoryId) {
+    if (!positionId) {
       throw new BadRequestException(
-        'Employee must have an employment category before transfer.',
+        'Employee must have a position before transfer.',
       );
     }
 
     await this.ensureOrganization(workingLocationId, departmentId);
 
-    await this.ensureEmploymentCategory(categoryId);
+    await this.ensurePosition(positionId);
 
     const request = await this.prisma.transfer_requests.create({
       data: {
@@ -913,8 +1001,8 @@ export class EmployeesService {
             new_department_id: request.new_department_id,
             old_location_id: employee.working_location_id,
             new_location_id: request.new_working_location_id,
-            old_employment_category_id: employee.employment_category_id,
-            new_employment_category_id: employee.employment_category_id,
+            old_position_id: employee.position_id,
+            new_position_id: employee.position_id,
             status: 'ACTIVE',
             reason: request.reason,
             changed_by: BigInt(actor.userId),
@@ -1086,7 +1174,10 @@ export class EmployeesService {
             )
           : null;
 
-        const categoryId = item.employment_category_id
+        const positionId = item.position_id
+          ? this.toBigInt(item.position_id, 'position_id')
+          : null;
+        const employmentCategoryId = item.employment_category_id
           ? this.toBigInt(item.employment_category_id, 'employment_category_id')
           : null;
 
@@ -1098,9 +1189,10 @@ export class EmployeesService {
           await this.ensureOrganization(workingLocationId, departmentId);
         }
 
-        if (categoryId) {
-          await this.ensureEmploymentCategory(categoryId);
-        }
+        const positionVariant = await this.resolvePositionEmploymentCategory(
+          positionId,
+          employmentCategoryId,
+        );
 
         this.ensureActorCanUseScope(
           actor,
@@ -1164,7 +1256,8 @@ export class EmployeesService {
                 : null,
               department_id: departmentId,
               working_location_id: workingLocationId,
-              employment_category_id: categoryId,
+              position_id: positionId,
+              employment_category_id: employmentCategoryId,
               status: 'ACTIVE',
               created_by: BigInt(actor.userId),
               updated_at: new Date(),
@@ -1172,42 +1265,44 @@ export class EmployeesService {
             include: this.employeeIncludes(),
           });
 
-          // Create payment structure if category and salary info provided
-          if (categoryId && (item.basic_salary || item.daily_rate)) {
-            const category = await tx.employment_categories.findUnique({
-              where: { id: categoryId },
-            });
-            if (category) {
-              const isMonthly = category.payroll_frequency === 'MONTHLY';
-              const isCustom = category.payroll_frequency === 'CUSTOM';
-              const monthlyBasicSalary = item.basic_salary ?? '150000';
-              const dailyRate = isMonthly
-                ? calculateMonthlyDailyRate(monthlyBasicSalary).toString()
-                : (item.daily_rate ?? '3000');
+          // Create payment structure if position + employment category and salary info provided
+          if (positionVariant && (item.basic_salary || item.daily_rate)) {
+            const category = positionVariant.employment_categories;
+            const isMonthly = category.payroll_frequency === 'MONTHLY';
+            const isCustom = category.payroll_frequency === 'CUSTOM';
+            const monthlyBasicSalary =
+              item.basic_salary ??
+              positionVariant.default_basic_salary?.toString() ??
+              '150000';
+            const dailyRate = isMonthly
+              ? calculateMonthlyDailyRate(monthlyBasicSalary).toString()
+              : (item.daily_rate ??
+                positionVariant.default_daily_rate?.toString() ??
+                '3000');
 
-              await tx.payment_structures.create({
-                data: {
-                  uuid: generateUUID(),
-                  employee_id: created.id,
-                  payroll_frequency: category.payroll_frequency,
-                  basic_salary: isMonthly
-                    ? monthlyBasicSalary
-                    : isCustom
-                      ? this.resolveCustomBasicSalary(
-                          dailyRate,
-                          created.contract_start_date,
-                          created.contract_end_date,
-                          item.basic_salary ?? '0',
-                        )
-                      : '0',
-                  daily_rate: dailyRate,
-                  overtime_rate: '0',
-                  tax_percentage: item.tax_percentage ?? '0',
-                  effective_from: new Date(),
-                  updated_at: new Date(),
-                },
-              });
-            }
+            await tx.payment_structures.create({
+              data: {
+                uuid: generateUUID(),
+                employee_id: created.id,
+                payroll_frequency: category.payroll_frequency,
+                basic_salary: isMonthly
+                  ? monthlyBasicSalary
+                  : isCustom
+                    ? this.resolveCustomBasicSalary(
+                        dailyRate,
+                        created.contract_start_date,
+                        created.contract_end_date,
+                        item.basic_salary ?? '0',
+                      )
+                    : '0',
+                daily_rate: dailyRate,
+                overtime_rate:
+                  positionVariant.default_overtime_rate?.toString() ?? '0',
+                tax_percentage: item.tax_percentage ?? '0',
+                effective_from: new Date(),
+                updated_at: new Date(),
+              },
+            });
           }
 
           await tx.audit_logs.create({
@@ -1223,7 +1318,7 @@ export class EmployeesService {
               new_values: {
                 working_location_id: workingLocationId?.toString() ?? null,
                 department_id: departmentId?.toString() ?? null,
-                employment_category_id: categoryId?.toString() ?? null,
+                position_id: positionId?.toString() ?? null,
               },
             },
           });
@@ -1274,7 +1369,7 @@ export class EmployeesService {
 
   /**
    * Auto-pause employees whose contract end date has passed
-   * Only applies to DAILY and CUSTOM employment categories
+   * Only applies to positions on DAILY and CUSTOM payroll frequencies
    */
   async autoPauseExpiredContracts(workingLocationId?: bigint) {
     const today = new Date();
@@ -1288,7 +1383,7 @@ export class EmployeesService {
           lt: today,
         },
         employment_categories: {
-          name: {
+          payroll_frequency: {
             in: ['DAILY', 'CUSTOM'],
           },
         },
@@ -1327,8 +1422,8 @@ export class EmployeesService {
             new_department_id: employee.department_id,
             old_location_id: employee.working_location_id,
             new_location_id: employee.working_location_id,
-            old_employment_category_id: employee.employment_category_id,
-            new_employment_category_id: employee.employment_category_id,
+            old_position_id: employee.position_id,
+            new_position_id: employee.position_id,
             status: 'INACTIVE',
             reason: `Contract ended on ${employee.contract_end_date?.toISOString().split('T')[0]}. Employee paused automatically.`,
             changed_by: BigInt(1), // System user
@@ -1379,7 +1474,7 @@ export class EmployeesService {
     if (
       !employee.working_location_id ||
       !employee.department_id ||
-      !employee.employment_category_id
+      !employee.position_id
     ) {
       throw new BadRequestException(
         'Employee must be approved before status changes.',
@@ -1407,8 +1502,8 @@ export class EmployeesService {
           new_department_id: employee.department_id,
           old_location_id: employee.working_location_id,
           new_location_id: employee.working_location_id,
-          old_employment_category_id: employee.employment_category_id,
-          new_employment_category_id: employee.employment_category_id,
+          old_position_id: employee.position_id,
+          new_position_id: employee.position_id,
           status: status === 'ACTIVE' ? 'ACTIVE' : 'INACTIVE',
           reason,
           changed_by: BigInt(actor.userId),
@@ -1567,10 +1662,10 @@ export class EmployeesService {
     }
   }
 
-  private async ensureEmploymentCategory(categoryId: bigint) {
-    const category = await this.prisma.employment_categories.findFirst({
+  private async ensurePosition(positionId: bigint) {
+    const position = await this.prisma.positions.findFirst({
       where: {
-        id: categoryId,
+        id: positionId,
         status: 'ACTIVE',
       },
       select: {
@@ -1578,11 +1673,48 @@ export class EmployeesService {
       },
     });
 
-    if (!category) {
+    if (!position) {
+      throw new BadRequestException('Position does not exist or is inactive.');
+    }
+  }
+
+  /**
+   * A position can offer several employment-category variants (Monthly /
+   * Daily / Custom), each with its own default salary, so assigning an
+   * employee requires picking both the position AND one of its variants.
+   * Returns the variant row (with its employment_categories relation
+   * included) so callers can read payroll_frequency/tax_behavior/defaults,
+   * or null when neither id was supplied (employee not yet assigned).
+   */
+  private async resolvePositionEmploymentCategory(
+    positionId: bigint | null,
+    employmentCategoryId: bigint | null,
+  ) {
+    if (!positionId && !employmentCategoryId) {
+      return null;
+    }
+
+    if (!positionId || !employmentCategoryId) {
       throw new BadRequestException(
-        'Employment category does not exist or is inactive.',
+        'Both position_id and employment_category_id must be provided together when assigning an employee to a position.',
       );
     }
+
+    const variant = await this.prisma.position_employment_categories.findFirst({
+      where: {
+        position_id: positionId,
+        employment_category_id: employmentCategoryId,
+      },
+      include: { employment_categories: true },
+    });
+
+    if (!variant) {
+      throw new BadRequestException(
+        'This position does not offer the selected employment category. Choose one of the employment-category variants configured on this position.',
+      );
+    }
+
+    return variant;
   }
 
   private employeeIncludes() {
@@ -1601,6 +1733,12 @@ export class EmployeesService {
         },
       },
       working_locations: {
+        select: {
+          uuid: true,
+          name: true,
+        },
+      },
+      positions: {
         select: {
           uuid: true,
           name: true,
@@ -1683,11 +1821,25 @@ export class EmployeesService {
       created_by: employee.created_by?.toString() ?? null,
       department_id: employee.department_id?.toString() ?? null,
       working_location_id: employee.working_location_id?.toString() ?? null,
+      position_id: employee.position_id?.toString() ?? null,
       employment_category_id:
         employee.employment_category_id?.toString() ?? null,
       department: employee.departments ?? null,
       working_location: employee.working_locations ?? null,
-      employment_category: employee.employment_categories ?? null,
+      position: employee.positions
+        ? {
+            uuid: employee.positions.uuid,
+            name: employee.positions.name,
+          }
+        : null,
+      employment_category: employee.employment_categories
+        ? {
+            uuid: employee.employment_categories.uuid,
+            name: employee.employment_categories.name,
+            payroll_frequency: employee.employment_categories.payroll_frequency,
+            tax_behavior: employee.employment_categories.tax_behavior,
+          }
+        : null,
       employee_deductions: (employee.employee_deductions ?? []).map(
         (deduction: any) => ({
           ...deduction,

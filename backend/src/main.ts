@@ -1,4 +1,4 @@
-import { ValidationPipe } from '@nestjs/common';
+import { ValidationPipe, VersioningType } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { NestFactory, HttpAdapterHost } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
@@ -14,6 +14,14 @@ async function bootstrap() {
   const httpAdapterHost = app.get(HttpAdapterHost);
   app.useGlobalFilters(new AllExceptionsFilter(httpAdapterHost));
   app.useGlobalInterceptors(new BigIntInterceptor());
+
+  // Every controller now responds under /v1/... (e.g. /v1/auth/login).
+  // Static assets (/uploads/) and the Swagger docs UI (/api) bypass Nest's
+  // router entirely, so neither is affected by this.
+  app.enableVersioning({
+    type: VersioningType.URI,
+    defaultVersion: '1',
+  });
 
   app.useStaticAssets(join(__dirname, '..', 'uploads'), {
     prefix: '/uploads/',

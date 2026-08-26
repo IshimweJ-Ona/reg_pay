@@ -1,6 +1,8 @@
 export const DEFAULT_OVERTIME_BONUS_PER_DAY = 2500;
 export const DEFAULT_WORK_HOURS_PER_DAY = 8;
-export const DEFAULT_MONTHLY_WORK_DAYS = 26;
+// Weekdays only (weekends removed) - a monthly employee's daily-rate
+// equivalent is basic_salary / 22, not basic_salary / calendar days.
+export const DEFAULT_MONTHLY_WORK_DAYS = 22;
 
 /** Kept as an alias so older imports don't break at compile time. */
 export const DEFAULT_OVERTIME_RATE_PER_HOUR = DEFAULT_OVERTIME_BONUS_PER_DAY;

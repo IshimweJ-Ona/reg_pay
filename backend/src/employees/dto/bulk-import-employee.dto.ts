@@ -3,11 +3,20 @@ import {
   IsOptional,
   IsString,
   IsIn,
+  Matches,
   ValidateNested,
   MinLength,
   MaxLength,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import {
+  REG_EMAIL_MESSAGE,
+  REG_EMAIL_REGEX,
+  RWANDA_NATIONAL_ID_MESSAGE,
+  RWANDA_NATIONAL_ID_REGEX,
+  RWANDA_PHONE_MESSAGE,
+  RWANDA_PHONE_REGEX,
+} from '../../common/constants/validation.constants';
 
 export class BulkImportEmployeeItem {
   @IsString()
@@ -22,14 +31,17 @@ export class BulkImportEmployeeItem {
 
   @IsOptional()
   @IsString()
+  @Matches(REG_EMAIL_REGEX, { message: REG_EMAIL_MESSAGE })
   email?: string;
 
   @IsOptional()
   @IsString()
+  @Matches(RWANDA_PHONE_REGEX, { message: RWANDA_PHONE_MESSAGE })
   phone_number?: string;
 
   @IsOptional()
   @IsString()
+  @Matches(RWANDA_NATIONAL_ID_REGEX, { message: RWANDA_NATIONAL_ID_MESSAGE })
   national_id?: string;
 
   @IsOptional()
@@ -52,6 +64,10 @@ export class BulkImportEmployeeItem {
   @IsOptional()
   @IsString()
   working_location_id?: string;
+
+  @IsOptional()
+  @IsString()
+  position_id?: string;
 
   @IsOptional()
   @IsString()

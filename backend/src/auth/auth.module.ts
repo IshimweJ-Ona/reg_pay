@@ -8,6 +8,7 @@ import { RolesGuard } from './guards/roles.guard';
 import { PermissionsGuard } from './guards/permissions.guard';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { MailModule } from '../mail/mail.module';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.register({}),
     NotificationsModule,
+    MailModule,
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy, RolesGuard, PermissionsGuard],

@@ -15,10 +15,10 @@ export class TransferEmployeeDto {
   @IsNotEmpty()
   department_id?: string;
 
-  @ApiPropertyOptional({ example: 'category-uuid' })
+  @ApiPropertyOptional({ example: 'position-uuid' })
   @IsOptional()
   @IsString()
-  employment_category_id?: string;
+  position_id?: string;
 
   @ApiPropertyOptional({ example: 'Transfer reason' })
   @IsOptional()

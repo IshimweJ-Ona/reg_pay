@@ -53,9 +53,10 @@ export class EmployeeEntity {
   } | null;
 
   @ApiPropertyOptional({
-    description: 'Employment category (Monthly / Daily / Custom)',
+    description:
+      'Position the employee is assigned to (e.g. Linesman, Driver, Electrician)',
   })
-  employment_category?: {
+  position?: {
     uuid: string;
     name: string;
     payroll_frequency: string;
@@ -71,10 +72,19 @@ export class EmployeeEntity {
 // Paginated wrapper used by GET /employees
 export class PaginatedEmployeesEntity {
   @ApiProperty({ type: [EmployeeEntity] })
-  data?: EmployeeEntity[];
+  employees?: EmployeeEntity[];
 
   @ApiProperty({ example: 400 })
   total?: number;
+
+  @ApiProperty({ example: 1 })
+  page?: number;
+
+  @ApiProperty({ example: 20 })
+  limit?: number;
+
+  @ApiProperty({ example: 20 })
+  totalPages?: number;
 }
 
 // Transfer request snapshot returned after initiating a transfer

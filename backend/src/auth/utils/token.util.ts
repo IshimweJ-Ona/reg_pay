@@ -49,7 +49,9 @@ export const signAccessToken = (
 ): string => {
   return jwtService.sign(payload, {
     secret: JWT_ACCESS_SECRET,
-    expiresIn: ACCESS_TOKEN_EXPIRES_IN,
+    // Cast: expiresIn is a configurable env value (e.g. "15m"), not a
+    // literal type ms's StringValue can statically verify.
+    expiresIn: ACCESS_TOKEN_EXPIRES_IN as any,
   });
 };
 
@@ -59,6 +61,6 @@ export const signRefreshToken = (
 ): string => {
   return jwtService.sign(payload, {
     secret: JWT_REFRESH_SECRET,
-    expiresIn: REFRESH_TOKEN_EXPIRES_IN,
+    expiresIn: REFRESH_TOKEN_EXPIRES_IN as any,
   });
 };

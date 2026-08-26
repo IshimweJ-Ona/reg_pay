@@ -2,6 +2,8 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { MailService } from '../mail/mail.service';
+import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import { UsersService } from './users.service';
 
 describe('UsersService', () => {
@@ -23,6 +25,20 @@ describe('UsersService', () => {
           provide: NotificationsService,
           useValue: {
             create: jest.fn(),
+          },
+        },
+        {
+          provide: MailService,
+          useValue: {
+            sendPasswordResetEmail: jest.fn(),
+            sendVerificationCodeEmail: jest.fn(),
+          },
+        },
+        {
+          provide: CloudinaryService,
+          useValue: {
+            uploadAvatar: jest.fn(),
+            deleteAvatar: jest.fn(),
           },
         },
         {

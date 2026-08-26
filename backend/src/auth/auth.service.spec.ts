@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { MailService } from '../mail/mail.service';
 import { AuthService } from './auth.service';
 
 describe('AuthService', () => {
@@ -33,6 +34,13 @@ describe('AuthService', () => {
             notifyAdmins: jest.fn(),
             notifyBranchManager: jest.fn(),
             broadcast: jest.fn(),
+          },
+        },
+        {
+          provide: MailService,
+          useValue: {
+            sendPasswordResetEmail: jest.fn(),
+            sendVerificationCodeEmail: jest.fn(),
           },
         },
       ],

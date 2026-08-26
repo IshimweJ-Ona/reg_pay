@@ -25,6 +25,10 @@ import {
 } from '../common/utils/lookup.util';
 import { hasEffectivePermission } from '../common/utils/effective-permissions.util';
 import { generateUUID } from '../common/utils/uuid.util';
+import { hashToken } from '../common/utils/hash.util';
+import * as crypto from 'crypto';
+import { MailService } from '../mail/mail.service';
+import { CloudinaryService } from '../cloudinary/cloudinary.service';
 
 import type { CurrentUserType } from '../auth/types/current-user.type';
 import { RejectTransferDto } from '../common/dto/reject-transfer.dto';
@@ -45,6 +49,8 @@ export class UsersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
+    private readonly mailService: MailService,
+    private readonly cloudinaryService: CloudinaryService,
     @Inject(CACHE_MANAGER) private cacheManager: cacheManager.Cache,
   ) {}
 
@@ -397,6 +403,13 @@ export class UsersService {
       await this.ensureOnlyOneBranchManager(workingLocationId, user.id);
     }
 
+    // A newly-approved account must prove control of its email before it
+    // can actually log in - generate a one-time verification code now, the
+    // caller (below, after the transaction commits) emails it.
+    const verificationCode = crypto.randomInt(100000, 999999).toString();
+    const verificationExpires = new Date();
+    verificationExpires.setMinutes(verificationExpires.getMinutes() + 30);
+
     const updatedUser = await this.prisma.$transaction(async (tx) => {
       await tx.users.update({
         where: { id: user.id },
@@ -404,6 +417,9 @@ export class UsersService {
           working_location_id: workingLocationId,
           department_id: departmentId,
           status: 'ACTIVE',
+          is_verified: false,
+          verification_code_hash: hashToken(verificationCode),
+          verification_code_expires: verificationExpires,
           updated_at: new Date(),
         },
       });
@@ -502,14 +518,19 @@ export class UsersService {
       userId: user.id,
       senderId: BigInt(actor.userId),
       title: 'Your account has been approved',
-      message: `Welcome aboard! Your account has been approved and is now active. You can log in to get started.`,
+      message: `Welcome aboard! Your account has been approved. Check your email for a verification code to finish signing in.`,
       type: 'ACCOUNT_APPROVED',
       referenceId: user.uuid,
     });
+    await this.mailService.sendVerificationCodeEmail(
+      updatedUser.email,
+      verificationCode,
+      verificationExpires,
+    );
     await this.clearUserCaches();
 
     return {
-      message: 'User approved and activated.',
+      message: 'User approved and activated. A verification code has been emailed to them.',
       user: this.serializeUser(updatedUser),
     };
   }
@@ -847,7 +868,7 @@ export class UsersService {
     };
   }
 
-  async bulkUpdateAvatars(files: any[], mappings: Record<string, string>) {
+  async bulkUpdateAvatars(files: Express.Multer.File[], mappings: Record<string, string>) {
     const results: any[] = [];
     for (const file of files) {
       const targetIdentifier = mappings[file.originalname];
@@ -860,9 +881,20 @@ export class UsersService {
       });
 
       if (user) {
+        const uploaded = await this.cloudinaryService.uploadAvatar(
+          file.buffer,
+          'users',
+          user.uuid,
+        );
+        if (user.avatar_public_id) {
+          await this.cloudinaryService.deleteAvatar(user.avatar_public_id);
+        }
         await this.prisma.users.update({
           where: { id: user.id },
-          data: { avatar_url: `/uploads/profiles/${file.filename}` },
+          data: {
+            avatar_url: uploaded.secure_url,
+            avatar_public_id: uploaded.public_id,
+          },
         });
         results.push({
           identifier: targetIdentifier,
@@ -883,9 +915,20 @@ export class UsersService {
       });
 
       if (employee) {
+        const uploaded = await this.cloudinaryService.uploadAvatar(
+          file.buffer,
+          'employees',
+          employee.uuid,
+        );
+        if (employee.avatar_public_id) {
+          await this.cloudinaryService.deleteAvatar(employee.avatar_public_id);
+        }
         await this.prisma.employees.update({
           where: { id: employee.id },
-          data: { avatar_url: `/uploads/profiles/${file.filename}` },
+          data: {
+            avatar_url: uploaded.secure_url,
+            avatar_public_id: uploaded.public_id,
+          },
         });
         results.push({
           identifier: targetIdentifier,
@@ -896,6 +939,31 @@ export class UsersService {
     }
     await this.clearUserCaches();
     return { success: true, count: results.length, details: results };
+  }
+
+  async uploadUserAvatar(uuid: string, file: Express.Multer.File) {
+    const user = await this.prisma.users.findUnique({ where: { uuid } });
+    if (!user) {
+      throw new NotFoundException('User not found.');
+    }
+
+    const uploaded = await this.cloudinaryService.uploadAvatar(
+      file.buffer,
+      'users',
+      user.uuid,
+    );
+    if (user.avatar_public_id) {
+      await this.cloudinaryService.deleteAvatar(user.avatar_public_id);
+    }
+    await this.prisma.users.update({
+      where: { id: user.id },
+      data: {
+        avatar_url: uploaded.secure_url,
+        avatar_public_id: uploaded.public_id,
+      },
+    });
+    await this.clearUserCaches();
+    return { avatar_url: uploaded.secure_url };
   }
 
   async getAvatarUrl(uuid: string) {

@@ -8,6 +8,14 @@ import {
   Matches,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import {
+  REG_EMAIL_MESSAGE,
+  REG_EMAIL_REGEX,
+  RWANDA_NATIONAL_ID_MESSAGE,
+  RWANDA_NATIONAL_ID_REGEX,
+  RWANDA_PHONE_MESSAGE,
+  RWANDA_PHONE_REGEX,
+} from '../../common/constants/validation.constants';
 
 export class CreateEmployeeDto {
   @ApiProperty({
@@ -32,9 +40,7 @@ export class CreateEmployeeDto {
   })
   @IsOptional()
   @IsString()
-  @Matches(/^[a-zA-Z0-9._%+-]+@(gmail\.com|reg\.com|yahoo\.com|reg\.rw)$/, {
-    message: 'Email must be a valid @gmail.com, @yahoo.com or @reg.rw address.',
-  })
+  @Matches(REG_EMAIL_REGEX, { message: REG_EMAIL_MESSAGE })
   email?: string;
 
   @ApiPropertyOptional({
@@ -43,9 +49,7 @@ export class CreateEmployeeDto {
   })
   @IsOptional()
   @IsString()
-  @Matches(/^\+2507[2389][0-9]{7}$/, {
-    message: 'Phone number must be a valid Rwanda number (+2507...).',
-  })
+  @Matches(RWANDA_PHONE_REGEX, { message: RWANDA_PHONE_MESSAGE })
   phone_number?: string;
 
   @ApiPropertyOptional({
@@ -55,9 +59,7 @@ export class CreateEmployeeDto {
   })
   @IsOptional()
   @IsString()
-  @Matches(/^\d{16}$/, {
-    message: 'National ID must be exactly 16 digits.',
-  })
+  @Matches(RWANDA_NATIONAL_ID_REGEX, { message: RWANDA_NATIONAL_ID_MESSAGE })
   national_id?: string;
 
   @ApiPropertyOptional({
@@ -143,8 +145,19 @@ export class CreateEmployeeDto {
   @ApiPropertyOptional({
     example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
     description:
-      'UUID of the employment category (Monthly / Daily / Custom) ' +
-      'that determines payroll frequency and tax behaviour.',
+      'UUID of the position (e.g. Linesman, Driver, Electrician) the employee is assigned to. ' +
+      "The position's linked employment category determines payroll frequency and tax behaviour.",
+  })
+  @IsOptional()
+  @IsString()
+  position_id?: string;
+
+  @ApiPropertyOptional({
+    example: '2',
+    description:
+      'Id of the employment-category variant (Monthly / Daily / Custom) of the ' +
+      'chosen position this employee is assigned to. Required together with ' +
+      'position_id - determines payroll frequency, tax behaviour, and default salary.',
   })
   @IsOptional()
   @IsString()

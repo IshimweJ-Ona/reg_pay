@@ -93,10 +93,14 @@ export class PayrollService {
         working_location_id: workingLocationId,
         status: STATUS_USER.ACTIVE as any,
         deleted_at: null,
+        // dto.categories carries payroll-frequency values (MONTHLY/DAILY/CUSTOM
+        // from the batch-creation UI's frequency filter), not employment
+        // category display names - filter on the enum, not `name`, so the
+        // comparison isn't sensitive to how a category happens to be titled.
         ...(dto.categories && dto.categories.length > 0
           ? {
               employment_categories: {
-                name: { in: dto.categories },
+                payroll_frequency: { in: dto.categories as any },
               },
             }
           : {}),
@@ -514,6 +518,7 @@ export class PayrollService {
     actor: CurrentUserType,
     qInput?: string,
     statusInput?: string,
+    positionIdInput?: string,
   ) {
     const q = normalizeSearch(qInput);
     const statuses = statusInput
@@ -522,7 +527,12 @@ export class PayrollService {
           .map((s) => s.trim())
           .filter(Boolean)
       : [];
-    const cacheKey = `payroll:batches:${actor.userId}:${actor.working_location_id ?? ''}:${q ?? ''}:${statuses.join(',')}`;
+    const positionWhere = positionIdInput
+      ? isNumericId(positionIdInput)
+        ? { position_id: BigInt(positionIdInput) }
+        : { positions: { uuid: positionIdInput } }
+      : null;
+    const cacheKey = `payroll:batches:${actor.userId}:${actor.working_location_id ?? ''}:${q ?? ''}:${statuses.join(',')}:${positionIdInput ?? ''}`;
 
     // Check if result is in cache
     const cached = await this.cacheManager.get(cacheKey);
@@ -533,6 +543,9 @@ export class PayrollService {
         ...this.batchScopeWhere(actor),
         ...(q ? { batch_code: { contains: q } } : {}),
         ...(statuses.length ? { status: { in: statuses as any } } : {}),
+        ...(positionWhere
+          ? { payment_batch_items: { some: { employees: positionWhere } } }
+          : {}),
       },
       include: this.batchIncludes(),
       orderBy: { created_at: 'desc' },
@@ -1400,7 +1413,8 @@ export class PayrollService {
         : null;
 
     // Determine expectedWorkDays - manual overrides always win. Monthly
-    // employees use the fixed 26-day payroll basis requested by the business.
+    // employees use the fixed DEFAULT_MONTHLY_WORK_DAYS-day payroll basis
+    // requested by the business.
     let expectedWorkDays =
       frequency === 'MONTHLY' ? DEFAULT_MONTHLY_WORK_DAYS : periodCalendarDays;
     if (dto.work_days !== undefined && dto.work_days !== null) {
@@ -1708,10 +1722,10 @@ export class PayrollService {
       allowanceAmount,
       taxAmount,
       attendanceDays: presentDays,
-      payrollWorkDays:
-        frequency === 'CUSTOM' || frequency === 'DAILY'
-          ? presentDays
-          : expectedWorkDays,
+      // Always the expected/contract work-day basis, never presentDays
+      // again - the UI shows this as "attendanceDays / payrollWorkDays" and
+      // that ratio is meaningless if both sides are the same number.
+      payrollWorkDays: expectedWorkDays,
       payrollStartDate: periodStart,
       payrollEndDate: periodEnd,
       metadata: {
@@ -2011,6 +2025,9 @@ export class PayrollService {
               departments: {
                 select: { id: true, name: true, working_location_id: true },
               },
+              positions: {
+                select: { id: true, uuid: true, name: true },
+              },
               ikimina_memberships: true,
             },
           },
@@ -2263,8 +2280,7 @@ export class PayrollService {
             department_id: item.employees.department_id?.toString() ?? null,
             working_location_id:
               item.employees.working_location_id?.toString() ?? null,
-            employment_category_id:
-              item.employees.employment_category_id?.toString() ?? null,
+            position_id: item.employees.position_id?.toString() ?? null,
             department: item.employees.departments
               ? {
                   ...item.employees.departments,
@@ -2272,6 +2288,12 @@ export class PayrollService {
                   working_location_id:
                     item.employees.departments.working_location_id?.toString() ??
                     null,
+                }
+              : null,
+            position: item.employees.positions
+              ? {
+                  ...item.employees.positions,
+                  id: item.employees.positions.id?.toString() ?? null,
                 }
               : null,
             ikimina_membership: item.employees.ikimina_memberships

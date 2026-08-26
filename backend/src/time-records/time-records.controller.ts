@@ -51,22 +51,6 @@ export class TimeRecordsController {
   }
 
   @Permissions('attendance.create')
-  @Post('batch-sync')
-  @ApiOperation({
-    summary:
-      'Sync a batch of time records from an offline device/biometric terminal',
-    description:
-      'Idempotently upserts a list of time records, typically pushed from a fingerprint/biometric attendance device that buffers entries offline. Requires `attendance.create`.',
-  })
-  @ApiResponse({ status: 201, description: 'Records synced.' })
-  batchSync(
-    @Body() dto: { records: CreateTimeRecordDto[] },
-    @CurrentUser() actor: CurrentUserType,
-  ) {
-    return this.timeRecordsService.batchSync(dto, actor);
-  }
-
-  @Permissions('attendance.create')
   @Post('bulk')
   @ApiOperation({
     summary: 'Bulk import time records',
@@ -114,32 +98,6 @@ export class TimeRecordsController {
     @CurrentUser() actor: CurrentUserType,
   ) {
     return this.timeRecordsService.approve(uuid, dto, actor);
-  }
-
-  @Permissions('attendance.read')
-  @Get('today')
-  @ApiOperation({
-    summary: "Get today's attendance",
-    description:
-      'Returns time records for the current day, optionally filtered by working location and category. Requires `attendance.read`.',
-  })
-  @ApiQuery({ name: 'working_location_id', required: false })
-  @ApiQuery({
-    name: 'category',
-    required: false,
-    description: 'Employee category filter.',
-  })
-  @ApiResponse({ status: 200, description: "Today's time records." })
-  findToday(
-    @Query('working_location_id') workingLocationId?: string,
-    @Query('category') category?: string,
-    @CurrentUser() actor?: CurrentUserType,
-  ) {
-    return this.timeRecordsService.findToday(
-      workingLocationId,
-      category,
-      actor,
-    );
   }
 
   @Permissions('attendance.read')

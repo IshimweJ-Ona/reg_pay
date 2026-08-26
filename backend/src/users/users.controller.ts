@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -6,6 +7,7 @@ import {
   Patch,
   Post,
   Query,
+  UploadedFile,
   UploadedFiles,
   UseGuards,
   UseInterceptors,
@@ -15,10 +17,11 @@ import {
   ApiBearerAuth,
   ApiOperation,
   ApiResponse,
+  ApiConsumes,
+  ApiBody,
 } from '@nestjs/swagger';
-import { FilesInterceptor } from '@nestjs/platform-express';
-import { diskStorage } from 'multer';
-import { extname } from 'path';
+import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Permissions } from '../auth/decorators/permissions.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -234,25 +237,11 @@ export class UsersController {
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
   @Permissions('users.update')
   @Post('bulk-profile-images')
-  @UseInterceptors(
-    FilesInterceptor('images', 50, {
-      storage: diskStorage({
-        destination: './uploads/profiles',
-        filename: (_req, file, cb) => {
-          const uniqueSuffix =
-            Date.now() + '-' + Math.round(Math.random() * 1e9);
-          cb(
-            null,
-            file.fieldname + '-' + uniqueSuffix + extname(file.originalname),
-          );
-        },
-      }),
-    }),
-  )
+  @UseInterceptors(FilesInterceptor('images', 50, { storage: memoryStorage() }))
   @ApiOperation({
     summary: 'Bulk upload profile images',
     description:
-      'Uploads multiple profile images and maps them to users based on a provided JSON mapping (filename to user UUID).',
+      'Uploads multiple profile images to Cloudinary and maps them to users/employees based on a provided JSON mapping (filename to email/uuid/national ID).',
   })
   @ApiResponse({
     status: 200,
@@ -264,6 +253,31 @@ export class UsersController {
   ) {
     const parsedMappings = mappings ? JSON.parse(mappings) : {};
     return this.usersService.bulkUpdateAvatars(files, parsedMappings);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
+  @Permissions('users.update')
+  @Patch(':uuid/avatar')
+  @UseInterceptors(FileInterceptor('image', { storage: memoryStorage() }))
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: { type: 'object', properties: { image: { type: 'string', format: 'binary' } } },
+  })
+  @ApiOperation({
+    summary: 'Upload/replace a user profile picture',
+    description:
+      'Uploads a single image to Cloudinary, replacing any previous avatar for this user. Requires `users.update`.',
+  })
+  @ApiResponse({ status: 200, description: 'Avatar updated.' })
+  @ApiResponse({ status: 404, description: 'User not found.' })
+  async uploadAvatar(
+    @Param('uuid') uuid: string,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file) {
+      throw new BadRequestException('An image file is required.');
+    }
+    return this.usersService.uploadUserAvatar(uuid, file);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)

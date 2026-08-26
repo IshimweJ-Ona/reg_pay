@@ -163,6 +163,30 @@ CREATE TABLE `departments` (
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 -- CreateTable
+CREATE TABLE `department_deactivation_requests` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `uuid` CHAR(36) NOT NULL,
+    `department_id` BIGINT NOT NULL,
+    `working_location_id` BIGINT NOT NULL,
+    `requested_by` BIGINT NOT NULL,
+    `completed_by` BIGINT NULL,
+    `status` ENUM('PENDING', 'COMPLETED', 'CANCELLED') NOT NULL DEFAULT 'PENDING',
+    `requested_employee_count` INTEGER NOT NULL DEFAULT 0,
+    `remaining_employee_count` INTEGER NOT NULL DEFAULT 0,
+    `reason` TEXT NULL,
+    `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `updated_at` DATETIME(3) NOT NULL,
+    `completed_at` DATETIME(3) NULL,
+
+    UNIQUE INDEX `Department_deactivation_requests_uuid_key`(`uuid`),
+    INDEX `idx_dept_deactivation_department_status`(`department_id`, `status`),
+    INDEX `idx_dept_deactivation_location_status`(`working_location_id`, `status`),
+    INDEX `idx_dept_deactivation_requested_by`(`requested_by`),
+    INDEX `idx_dept_deactivation_completed_by`(`completed_by`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
 CREATE TABLE `employee_deductions` (
     `id` BIGINT NOT NULL AUTO_INCREMENT,
     `uuid` CHAR(36) NOT NULL,
@@ -205,8 +229,8 @@ CREATE TABLE `employee_history` (
     `new_department_id` BIGINT NULL,
     `old_location_id` BIGINT NULL,
     `new_location_id` BIGINT NULL,
-    `old_employment_category_id` BIGINT NULL,
-    `new_employment_category_id` BIGINT NULL,
+    `old_position_id` BIGINT NULL,
+    `new_position_id` BIGINT NULL,
     `status` ENUM('ACTIVE', 'INACTIVE') NOT NULL,
     `reason` TEXT NULL,
     `changed_by` BIGINT NOT NULL,
@@ -217,10 +241,10 @@ CREATE TABLE `employee_history` (
     INDEX `Employee_history_approved_by_fkey`(`approved_by`),
     INDEX `Employee_history_changed_by_fkey`(`changed_by`),
     INDEX `Employee_history_new_department_id_fkey`(`new_department_id`),
-    INDEX `Employee_history_new_employment_category_id_fkey`(`new_employment_category_id`),
+    INDEX `Employee_history_new_position_id_fkey`(`new_position_id`),
     INDEX `Employee_history_new_location_id_fkey`(`new_location_id`),
     INDEX `Employee_history_old_department_id_fkey`(`old_department_id`),
-    INDEX `Employee_history_old_employment_category_id_fkey`(`old_employment_category_id`),
+    INDEX `Employee_history_old_position_id_fkey`(`old_position_id`),
     INDEX `Employee_history_old_location_id_fkey`(`old_location_id`),
     INDEX `idx_employee_history_employee`(`employee_id`),
     PRIMARY KEY (`id`)
@@ -241,11 +265,12 @@ CREATE TABLE `employees` (
     `contract_end_date` DATE NULL,
     `department_id` BIGINT NULL,
     `working_location_id` BIGINT NULL,
-    `employment_category_id` BIGINT NULL,
+    `position_id` BIGINT NULL,
     `status` ENUM('ACTIVE', 'INACTIVE', 'SUSPENDED', 'PENDING', 'REJECTED', 'PAUSED') NOT NULL DEFAULT 'ACTIVE',
     `pause_reason` VARCHAR(255) NULL,
     `created_by` BIGINT NULL,
     `avatar_url` TEXT NULL,
+    `avatar_public_id` VARCHAR(255) NULL,
     `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     `updated_at` DATETIME(3) NOT NULL,
     `deleted_at` DATETIME(3) NULL,
@@ -254,7 +279,7 @@ CREATE TABLE `employees` (
     UNIQUE INDEX `Employees_email_key`(`email`),
     UNIQUE INDEX `Employees_phone_number_key`(`phone_number`),
     UNIQUE INDEX `Employees_national_id_key`(`national_id`),
-    INDEX `idx_employee_category`(`employment_category_id`),
+    INDEX `idx_employee_position`(`position_id`),
     INDEX `idx_employee_created_by`(`created_by`),
     INDEX `idx_employee_deleted_at`(`deleted_at`),
     INDEX `idx_employee_department`(`department_id`),
@@ -267,6 +292,29 @@ CREATE TABLE `employees` (
     INDEX `idx_employee_status`(`status`),
     INDEX `idx_employee_uuid`(`uuid`),
     UNIQUE INDEX `Employees_first_name_last_name_working_location_id_departmen_key`(`first_name`, `last_name`, `working_location_id`, `department_id`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `positions` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `uuid` CHAR(36) NOT NULL,
+    `name` VARCHAR(100) NOT NULL,
+    `employment_category_id` BIGINT NOT NULL,
+    `description` TEXT NULL,
+    `status` ENUM('ACTIVE', 'INACTIVE') NOT NULL DEFAULT 'ACTIVE',
+    `default_basic_salary` DECIMAL(18, 2) NULL,
+    `default_daily_rate` DECIMAL(18, 2) NULL,
+    `default_overtime_rate` DECIMAL(18, 2) NULL,
+    `default_custom_work_days` INTEGER NULL,
+    `default_tax_percentage` DECIMAL(5, 2) NULL,
+    `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `updated_at` DATETIME(3) NOT NULL,
+
+    UNIQUE INDEX `Positions_uuid_key`(`uuid`),
+    UNIQUE INDEX `Positions_name_key`(`name`),
+    INDEX `idx_position_status`(`status`),
+    INDEX `idx_position_employment_category`(`employment_category_id`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -284,6 +332,37 @@ CREATE TABLE `employment_categories` (
 
     UNIQUE INDEX `Employment_categories_uuid_key`(`uuid`),
     UNIQUE INDEX `Employment_categories_name_key`(`name`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `position_deduction_types` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `uuid` CHAR(36) NOT NULL,
+    `position_id` BIGINT NOT NULL,
+    `deduction_type_id` BIGINT NOT NULL,
+    `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+
+    UNIQUE INDEX `Position_deduction_types_uuid_key`(`uuid`),
+    INDEX `idx_position_deduction_type_position`(`position_id`),
+    INDEX `idx_position_deduction_type_deduction`(`deduction_type_id`),
+    UNIQUE INDEX `Position_deduction_types_position_id_deduction_type_id_key`(`position_id`, `deduction_type_id`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `position_allowance_templates` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `uuid` CHAR(36) NOT NULL,
+    `position_id` BIGINT NOT NULL,
+    `title` VARCHAR(100) NOT NULL,
+    `default_amount` DECIMAL(18, 2) NOT NULL DEFAULT 0.00,
+    `description` TEXT NULL,
+    `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `updated_at` DATETIME(3) NOT NULL,
+
+    UNIQUE INDEX `Position_allowance_templates_uuid_key`(`uuid`),
+    INDEX `idx_position_allowance_template_position`(`position_id`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -724,7 +803,11 @@ CREATE TABLE `users` (
     `reset_password_expires` DATETIME(3) NULL,
     `gender` ENUM('MALE', 'FEMALE') NOT NULL,
     `status` ENUM('ACTIVE', 'INACTIVE', 'SUSPENDED', 'PENDING', 'REJECTED', 'PAUSED') NOT NULL DEFAULT 'ACTIVE',
+    `is_verified` BOOLEAN NOT NULL DEFAULT true,
+    `verification_code_hash` VARCHAR(255) NULL,
+    `verification_code_expires` DATETIME(3) NULL,
     `avatar_url` TEXT NULL,
+    `avatar_public_id` VARCHAR(255) NULL,
     `last_login_at` DATETIME(3) NULL,
     `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     `updated_at` DATETIME(3) NOT NULL,
@@ -809,6 +892,18 @@ ALTER TABLE `branch_managers` ADD CONSTRAINT `Branch_managers_working_location_i
 ALTER TABLE `departments` ADD CONSTRAINT `Departments_working_location_id_fkey` FOREIGN KEY (`working_location_id`) REFERENCES `working_locations`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE `department_deactivation_requests` ADD CONSTRAINT `Dept_deactivation_department_id_fkey` FOREIGN KEY (`department_id`) REFERENCES `departments`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `department_deactivation_requests` ADD CONSTRAINT `Dept_deactivation_location_id_fkey` FOREIGN KEY (`working_location_id`) REFERENCES `working_locations`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `department_deactivation_requests` ADD CONSTRAINT `Dept_deactivation_requested_by_fkey` FOREIGN KEY (`requested_by`) REFERENCES `users`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `department_deactivation_requests` ADD CONSTRAINT `Dept_deactivation_completed_by_fkey` FOREIGN KEY (`completed_by`) REFERENCES `users`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE `employee_deductions` ADD CONSTRAINT `Employee_deductions_deduction_type_id_fkey` FOREIGN KEY (`deduction_type_id`) REFERENCES `deduction_types`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
@@ -833,7 +928,7 @@ ALTER TABLE `employee_history` ADD CONSTRAINT `Employee_history_employee_id_fkey
 ALTER TABLE `employee_history` ADD CONSTRAINT `Employee_history_new_department_id_fkey` FOREIGN KEY (`new_department_id`) REFERENCES `departments`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE `employee_history` ADD CONSTRAINT `Employee_history_new_employment_category_id_fkey` FOREIGN KEY (`new_employment_category_id`) REFERENCES `employment_categories`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE `employee_history` ADD CONSTRAINT `Employee_history_new_position_id_fkey` FOREIGN KEY (`new_position_id`) REFERENCES `positions`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE `employee_history` ADD CONSTRAINT `Employee_history_new_location_id_fkey` FOREIGN KEY (`new_location_id`) REFERENCES `working_locations`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
@@ -842,7 +937,7 @@ ALTER TABLE `employee_history` ADD CONSTRAINT `Employee_history_new_location_id_
 ALTER TABLE `employee_history` ADD CONSTRAINT `Employee_history_old_department_id_fkey` FOREIGN KEY (`old_department_id`) REFERENCES `departments`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE `employee_history` ADD CONSTRAINT `Employee_history_old_employment_category_id_fkey` FOREIGN KEY (`old_employment_category_id`) REFERENCES `employment_categories`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE `employee_history` ADD CONSTRAINT `Employee_history_old_position_id_fkey` FOREIGN KEY (`old_position_id`) REFERENCES `positions`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE `employee_history` ADD CONSTRAINT `Employee_history_old_location_id_fkey` FOREIGN KEY (`old_location_id`) REFERENCES `working_locations`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
@@ -854,10 +949,22 @@ ALTER TABLE `employees` ADD CONSTRAINT `Employees_created_by_fkey` FOREIGN KEY (
 ALTER TABLE `employees` ADD CONSTRAINT `Employees_department_id_fkey` FOREIGN KEY (`department_id`) REFERENCES `departments`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE `employees` ADD CONSTRAINT `Employees_employment_category_id_fkey` FOREIGN KEY (`employment_category_id`) REFERENCES `employment_categories`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE `employees` ADD CONSTRAINT `Employees_position_id_fkey` FOREIGN KEY (`position_id`) REFERENCES `positions`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE `employees` ADD CONSTRAINT `Employees_working_location_id_fkey` FOREIGN KEY (`working_location_id`) REFERENCES `working_locations`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `positions` ADD CONSTRAINT `Positions_employment_category_id_fkey` FOREIGN KEY (`employment_category_id`) REFERENCES `employment_categories`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `position_deduction_types` ADD CONSTRAINT `Position_deduction_types_position_id_fkey` FOREIGN KEY (`position_id`) REFERENCES `positions`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `position_deduction_types` ADD CONSTRAINT `Position_deduction_types_deduction_type_id_fkey` FOREIGN KEY (`deduction_type_id`) REFERENCES `deduction_types`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `position_allowance_templates` ADD CONSTRAINT `Position_allowance_templates_position_id_fkey` FOREIGN KEY (`position_id`) REFERENCES `positions`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE `ikimina_contributions` ADD CONSTRAINT `Ikimina_contributions_employee_id_fkey` FOREIGN KEY (`employee_id`) REFERENCES `employees`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;

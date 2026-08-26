@@ -58,7 +58,7 @@ export class OrganizationService {
 
     const activeLocations = await this.prisma.working_locations.findMany({
       where: { deleted_at: null },
-      select: { name: true },
+      select: { name: true, code: true },
     });
     const normalizedNew = normalizeName(locationName);
     const duplicate = activeLocations.find(
@@ -67,6 +67,16 @@ export class OrganizationService {
     if (duplicate) {
       throw new BadRequestException(
         `A working location named '${duplicate.name}' already exists.`,
+      );
+    }
+
+    const existingCodes = new Set(activeLocations.map((loc) => loc.code));
+    const locationCode = dto.code
+      ? dto.code.toUpperCase()
+      : this.generateLocationCode(locationName, existingCodes);
+    if (dto.code && existingCodes.has(locationCode)) {
+      throw new BadRequestException(
+        `A working location with code '${locationCode}' already exists.`,
       );
     }
 
@@ -83,6 +93,7 @@ export class OrganizationService {
         data: {
           uuid: generateUUID(),
           name: locationName,
+          code: locationCode,
           type: locationType,
           address: locationAddress,
           created_by: BigInt(actor.userId),
@@ -219,10 +230,11 @@ export class OrganizationService {
     const newName = dto.name ?? current.name;
     const newType = dto.type ?? current.type;
     const newAddress = dto.address ?? current.address;
+    const newCode = dto.code ? dto.code.toUpperCase() : current.code;
 
     const activeLocations = await this.prisma.working_locations.findMany({
       where: { deleted_at: null, id: { not: current.id } },
-      select: { name: true },
+      select: { name: true, code: true },
     });
     const normalizedNew = normalizeName(newName);
     const duplicate = activeLocations.find(
@@ -231,6 +243,14 @@ export class OrganizationService {
     if (duplicate) {
       throw new BadRequestException(
         `A working location named '${duplicate.name}' already exists.`,
+      );
+    }
+    if (
+      newCode !== current.code &&
+      activeLocations.some((loc) => loc.code === newCode)
+    ) {
+      throw new BadRequestException(
+        `A working location with code '${newCode}' already exists.`,
       );
     }
 
@@ -259,6 +279,7 @@ export class OrganizationService {
         where: { id: current.id },
         data: {
           name: newName,
+          code: newCode,
           type: newType,
           address: newAddress,
           updated_by: BigInt(actor.userId),
@@ -437,6 +458,42 @@ export class OrganizationService {
       department_count: counts.departments ?? 0,
       employee_count: counts.employees ?? 0,
     };
+  }
+
+  // Derives a short, unique, human-recognizable branch code from a location
+  // name (e.g. "Huye Branch" -> "HUY", "Kigali HQ" -> "KIG") so cross-branch
+  // dropdowns can disambiguate same-named departments without the caller
+  // having to type one in. Falls back to a numeric suffix on collision.
+  private generateLocationCode(
+    name: string,
+    existingCodes: Set<string>,
+  ): string {
+    const words = name
+      .toUpperCase()
+      .replace(/[^A-Z0-9\s]/g, '')
+      .split(/\s+/)
+      .filter((word) => word && !['THE', 'OF', 'BRANCH', 'HQ'].includes(word));
+
+    let base: string;
+    if (words.length >= 2) {
+      base = words
+        .slice(0, 3)
+        .map((word) => word[0])
+        .join('');
+    } else {
+      base = (words[0] ?? name.toUpperCase().replace(/[^A-Z0-9]/g, '')).slice(
+        0,
+        3,
+      );
+    }
+    base = base || 'LOC';
+
+    if (!existingCodes.has(base)) return base;
+    for (let suffix = 2; suffix < 100; suffix++) {
+      const candidate = `${base}${suffix}`;
+      if (!existingCodes.has(candidate)) return candidate;
+    }
+    return `${base}${Date.now().toString().slice(-4)}`;
   }
 
   private canReadAllBranches(actor?: CurrentUserType) {

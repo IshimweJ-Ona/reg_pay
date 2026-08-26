@@ -416,8 +416,8 @@ export class IkiminaService {
               membership.employees.department_id?.toString() ?? null,
             working_location_id:
               membership.employees.working_location_id?.toString() ?? null,
-            employment_category_id:
-              membership.employees.employment_category_id?.toString() ?? null,
+            position_id:
+              membership.employees.position_id?.toString() ?? null,
             department: membership.employees.departments ?? null,
             working_location: membership.employees.working_locations ?? null,
           }

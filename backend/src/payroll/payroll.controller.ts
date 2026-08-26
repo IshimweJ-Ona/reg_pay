@@ -169,13 +169,20 @@ export class PayrollController {
     description:
       'Comma-separated list of statuses to filter to (e.g. "PENDING,IN_REVIEW,MANAGER_APPROVED").',
   })
+  @ApiQuery({
+    name: 'position_id',
+    required: false,
+    description:
+      'Only return batches with at least one item for this position (id or uuid).',
+  })
   @ApiResponse({ status: 200, description: 'List of payroll batches.' })
   findBatches(
     @CurrentUser() actor: CurrentUserType,
     @Query('q') q?: string,
     @Query('status') status?: string,
+    @Query('position_id') positionId?: string,
   ) {
-    return this.payrollService.findBatches(actor, q, status);
+    return this.payrollService.findBatches(actor, q, status, positionId);
   }
 
   @Permissions('payroll.read')

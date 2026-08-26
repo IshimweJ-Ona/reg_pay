@@ -30,6 +30,8 @@ import { UpdateDeductionTypeDto } from './dto/update-deduction-type.dto';
 import { CreateEmployeeDeductionDto } from './dto/create-employee-deduction.dto';
 import { UpdateEmployeeDeductionDto } from './dto/update-employee-deduction.dto';
 import { CreateAllowanceDto } from './dto/create-allowance.dto';
+import { CreateAllowanceTypeDto } from './dto/create-allowance-type.dto';
+import { UpdateAllowanceTypeDto } from './dto/update-allowance-type.dto';
 
 @ApiTags('Payment Structures')
 @ApiBearerAuth('jwt')
@@ -71,18 +73,6 @@ export class PaymentStructuresController {
   }
 
   @Permissions('payment-structures.read')
-  @Get('payment-categories')
-  @ApiOperation({
-    summary: 'List employment/payment categories',
-    description:
-      'Returns the Monthly/Daily/Custom employment categories with their payroll frequency and tax behavior. Requires `payment-structures.read`.',
-  })
-  @ApiResponse({ status: 200, description: 'List of payment categories.' })
-  findPaymentCategories() {
-    return this.paymentStructuresService.findPaymentCategories();
-  }
-
-  @Permissions('payment-structures.read')
   @Get('deduction-types')
   @ApiOperation({
     summary: 'List deduction/tax types',
@@ -92,6 +82,50 @@ export class PaymentStructuresController {
   @ApiResponse({ status: 200, description: 'List of deduction types.' })
   findDeductionTypes() {
     return this.paymentStructuresService.findDeductionTypes();
+  }
+
+  @Permissions('allowances.manage')
+  @Post('allowance-types')
+  @ApiOperation({
+    summary: 'Create an allowance type',
+    description:
+      'Defines a new system-wide allowance type (e.g. Transport, Housing) with a default amount. This does NOT assign it to anyone - it just becomes pickable from the dropdown on Positions and Employees. Requires `allowances.manage`.',
+  })
+  @ApiResponse({ status: 201, description: 'Allowance type created.' })
+  createAllowanceType(
+    @Body() dto: CreateAllowanceTypeDto,
+    @CurrentUser() actor: CurrentUserType,
+  ) {
+    return this.paymentStructuresService.createAllowanceType(dto, actor);
+  }
+
+  @Permissions('payment-structures.read')
+  @Get('allowance-types')
+  @ApiOperation({
+    summary: 'List allowance types',
+    description:
+      'Returns every allowance type defined in the system. Requires `payment-structures.read`.',
+  })
+  @ApiQuery({ name: 'include_inactive', required: false })
+  @ApiResponse({ status: 200, description: 'List of allowance types.' })
+  findAllowanceTypes(@Query('include_inactive') includeInactive?: string) {
+    return this.paymentStructuresService.findAllowanceTypes(includeInactive === 'true');
+  }
+
+  @Permissions('allowances.manage')
+  @Patch('allowance-types/:uuid')
+  @ApiOperation({
+    summary: 'Update or deactivate an allowance type',
+    description: 'Requires `allowances.manage`.',
+  })
+  @ApiParam({ name: 'uuid', description: 'Allowance type UUID.' })
+  @ApiResponse({ status: 200, description: 'Allowance type updated.' })
+  updateAllowanceType(
+    @Param('uuid') uuid: string,
+    @Body() dto: UpdateAllowanceTypeDto,
+    @CurrentUser() actor: CurrentUserType,
+  ) {
+    return this.paymentStructuresService.updateAllowanceType(uuid, dto, actor);
   }
 
   @Permissions('payment-structures.read')

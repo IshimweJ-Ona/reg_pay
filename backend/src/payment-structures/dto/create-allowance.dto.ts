@@ -32,4 +32,12 @@ export class CreateAllowanceDto {
   @IsOptional()
   @IsString()
   description?: string;
+
+  @ApiPropertyOptional({
+    example: '3',
+    description: 'Optional allowance type id this was picked from (see /payment-structures/allowance-types). title/amount are still stored directly so this record survives a later rename of the type.',
+  })
+  @IsOptional()
+  @IsString()
+  allowance_type_id?: string;
 }

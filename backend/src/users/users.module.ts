@@ -3,9 +3,11 @@ import { UsersController } from './users.controller';
 import { UsersService } from './users.service';
 import { PrismaModule } from '../prisma/prisma.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { MailModule } from '../mail/mail.module';
+import { CloudinaryModule } from '../cloudinary/cloudinary.module';
 
 @Module({
-  imports: [PrismaModule, NotificationsModule],
+  imports: [PrismaModule, NotificationsModule, MailModule, CloudinaryModule],
   controllers: [UsersController],
   providers: [UsersService],
   exports: [UsersService],

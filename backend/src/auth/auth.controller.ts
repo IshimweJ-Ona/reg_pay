@@ -27,6 +27,8 @@ import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { RegisterDto } from './dto/register.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { VerifyAccountDto } from './dto/verify-account.dto';
+import { ResendVerificationCodeDto } from './dto/resend-verification-code.dto';
 import {
   ForgotPasswordResponseEntity,
   LoginResponseEntity,
@@ -328,6 +330,52 @@ export class AuthController {
   @ApiBody({ type: ResetPasswordDto })
   resetPassword(@Param('token') token: string, @Body() dto: ResetPasswordDto) {
     return this.authService.resetPassword(token, dto);
+  }
+
+  // POST /auth/verify-account
+  // Public no guard required
+  @Post('verify-account')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Verify a newly-approved account with its emailed code',
+    description:
+      'After a super admin/branch manager approves a PENDING registration, a 6-digit ' +
+      'code is emailed to the account. Submitting it here marks the account verified ' +
+      'and logs the user straight in (returns the same token pair as POST /auth/login). ' +
+      'Codes expire after 30 minutes.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Account verified. Returns tokens and user metadata.',
+    type: LoginResponseEntity,
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Code is invalid, expired, or the account is already verified.',
+  })
+  @ApiBody({ type: VerifyAccountDto })
+  verifyAccount(@Body() dto: VerifyAccountDto, @Req() request: Request) {
+    return this.authService.verifyAccount(dto, {
+      deviceInfo: request.headers['user-agent'],
+      ipAddress: request.ip,
+    });
+  }
+
+  // POST /auth/resend-verification-code
+  // Public no guard required
+  @Post('resend-verification-code')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Resend the account verification code',
+    description:
+      'Generates and emails a new verification code, invalidating the previous one. ' +
+      'The response is identical whether or not an account needs verification ' +
+      '(prevents user enumeration).',
+  })
+  @ApiResponse({ status: 200, description: 'A new code has been emailed, if applicable.' })
+  @ApiBody({ type: ResendVerificationCodeDto })
+  resendVerificationCode(@Body() dto: ResendVerificationCodeDto) {
+    return this.authService.resendVerificationCode(dto);
   }
 
   // PATCH /auth/profile

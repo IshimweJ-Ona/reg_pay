@@ -364,86 +364,6 @@ export class TimeRecordsService {
     };
   }
 
-  async batchSync(
-    dto: { records: CreateTimeRecordDto[] },
-    actor: CurrentUserType,
-  ) {
-    if (!dto.records?.length) {
-      return { success: true, count: 0 };
-    }
-
-    const employeeIds = [
-      ...new Set(
-        dto.records.map((r) =>
-          this.toBigInt(r.employee_id, 'employee_id').toString(),
-        ),
-      ),
-    ].map((id) => BigInt(id));
-
-    const employees = await this.prisma.employees.findMany({
-      where: { id: { in: employeeIds }, deleted_at: null },
-      select: { id: true, working_location_id: true, department_id: true },
-    });
-
-    if (employees.length !== employeeIds.length) {
-      throw new BadRequestException('One or more employees do not exist.');
-    }
-
-    employees.forEach((emp) => this.ensureActorCanAccessEmployee(actor, emp));
-
-    const employeeById = new Map(
-      employees.map((emp) => [emp.id.toString(), emp]),
-    );
-
-    const results = await this.prisma.$transaction(async (tx) => {
-      const synced: any[] = [];
-
-      for (const recordDto of dto.records) {
-        const employeeId = this.toBigInt(recordDto.employee_id, 'employee_id');
-        const attendanceDate = new Date(recordDto.attendance_date);
-        const emp = employeeById.get(employeeId.toString());
-
-        const overtime_hours = this.normalizeHours(
-          recordDto.attendance_status,
-          recordDto.overtime_hours,
-        );
-
-        const record = await tx.time_records.upsert({
-          where: {
-            employee_id_attendance_date: {
-              employee_id: employeeId,
-              attendance_date: attendanceDate,
-            },
-          },
-          update: {
-            overtime_hours,
-            attendance_status:
-              recordDto.attendance_status ?? ATTENDANCE_STATUS.PRESENT,
-          },
-          create: {
-            uuid: generateUUID(),
-            employee_id: employeeId,
-            attendance_date: attendanceDate,
-            overtime_hours,
-            attendance_status:
-              recordDto.attendance_status ?? ('PRESENT' as any),
-            working_location_id: emp?.working_location_id ?? null,
-            department_id: emp?.department_id ?? null,
-            updated_at: new Date(),
-          },
-        });
-        synced.push(record);
-      }
-
-      return synced;
-    });
-
-    this.notificationsService.broadcast({ type: 'attendance_updated' });
-    this.notificationsService.broadcast({ type: 'employees_updated' });
-
-    return { success: true, count: results.length };
-  }
-
   async update(uuid: string, dto: UpdateTimeRecordDto, actor: CurrentUserType) {
     const timeRecord = await this.findByUuidOrThrow(uuid);
     this.ensureActorCanAccessEmployee(actor, timeRecord.employees);
@@ -591,48 +511,6 @@ export class TimeRecordsService {
     return wlByName?.id ?? null;
   }
 
-  async findToday(
-    workingLocationId?: string,
-    category?: string,
-    actor?: CurrentUserType,
-  ) {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const where: any = { attendance_date: today };
-
-    if (workingLocationId) {
-      const wlId = await this.resolveWorkingLocationId(workingLocationId);
-
-      if (wlId !== null) {
-        where.employees = { working_location_id: wlId };
-      } else {
-        return [];
-      }
-    }
-
-    if (category) {
-      where.employees = {
-        ...(where.employees || {}),
-        employment_categories: { name: category },
-      };
-    }
-
-    if (actor) {
-      where.employees = {
-        ...(where.employees || {}),
-        ...this.employeeScopeWhere(actor),
-      };
-    }
-
-    const records = await this.prisma.time_records.findMany({
-      where,
-      include: this.includes(),
-    });
-
-    return records.map((r) => this.serialize(r));
-  }
-
   async findPending(
     actor: CurrentUserType,
     filters?: {
@@ -691,6 +569,12 @@ export class TimeRecordsService {
         department_id: true,
         departments: { select: { uuid: true, name: true } },
         working_locations: { select: { uuid: true, name: true } },
+        positions: {
+          select: {
+            uuid: true,
+            name: true,
+          },
+        },
         employment_categories: {
           select: { uuid: true, name: true, payroll_frequency: true },
         },
@@ -749,12 +633,12 @@ export class TimeRecordsService {
                 name: employee.departments.name,
               }
             : null,
-          employment_category: employee.employment_categories
+          position: employee.positions
             ? {
-                uuid: employee.employment_categories.uuid,
-                name: employee.employment_categories.name,
+                uuid: employee.positions.uuid,
+                name: employee.positions.name,
                 payroll_frequency:
-                  employee.employment_categories.payroll_frequency,
+                  employee.employment_categories?.payroll_frequency ?? null,
               }
             : null,
           missing_dates,
@@ -826,6 +710,7 @@ export class TimeRecordsService {
     return {
       employees: {
         include: {
+          positions: true,
           employment_categories: true,
           departments: true,
           working_locations: true,
@@ -850,11 +735,36 @@ export class TimeRecordsService {
             created_by: emp.created_by?.toString() ?? null,
             department_id: emp.department_id?.toString() ?? null,
             working_location_id: emp.working_location_id?.toString() ?? null,
-            employment_category_id:
-              emp.employment_category_id?.toString() ?? null,
+            position_id: emp.position_id?.toString() ?? null,
             department: emp.departments ?? undefined,
             working_location: emp.working_locations ?? undefined,
-            employment_category: emp.employment_categories ?? undefined,
+            // Top-level, matching employees.service.ts's serializeEmployee
+            // shape exactly - the attendance page's Monthly/Daily/Custom tab
+            // filter reads employee.employment_category.name (not nested
+            // under .position), same as the employee list/dropdown does.
+            employment_category: emp.employment_categories
+              ? {
+                  uuid: emp.employment_categories.uuid,
+                  name: emp.employment_categories.name,
+                }
+              : null,
+            // Also kept nested under position for any caller already reading
+            // it there.
+            position: emp.positions
+              ? {
+                  uuid: emp.positions.uuid,
+                  name: emp.positions.name,
+                  payroll_frequency:
+                    emp.employment_categories?.payroll_frequency ?? null,
+                  tax_behavior: emp.employment_categories?.tax_behavior ?? null,
+                  employment_category: emp.employment_categories
+                    ? {
+                        uuid: emp.employment_categories.uuid,
+                        name: emp.employment_categories.name,
+                      }
+                    : null,
+                }
+              : undefined,
           }
         : undefined,
       approvedBy: record.approvedBy

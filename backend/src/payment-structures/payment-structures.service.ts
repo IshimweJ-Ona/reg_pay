@@ -28,6 +28,8 @@ import { UpdateDeductionTypeDto } from './dto/update-deduction-type.dto';
 import { CreateEmployeeDeductionDto } from './dto/create-employee-deduction.dto';
 import { UpdateEmployeeDeductionDto } from './dto/update-employee-deduction.dto';
 import { CreateAllowanceDto } from './dto/create-allowance.dto';
+import { CreateAllowanceTypeDto } from './dto/create-allowance-type.dto';
+import { UpdateAllowanceTypeDto } from './dto/update-allowance-type.dto';
 
 @Injectable()
 export class PaymentStructuresService {
@@ -269,18 +271,6 @@ export class PaymentStructuresService {
     return this.serialize(structure);
   }
 
-  async findPaymentCategories() {
-    const categories = await this.prisma.employment_categories.findMany({
-      where: { status: 'ACTIVE' },
-      orderBy: { name: 'asc' },
-    });
-
-    return categories.map((category) => ({
-      ...category,
-      id: category.id.toString(),
-    }));
-  }
-
   calculatePayeTax(grossSalary: number) {
     const tax = calculateRwandaPaye(grossSalary);
     return {
@@ -325,8 +315,8 @@ export class PaymentStructuresService {
               structure.employees.department_id?.toString() ?? null,
             working_location_id:
               structure.employees.working_location_id?.toString() ?? null,
-            employment_category_id:
-              structure.employees.employment_category_id?.toString() ?? null,
+            position_id:
+              structure.employees.position_id?.toString() ?? null,
           }
         : undefined,
     };
@@ -501,10 +491,15 @@ export class PaymentStructuresService {
     this.ensureActorCanManageEmployee(actor, employee);
     await this.ensureEmployeeCanReceiveAllowance(employeeId);
 
+    const allowanceTypeId = dto.allowance_type_id
+      ? this.toBigInt(dto.allowance_type_id, 'allowance_type_id')
+      : undefined;
+
     const created = await this.prisma.allowances.create({
       data: {
         uuid: generateUUID(),
         employee_id: employeeId,
+        allowance_type_id: allowanceTypeId,
         title: dto.title,
         amount: dto.amount,
         description: dto.description,
@@ -591,6 +586,9 @@ export class PaymentStructuresService {
     const updated = await this.prisma.allowances.update({
       where: { id: existing.id },
       data: {
+        allowance_type_id: dto.allowance_type_id
+          ? this.toBigInt(dto.allowance_type_id, 'allowance_type_id')
+          : undefined,
         title: dto.title,
         amount: dto.amount,
         description: dto.description,
@@ -786,8 +784,94 @@ export class PaymentStructuresService {
       ...allowance,
       id: allowance.id.toString(),
       employee_id: allowance.employee_id.toString(),
+      allowance_type_id: allowance.allowance_type_id?.toString() ?? null,
       amount: allowance.amount.toString(),
     };
+  }
+
+  /* =====================================================
+   * ALLOWANCE TYPES (catalog)
+   * ===================================================== */
+
+  private serializeAllowanceType(type: Record<string, any>) {
+    return {
+      ...type,
+      id: type.id.toString(),
+      default_amount: type.default_amount.toString(),
+    };
+  }
+
+  async createAllowanceType(dto: CreateAllowanceTypeDto, actor: CurrentUserType) {
+    const exists = await this.prisma.allowance_types.findFirst({
+      where: { name: dto.name },
+    });
+    if (exists) {
+      throw new BadRequestException('Allowance type already exists.');
+    }
+
+    const created = await this.prisma.allowance_types.create({
+      data: {
+        uuid: generateUUID(),
+        name: dto.name,
+        default_amount: dto.default_amount,
+        description: dto.description,
+        updated_at: new Date(),
+      },
+    });
+
+    await this.prisma.audit_logs.create({
+      data: {
+        user_id: BigInt(actor.userId),
+        entity_table: 'allowance_types',
+        entity_id: created.id,
+        module_name: 'PAYMENT_STRUCTURES',
+        activity_type: audit_logs_activity_type.CREATE,
+        activity_description: `Created allowance type '${created.name}'.`,
+        action: audit_logs_action.CREATED,
+      },
+    });
+
+    return this.serializeAllowanceType(created);
+  }
+
+  async findAllowanceTypes(includeInactive = false) {
+    const types = await this.prisma.allowance_types.findMany({
+      where: includeInactive ? undefined : { is_active: true },
+      orderBy: { name: 'asc' },
+    });
+    return types.map((t) => this.serializeAllowanceType(t));
+  }
+
+  async updateAllowanceType(
+    uuid: string,
+    dto: UpdateAllowanceTypeDto,
+    actor: CurrentUserType,
+  ) {
+    const existing = await this.prisma.allowance_types.findUnique({
+      where: { uuid },
+    });
+    if (!existing) {
+      throw new NotFoundException('Allowance type not found.');
+    }
+
+    const updated = await this.prisma.allowance_types.update({
+      where: { id: existing.id },
+      data: { ...dto, updated_at: new Date() },
+    });
+
+    await this.prisma.audit_logs.create({
+      data: {
+        user_id: BigInt(actor.userId),
+        entity_table: 'allowance_types',
+        entity_id: existing.id,
+        module_name: 'PAYMENT_STRUCTURES',
+        activity_type: audit_logs_activity_type.UPDATE,
+        activity_description: `Updated allowance type '${existing.name}'.`,
+        action: audit_logs_action.UPDATED,
+      },
+    });
+
+    return this.serializeAllowanceType(updated);
   }
 
   private isSystemAdmin(actor?: CurrentUserType) {

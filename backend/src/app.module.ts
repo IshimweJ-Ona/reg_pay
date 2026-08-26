@@ -18,11 +18,13 @@ import { DepartmentsModule } from './departments/department.model';
 import { EmployeesModule } from './employees/employees.module';
 import { TimeRecordsModule } from './time-records/time-records.module';
 import { PaymentStructuresModule } from './payment-structures/payment-structures.module';
+import { PositionsModule } from './positions/position.model';
 import { PayrollModule } from './payroll/payroll.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { SystemConfigModule } from './system-config/system-config.module';
 import { AuditLogsModule } from './audit-logs/audit-logs.module';
 import { IkiminaModule } from './ikimina/ikimina.module';
+import { DashboardAnalyticsModule } from './dashboard/dashboard-analytics.module';
 
 import { SecurityMiddleware } from './common/security/security.middleware';
 import { WorkingLocationScopeInterceptor } from './common/interceptors/working-location-scope.interceptor';
@@ -57,6 +59,8 @@ import { WorkingLocationScopeInterceptor } from './common/interceptors/working-l
 
     PaymentStructuresModule,
 
+    PositionsModule,
+
     PayrollModule,
 
     RolesModule,
@@ -69,6 +73,7 @@ import { WorkingLocationScopeInterceptor } from './common/interceptors/working-l
 
     AuditLogsModule,
     IkiminaModule,
+    DashboardAnalyticsModule,
   ],
 
   controllers: [AppController],

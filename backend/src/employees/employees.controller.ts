@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -8,7 +9,9 @@ import {
   Patch,
   Post,
   Query,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -17,7 +20,11 @@ import {
   ApiResponse,
   ApiQuery,
   ApiParam,
+  ApiConsumes,
+  ApiBody,
 } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Permissions } from '../auth/decorators/permissions.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -25,6 +32,7 @@ import { PermissionsGuard } from '../auth/guards/permissions.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import type { CurrentUserType } from '../auth/types/current-user.type';
 import { RejectTransferDto } from '../common/dto/reject-transfer.dto';
+import { PaginationQueryDto } from '../common/dto/pagination-query.dto';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
 import { SuspendEmployeeDto } from './dto/suspend-employee.dto';
@@ -132,7 +140,8 @@ export class EmployeesController {
     name: 'working_location_id',
     required: false,
     type: String,
-    description: 'Filter to employees in one specific working location (numeric id).',
+    description:
+      'Filter to employees in one specific working location (numeric id).',
   })
   @ApiResponse({
     status: 200,
@@ -149,11 +158,19 @@ export class EmployeesController {
   })
   findAll(
     @CurrentUser() actor: CurrentUserType,
+    @Query() pagination: PaginationQueryDto,
     @Query('q') q?: string,
     @Query('department_id') departmentId?: string,
     @Query('working_location_id') workingLocationId?: string,
   ) {
-    return this.employeesService.findAll(actor, q, departmentId, workingLocationId);
+    return this.employeesService.findAll(
+      actor,
+      q,
+      departmentId,
+      workingLocationId,
+      pagination.page,
+      pagination.limit,
+    );
   }
 
   // GET /employees/:uuid
@@ -404,5 +421,33 @@ export class EmployeesController {
     @CurrentUser() actor: CurrentUserType,
   ) {
     return this.employeesService.reactivate(uuid, actor);
+  }
+
+  // PATCH /employees/:uuid/avatar
+  @Patch(':uuid/avatar')
+  @Permissions('employees.update')
+  @UseInterceptors(FileInterceptor('image', { storage: memoryStorage() }))
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: { image: { type: 'string', format: 'binary' } },
+    },
+  })
+  @ApiOperation({
+    summary: 'Upload/replace an employee profile picture',
+    description:
+      'Uploads a single image to Cloudinary, replacing any previous avatar for this employee. Requires `employees.update`.',
+  })
+  @ApiResponse({ status: 200, description: 'Avatar updated.' })
+  @ApiResponse({ status: 404, description: 'Employee not found.' })
+  async uploadAvatar(
+    @Param('uuid') uuid: string,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file) {
+      throw new BadRequestException('An image file is required.');
+    }
+    return this.employeesService.uploadAvatar(uuid, file);
   }
 }

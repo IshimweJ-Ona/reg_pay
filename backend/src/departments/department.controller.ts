@@ -77,13 +77,25 @@ export class DepartmentsController {
     required: false,
     description: 'Search by name, code, or description.',
   })
+  @ApiQuery({
+    name: 'for_assignment',
+    required: false,
+    description:
+      'When true, only returns departments that can accept new assignments right now: ACTIVE and with no pending deactivation request. Use this for employee/user create, transfer, and batch-creation dropdowns.',
+  })
   @ApiResponse({ status: 200, description: 'List of departments.' })
   findDepartments(
     @CurrentUser() actor?: CurrentUserType,
     @Query('working_location_id') workingLocationId?: string,
     @Query('q') q?: string,
+    @Query('for_assignment') forAssignment?: string,
   ) {
-    return this.departmentsService.findDepartments(actor, workingLocationId, q);
+    return this.departmentsService.findDepartments(
+      actor,
+      workingLocationId,
+      q,
+      forAssignment === 'true',
+    );
   }
 
   @Permissions('departments.manage')
@@ -123,6 +135,27 @@ export class DepartmentsController {
     @CurrentUser() actor: CurrentUserType,
   ) {
     return this.departmentsService.deleteDepartment(uuid, actor);
+  }
+
+  @Permissions('departments.manage')
+  @Patch(':uuid/suspend-and-archive')
+  @ApiOperation({
+    summary:
+      'Resolve a pending deactivation by suspending everyone still assigned',
+    description:
+      'Alternate to transferring employees/users out one by one: suspends every ACTIVE employee and user still in this department, revokes their sessions, and archives the department immediately. Only usable while a deactivation request is pending. Requires `departments.manage`.',
+  })
+  @ApiParam({ name: 'uuid', description: 'Department UUID.' })
+  @ApiResponse({ status: 200, description: 'Department archived; staff suspended.' })
+  @ApiResponse({
+    status: 400,
+    description: 'No pending deactivation request for this department.',
+  })
+  suspendAndArchive(
+    @Param('uuid') uuid: string,
+    @CurrentUser() actor: CurrentUserType,
+  ) {
+    return this.departmentsService.suspendAndArchive(uuid, actor);
   }
 
   @Permissions('departments.manage')

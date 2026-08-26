@@ -353,6 +353,23 @@ export const PERMISSION_MODULES: PermissionModule[] = [
       },
     ],
   },
+  {
+    module: 'POSITIONS',
+    permissions: [
+      {
+        key: 'positions.read',
+        name: 'View Positions',
+        description:
+          'See the list of positions (e.g. Linesman, Driver, Electrician) for assigning employees.',
+      },
+      {
+        key: 'positions.manage',
+        name: 'Manage Positions',
+        description:
+          'Create, edit, and archive positions and their default pay/deduction/allowance templates.',
+      },
+    ],
+  },
 ];
 
 /**
@@ -442,6 +459,7 @@ export const IMPLIED_PERMISSIONS: Record<string, string[]> = {
   'ikimina.read_all': ['ikimina.read'],
   'audit.read_all': ['audit.view'],
   'branches.manage': ['departments.manage', 'branch-manager.manage'],
+  'positions.manage': ['positions.read'],
 };
 
 /**
@@ -489,6 +507,8 @@ export const BASELINE_ROLE_PERMISSIONS: Record<string, string[]> = {
     'notifications.read',
     'notifications.manage',
     'audit.view',
+    'positions.read',
+    'positions.manage',
     // system-config.manage is deliberately NOT granted here - overtime
     // settings are a single global row with no per-branch column, so
     // editing it would change company-wide behavior, not just this branch.
@@ -506,6 +526,7 @@ export const BASELINE_ROLE_PERMISSIONS: Record<string, string[]> = {
     'payroll.manage',
     'payroll.reports',
     'notifications.read',
+    'positions.read',
   ],
   HR: [
     'employees.create',
@@ -522,6 +543,8 @@ export const BASELINE_ROLE_PERMISSIONS: Record<string, string[]> = {
     // PayrollService.resolveFinalApprovalAuthority().
     'payroll.approve_final',
     'payroll.reports',
+    'positions.read',
+    'positions.manage',
   ],
   ATTENDANT: [
     'employees.read',
@@ -541,5 +564,6 @@ export const BASELINE_ROLE_PERMISSIONS: Record<string, string[]> = {
     'payroll.read',
     'payroll.manage',
     'payroll.reports',
+    'positions.read',
   ],
 };

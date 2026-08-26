@@ -131,6 +131,7 @@ export class DepartmentsService {
     actor?: CurrentUserType,
     workingLocationIdInput?: string,
     qInput?: string,
+    forAssignment?: boolean,
   ) {
     let workingLocationId: bigint | undefined;
     const canReadAllBranches = this.canReadAllBranches(actor);
@@ -158,6 +159,19 @@ export class DepartmentsService {
     const departments = await this.prisma.departments.findMany({
       where: {
         working_location_id: workingLocationId,
+        // `for_assignment=true` is used by callers populating a department
+        // dropdown for a *new* assignment (employee/user create, transfer,
+        // batch creation) - a department that's ACTIVE but has a pending
+        // deactivation request is being wound down and must not accept new
+        // assignments, even though its `status` column hasn't flipped to
+        // INACTIVE yet. Admin screens (the departments page itself, the
+        // locations page) omit this flag so they keep seeing everything.
+        ...(forAssignment
+          ? {
+              status: 'ACTIVE',
+              department_deactivation_requests: { none: { status: 'PENDING' } },
+            }
+          : {}),
         ...(q
           ? {
               OR: [
@@ -450,6 +464,161 @@ export class DepartmentsService {
     });
     this.notificationsService.broadcast({ type: 'departments_updated' });
     return serializeDepartment(result);
+  }
+
+  // Alternate resolution for a pending deactivation request: instead of
+  // waiting for someone to transfer every employee/user out of the
+  // department, the caller can close it immediately by suspending everyone
+  // still assigned. countAssignedEmployees() (used by the transfer-based
+  // auto-archive path) counts employees regardless of status, so suspending
+  // people would never satisfy that path on its own - this method is a
+  // distinct, explicit transaction that archives the department directly.
+  async suspendAndArchive(uuid: string, actor: CurrentUserType) {
+    const current = await this.prisma.departments.findUnique({
+      where: { uuid },
+      include: {
+        working_locations: true,
+        _count: { select: { users: true, employees: true } },
+        department_deactivation_requests: {
+          where: { status: 'PENDING' },
+          orderBy: { created_at: 'desc' },
+          take: 1,
+        },
+      },
+    });
+    if (!current) throw new NotFoundException('Department not found.');
+    this.ensureActorCanManageDepartment(actor, current.working_location_id);
+
+    const pending = current.department_deactivation_requests[0];
+    if (current.status !== 'ACTIVE' || !pending) {
+      throw new BadRequestException(
+        'This department has no pending deactivation to resolve by suspension.',
+      );
+    }
+
+    const { suspendedEmployeeCount, suspendedUserIds } =
+      await this.prisma.$transaction(async (tx) => {
+        const affectedEmployees = await tx.employees.findMany({
+          where: {
+            department_id: current.id,
+            status: 'ACTIVE',
+            deleted_at: null,
+          },
+          select: { id: true },
+        });
+        const affectedUsers = await tx.users.findMany({
+          where: { department_id: current.id, status: 'ACTIVE' },
+          select: { id: true },
+        });
+
+        if (affectedEmployees.length) {
+          await tx.employees.updateMany({
+            where: { id: { in: affectedEmployees.map((e) => e.id) } },
+            data: {
+              status: 'SUSPENDED',
+              pause_reason: 'Department deactivated.',
+              updated_at: new Date(),
+            },
+          });
+        }
+
+        if (affectedUsers.length) {
+          const userIds = affectedUsers.map((u) => u.id);
+          await tx.users.updateMany({
+            where: { id: { in: userIds } },
+            data: { status: 'SUSPENDED', updated_at: new Date() },
+          });
+          await tx.user_sessions.updateMany({
+            where: { user_id: { in: userIds }, is_revoked: false },
+            data: { is_revoked: true },
+          });
+        }
+
+        await tx.department_deactivation_requests.update({
+          where: { id: pending.id },
+          data: {
+            status: 'COMPLETED',
+            remaining_employee_count: 0,
+            completed_by: BigInt(actor.userId),
+            completed_at: new Date(),
+            updated_at: new Date(),
+          },
+        });
+
+        await tx.departments.update({
+          where: { id: current.id },
+          data: { status: 'INACTIVE', updated_at: new Date() },
+        });
+
+        await tx.audit_logs.create({
+          data: {
+            user_id: BigInt(actor.userId),
+            entity_table: 'departments',
+            entity_id: current.id,
+            module_name: 'DEPARTMENTS',
+            activity_type: ACTIVITY_TYPE.UPDATE,
+            activity_description: `Archived department by suspending ${affectedEmployees.length} employee(s) and ${affectedUsers.length} user(s) still assigned.`,
+            action: AUDIT_ACTION.UPDATED,
+            old_values: { status: current.status },
+            new_values: { status: 'INACTIVE' },
+          },
+        });
+
+        return {
+          suspendedEmployeeCount: affectedEmployees.length,
+          suspendedUserIds: affectedUsers.map((u) => u.id),
+        };
+      });
+
+    await this.cacheManager.del('working_locations');
+
+    await this.notificationsService.notifyBranchManager(
+      current.working_location_id,
+      {
+        senderId: actor.userId,
+        title: 'Department Closed — Staff Suspended',
+        message: `${current.name} at ${current.working_locations.name} has been closed. ${suspendedEmployeeCount} employee(s) and ${suspendedUserIds.length} user(s) were suspended as part of the closure.`,
+        type: 'DEPARTMENT_ARCHIVED',
+        referenceId: current.uuid,
+        metadata: {
+          department_uuid: current.uuid,
+          department_id: current.id.toString(),
+          working_location_id: current.working_location_id.toString(),
+        },
+      },
+    );
+
+    for (const userId of suspendedUserIds) {
+      await this.notificationsService.create({
+        userId,
+        senderId: actor.userId,
+        title: 'Your Account Was Suspended',
+        message: `${current.name} at ${current.working_locations.name} has been closed and your account was suspended as part of that closure. Contact your branch manager if you believe this is a mistake.`,
+        type: 'ACCOUNT_SUSPENDED',
+        referenceId: current.uuid,
+      });
+    }
+
+    this.notificationsService.broadcast({ type: 'departments_updated' });
+
+    const archived = await this.prisma.departments.findUniqueOrThrow({
+      where: { id: current.id },
+      include: {
+        working_locations: true,
+        _count: { select: { users: true, employees: true } },
+        department_deactivation_requests: {
+          where: { status: 'PENDING' },
+          orderBy: { created_at: 'desc' },
+          take: 1,
+        },
+      },
+    });
+
+    return {
+      message: `Department archived. ${suspendedEmployeeCount} employee(s) and ${suspendedUserIds.length} user(s) were suspended.`,
+      status: 'ARCHIVED',
+      department: serializeDepartment(archived),
+    };
   }
 
   async archivePendingDepartmentIfEmpty(
