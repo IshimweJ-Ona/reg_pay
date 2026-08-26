@@ -13,13 +13,17 @@ export interface CreateEmployeePayload {
     contract_end_date?: string;
     department_id?: string;
     working_location_id?: string;
+    position_id?: string;
     employment_category_id?: string;
+    basic_salary?: string;
+    daily_rate?: string;
+    tax_percentage?: string;
 }
 
 export interface TransferEmployeePayload {
     working_location_id: string;
     department_id: string;
-    employment_category_id?: string;
+    position_id?: string;
     reason?: string;
 }
 
@@ -32,6 +36,8 @@ export interface GetEmployeesFilters {
     q?: string;
     department_id?: string;
     working_location_id?: string;
+    page?: number;
+    limit?: number;
 }
 
 export const getEmployees = async (filters?: GetEmployeesFilters) => {
@@ -82,6 +88,7 @@ export interface UpdateEmployeePayload {
   hire_date?: string;
   department_id?: string;
   working_location_id?: string;
+  position_id?: string;
   employment_category_id?: string;
   // Salary fields
   basic_salary?: string;
@@ -104,6 +111,15 @@ export const deleteEmployee = async (uuid: string) => {
     return suspendEmployee(uuid, "Soft deleted from dashboard.");
 };
 
+export const uploadEmployeeAvatar = async (uuid: string, file: File): Promise<{ avatar_url: string }> => {
+    const formData = new FormData();
+    formData.append('image', file);
+    const response = await api.patch(`/employees/${uuid}/avatar`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response.data;
+};
+
 export const reactivateEmployee = async (uuid: string) => {
     const response = await api.patch(`/employees/${uuid}/reactivate`);
     return response.data;
@@ -121,6 +137,7 @@ export interface BulkImportEmployeePayload {
         contract_end_date?: string;
         department_id?: string;
         working_location_id?: string;
+        position_id?: string;
         employment_category_id?: string;
         basic_salary?: string;
         daily_rate?: string;

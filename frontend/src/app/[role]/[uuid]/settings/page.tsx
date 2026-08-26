@@ -16,6 +16,8 @@ import { getSystemConfigs, updateSystemConfig } from '@/api/system-config';
 import { PERMISSION_MODULES, ALL_PERMISSION_KEYS, expandPermissionKeys } from '@/lib/permissions';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/auth-context';
+import { PageHeader } from '@/components/layout/page-header';
+import { ErrorState, InlineStateNote, LoadingState, PermissionDeniedState } from '@/components/layout/page-state';
 
 const emptyRoleForm = {
   name: '',
@@ -27,6 +29,7 @@ const DEFAULT_OVERTIME_RATE = '2500';
 
 export default function SystemSettingsPage() {
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [savingRole, setSavingRole] = useState(false);
   const [savingOvertime, setSavingOvertime] = useState(false);
   const [roles, setRoles] = useState<Role[]>([]);
@@ -45,6 +48,12 @@ export default function SystemSettingsPage() {
   const isBranchScopedRoleManager = !hasPermission('roles.manage') && hasPermission('roles.manage_own_location');
 
   const selectedRole = roles.find((role) => role.id === selectedRoleId);
+  // A branch-scoped role manager can see global roles (so they understand
+  // what SUPER_ADMIN/HR/etc. can do) but the server rejects any edit to one -
+  // the checklist/save button must reflect that up front instead of letting
+  // them fill out a form that always 400s on submit.
+  const isReadOnlyGlobalRole =
+    isBranchScopedRoleManager && !!selectedRoleId && !selectedRole?.working_location_id;
 
   const permissionsByModule = useMemo(() => {
     return PERMISSION_MODULES.reduce<Record<string, Array<{ key: string; name: string; description?: string }>>>(
@@ -92,6 +101,7 @@ export default function SystemSettingsPage() {
 
   const loadData = async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       if (canManageRoles) {
         const rolesData = await getRoles();
@@ -108,10 +118,12 @@ export default function SystemSettingsPage() {
         setOvertimeRate(overtimeConfig?.value ?? DEFAULT_OVERTIME_RATE);
       }
     } catch (error: any) {
+      const message = error?.response?.data?.message ?? 'Could not load settings.';
+      setLoadError(message);
       toast({
         variant: 'destructive',
         title: 'Settings failed to load',
-        description: error?.response?.data?.message ?? 'Could not load settings.',
+        description: message,
       });
     } finally {
       setLoading(false);
@@ -167,6 +179,7 @@ export default function SystemSettingsPage() {
   };
 
   const handleSaveRole = async () => {
+    if (isReadOnlyGlobalRole) return;
     if (!roleForm.name.trim()) {
       toast({ variant: 'destructive', title: 'Role name required', description: 'Enter a role name before saving.' });
       return;
@@ -209,27 +222,45 @@ export default function SystemSettingsPage() {
 
   if (!user || loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" size={32} />
-      </div>
+      <LoadingState
+        title="Loading system settings"
+        description="Checking role access, permission modules, and payroll configuration."
+      />
     );
   }
 
-  if (!canAccessSettings) return null;
+  if (!canAccessSettings) {
+    return (
+      <PermissionDeniedState
+        title="Settings permission required"
+        description="Role and payroll settings are restricted to administrators with configuration or role-management access."
+      />
+    );
+  }
+
+  if (loadError) {
+    return (
+      <ErrorState
+        title="Settings could not load"
+        description={loadError}
+        action={<Button onClick={loadData}>Retry</Button>}
+      />
+    );
+  }
 
   return (
     <div className="max-w-[1800px] space-y-8">
-      <div>
-        <h1 className="text-3xl font-headline font-bold">Settings</h1>
-        <p className="text-muted-foreground">
-          {isBranchScopedRoleManager
+      <PageHeader
+        title="Settings"
+        description={
+          isBranchScopedRoleManager
             ? 'Manage roles and permissions for your own branch.'
-            : 'Manage system-wide payroll settings and access controls.'}
-        </p>
-      </div>
+            : 'Manage system-wide payroll settings and access controls.'
+        }
+      />
 
       {canManageSystemConfig && (
-        <Card className="border-none shadow-sm">
+        <Card className="border border-border shadow-sm">
           <CardHeader>
             <CardTitle>Overtime Settings</CardTitle>
             <CardDescription>Set the RWF amount paid for each overtime hour across all working locations.</CardDescription>
@@ -264,7 +295,7 @@ export default function SystemSettingsPage() {
           </div>
         )}
       <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-6">
-        <Card className="border-none shadow-sm">
+        <Card className="border border-border shadow-sm">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <ShieldCheck className="h-5 w-5 text-primary" size={20} /> Roles
@@ -278,7 +309,11 @@ export default function SystemSettingsPage() {
             </Button>
             <ScrollArea className="h-[520px] pr-3">
               <div className="space-y-2">
-                {roles.map((role) => {
+                {roles.length === 0 ? (
+                  <InlineStateNote>
+                    No roles are available for this scope. Create a role before assigning permissions.
+                  </InlineStateNote>
+                ) : roles.map((role) => {
                   const permissionCount = role.permission_keys?.length ?? 0;
                   const active = role.id === selectedRoleId;
                   const isGlobalRole = !role.working_location_id;
@@ -310,13 +345,15 @@ export default function SystemSettingsPage() {
           </CardContent>
         </Card>
 
-        <Card className="border-none shadow-sm">
+        <Card className="border border-border shadow-sm">
           <CardHeader>
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div>
                 <CardTitle>{selectedRoleId ? 'Update Role Permissions' : 'Create Role'}</CardTitle>
                 <CardDescription>
-                  Users assigned to this role receive these permissions immediately through live access refresh.
+                  {isReadOnlyGlobalRole
+                    ? "Viewing a global role's permissions. Global roles can only be edited by a Super Admin."
+                    : 'Users assigned to this role receive these permissions immediately through live access refresh.'}
                 </CardDescription>
               </div>
               <Button variant="outline" className="gap-2" onClick={loadData}>
@@ -331,7 +368,7 @@ export default function SystemSettingsPage() {
                 <Label>Role Name</Label>
                 <Input
                   value={roleForm.name}
-                  disabled={selectedRole?.is_system_role}
+                  disabled={selectedRole?.is_system_role || isReadOnlyGlobalRole}
                   onChange={(event) => setRoleForm((prev) => ({ ...prev, name: event.target.value }))}
                   placeholder="e.g. REGIONAL_MANAGER"
                 />
@@ -340,6 +377,7 @@ export default function SystemSettingsPage() {
                 <Label>Description</Label>
                 <Input
                   value={roleForm.description}
+                  disabled={isReadOnlyGlobalRole}
                   onChange={(event) => setRoleForm((prev) => ({ ...prev, description: event.target.value }))}
                   placeholder="Short purpose of this role"
                 />
@@ -353,6 +391,7 @@ export default function SystemSettingsPage() {
               </div>
               <Select
                 value="bulk"
+                disabled={isReadOnlyGlobalRole}
                 onValueChange={(value) => {
                   if (value === 'all') {
                     setRoleForm((prev) => ({
@@ -386,7 +425,8 @@ export default function SystemSettingsPage() {
                         <Badge variant="secondary">{modulePermissions.length}</Badge>
                         <button
                           type="button"
-                          className="text-xs text-primary underline underline-offset-2"
+                          disabled={isReadOnlyGlobalRole}
+                          className="text-xs text-primary underline underline-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                           onClick={() => {
                             const moduleKeys = modulePermissions.map((p) => p.key);
                             const allChecked = moduleKeys.every((k) => roleForm.permission_keys.includes(k));
@@ -421,7 +461,7 @@ export default function SystemSettingsPage() {
                           >
                             <Checkbox
                               checked={checked}
-                              disabled={impliedOnly}
+                              disabled={impliedOnly || isReadOnlyGlobalRole}
                               onCheckedChange={(value) => togglePermission(permission.key, Boolean(value))}
                               className="mt-1"
                             />
@@ -449,7 +489,12 @@ export default function SystemSettingsPage() {
             </ScrollArea>
 
             <div className="flex justify-end">
-              <Button className="h-11 px-8 shadow-lg shadow-primary/20" onClick={handleSaveRole} disabled={savingRole}>
+              <Button
+                className="h-11 px-8 shadow-sm shadow-primary/20"
+                onClick={handleSaveRole}
+                disabled={savingRole || isReadOnlyGlobalRole}
+                title={isReadOnlyGlobalRole ? "Global roles can only be edited by a Super Admin." : undefined}
+              >
                 {savingRole ? <Loader2 className="mr-2 h-4 w-4 animate-spin" size={16} /> : <Save className="mr-2 h-4 w-4" size={16} />}
                 {selectedRoleId ? 'Save role permissions' : 'Create role'}
               </Button>

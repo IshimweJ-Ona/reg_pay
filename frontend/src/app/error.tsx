@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { Button } from "@/components/ui/button";
+import { ErrorState } from "@/components/layout/page-state";
 
 export default function AppError({
   error,
@@ -16,16 +17,12 @@ export default function AppError({
 
   return (
     <div className="flex min-h-[60vh] items-center justify-center p-6">
-      <div className="w-full max-w-md rounded-lg border bg-white p-6 text-center shadow-sm">
-        <h2 className="text-xl font-bold">This page failed to load</h2>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Other pages are still available. Try reloading this page or go back to
-          another module.
-        </p>
-        <Button className="mt-5" onClick={reset}>
-          Try again
-        </Button>
-      </div>
+      <ErrorState
+        title="This page failed to load"
+        description="Other pages are still available. Try reloading this page or go back to another module."
+        action={<Button onClick={reset}>Try again</Button>}
+        className="w-full max-w-md"
+      />
     </div>
   );
 }

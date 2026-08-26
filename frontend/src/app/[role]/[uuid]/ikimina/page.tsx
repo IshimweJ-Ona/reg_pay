@@ -7,6 +7,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Pagination } from "@/components/ui/pagination";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Coins01 as Coins, SearchMd as Search, UserPlus01 as UserPlus, Edit05 as Edit,
@@ -51,6 +52,7 @@ import {
 } from '@/api/ikimina';
 import { userFriendlyError } from '@/lib/error-message';
 import { PageHeader } from '@/components/layout/page-header';
+import { TableStateRow } from '@/components/layout/page-state';
 import { StatCard } from '@/components/ui/stat-card';
 import { StatusBadge } from '@/components/ui/status-badge';
 
@@ -67,6 +69,9 @@ function IkiminaManagementContent() {
   // Search & Filter State
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
+  const [membershipsPage, setMembershipsPage] = useState(1);
+  const [ledgerPage, setLedgerPage] = useState(1);
+  const IKIMINA_PAGE_SIZE = 25;
 
   // Modals
   const [isRegisterOpen, setIsRegisterOpen] = useState(false);
@@ -125,6 +130,16 @@ function IkiminaManagementContent() {
     });
   }, [memberships, searchTerm, statusFilter]);
 
+  const membershipsTotalPages = Math.max(1, Math.ceil(filteredMemberships.length / IKIMINA_PAGE_SIZE));
+  const paginatedMemberships = filteredMemberships.slice(
+    (membershipsPage - 1) * IKIMINA_PAGE_SIZE,
+    membershipsPage * IKIMINA_PAGE_SIZE,
+  );
+
+  useEffect(() => {
+    setMembershipsPage(1);
+  }, [searchTerm, statusFilter]);
+
   // Aggregate stats
   const stats = useMemo(() => {
     const totalSavings = memberships.reduce((sum, m) => sum + (m.total_savings ?? 0), 0);
@@ -145,7 +160,7 @@ function IkiminaManagementContent() {
   // Must be MONTHLY payroll frequency, and not already have a membership
   const eligibleEmployees = useMemo(() => {
     return employees.filter((emp) => {
-      const freq = emp.payment_structures?.[0]?.payroll_frequency || emp.employment_category?.payroll_frequency;
+      const freq = emp.payment_structures?.[0]?.payroll_frequency || emp.position?.payroll_frequency;
       if (freq !== 'MONTHLY') return false;
       
       const alreadyMember = memberships.some((m) => m.employee_id === emp.id);
@@ -255,6 +270,12 @@ function IkiminaManagementContent() {
     return list.sort((a, b) => new Date(b.contribution_date).getTime() - new Date(a.contribution_date).getTime());
   }, [memberships]);
 
+  const ledgerTotalPages = Math.max(1, Math.ceil(allContributions.length / IKIMINA_PAGE_SIZE));
+  const paginatedContributions = allContributions.slice(
+    (ledgerPage - 1) * IKIMINA_PAGE_SIZE,
+    ledgerPage * IKIMINA_PAGE_SIZE,
+  );
+
   return (
     <div className="space-y-8 pb-12">
       <PageHeader
@@ -263,7 +284,7 @@ function IkiminaManagementContent() {
         actions={
           canManage && (
             <Button
-              className="gap-2 shadow-lg shadow-primary/20"
+              className="gap-2 shadow-sm shadow-primary/20"
               onClick={() => setIsRegisterOpen(true)}
             >
               <UserPlus className="h-4 w-4" size={16} /> Register Savings Plan
@@ -302,7 +323,7 @@ function IkiminaManagementContent() {
 
       {/* Tabs */}
       <Tabs defaultValue="members" className="w-full">
-        <TabsList className="bg-card border border-border p-1 h-12 rounded-xl mb-6">
+        <TabsList className="bg-card border border-border p-1 h-12 rounded-lg mb-6">
           <TabsTrigger value="members" className="gap-2 px-6 rounded-lg data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
             <Users className="h-4 w-4" size={16} /> Active Members ({filteredMemberships.length})
           </TabsTrigger>
@@ -313,7 +334,7 @@ function IkiminaManagementContent() {
 
         <TabsContent value="members" className="space-y-4">
           {/* Filters */}
-          <div className="flex flex-col md:flex-row gap-4 bg-card p-4 rounded-xl border border-border shadow-sm">
+          <div className="flex flex-col md:flex-row gap-4 bg-card p-4 rounded-lg border border-border shadow-sm">
             <div className="flex-1 relative">
               <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" size={16} />
               <Input
@@ -351,7 +372,7 @@ function IkiminaManagementContent() {
           </div>
 
           {/* Members Table */}
-          <Card className="border-none shadow-sm overflow-hidden">
+          <Card className="border border-border shadow-sm overflow-hidden">
             <CardContent className="p-0">
               <Table>
                 <TableHeader className="bg-secondary/30">
@@ -368,19 +389,20 @@ function IkiminaManagementContent() {
                 </TableHeader>
                 <TableBody>
                   {loading ? (
-                    <TableRow>
-                      <TableCell colSpan={canManage ? 8 : 7} className="text-center py-8 text-muted-foreground">
-                        Loading memberships...
-                      </TableCell>
-                    </TableRow>
+                    <TableStateRow
+                      colSpan={canManage ? 8 : 7}
+                      tone="info"
+                      title="Loading savings memberships"
+                      description="Preparing employee membership, branch, department, and deduction status."
+                    />
                   ) : filteredMemberships.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={canManage ? 8 : 7} className="text-center py-8 text-muted-foreground">
-                        No Ikimina savings plans found.
-                      </TableCell>
-                    </TableRow>
+                    <TableStateRow
+                      colSpan={canManage ? 8 : 7}
+                      title="No Ikimina savings plans found"
+                      description="Register an eligible employee or adjust the search and status filters."
+                    />
                   ) : (
-                    filteredMemberships.map((m) => (
+                    paginatedMemberships.map((m) => (
                       <TableRow key={m.uuid} className="hover:bg-secondary/10 transition-colors">
                         <TableCell className="font-semibold">{`${m.employee?.first_name ?? ''} ${m.employee?.last_name ?? ''}`.trim()}</TableCell>
                         <TableCell className="text-sm text-muted-foreground">{m.employee?.working_location?.name ?? '—'}</TableCell>
@@ -402,6 +424,7 @@ function IkiminaManagementContent() {
                                 size="icon"
                                 onClick={() => handleOpenEdit(m)}
                                 className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                                aria-label={`Edit savings plan for ${m.employee?.first_name ?? 'employee'} ${m.employee?.last_name ?? ''}`}
                               >
                                 <Edit className="h-4 w-4" size={16} />
                               </Button>
@@ -410,6 +433,7 @@ function IkiminaManagementContent() {
                                 size="icon"
                                 onClick={() => setRemoveTarget(m)}
                                 className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                                aria-label={`Remove savings plan for ${m.employee?.first_name ?? 'employee'} ${m.employee?.last_name ?? ''}`}
                               >
                                 <Trash2 className="h-4 w-4" size={16} />
                               </Button>
@@ -423,11 +447,18 @@ function IkiminaManagementContent() {
               </Table>
             </CardContent>
           </Card>
+          <Pagination
+            page={membershipsPage}
+            totalPages={membershipsTotalPages}
+            total={filteredMemberships.length}
+            limit={IKIMINA_PAGE_SIZE}
+            onPageChange={setMembershipsPage}
+          />
         </TabsContent>
 
         <TabsContent value="ledger">
           {/* Ledger Table */}
-          <Card className="border-none shadow-sm overflow-hidden">
+          <Card className="border border-border shadow-sm overflow-hidden">
             <CardContent className="p-0">
               <Table>
                 <TableHeader className="bg-secondary/30">
@@ -442,19 +473,20 @@ function IkiminaManagementContent() {
                 </TableHeader>
                 <TableBody>
                   {loading ? (
-                    <TableRow>
-                      <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
-                        Loading contributions ledger...
-                      </TableCell>
-                    </TableRow>
+                    <TableStateRow
+                      colSpan={6}
+                      tone="info"
+                      title="Loading contributions ledger"
+                      description="Preparing savings deductions from completed payroll runs."
+                    />
                   ) : allContributions.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
-                        No transactions recorded in the savings ledger.
-                      </TableCell>
-                    </TableRow>
+                    <TableStateRow
+                      colSpan={6}
+                      title="No savings transactions recorded"
+                      description="Payroll-linked Ikimina deductions will appear here after payroll runs are processed."
+                    />
                   ) : (
-                    allContributions.map((c) => (
+                    paginatedContributions.map((c) => (
                       <TableRow key={c.uuid} className="hover:bg-secondary/10 transition-colors">
                         <TableCell className="text-sm font-medium">{new Date(c.contribution_date).toLocaleDateString()}</TableCell>
                         <TableCell className="font-semibold">{c.employeeName}</TableCell>
@@ -471,6 +503,13 @@ function IkiminaManagementContent() {
               </Table>
             </CardContent>
           </Card>
+          <Pagination
+            page={ledgerPage}
+            totalPages={ledgerTotalPages}
+            total={allContributions.length}
+            limit={IKIMINA_PAGE_SIZE}
+            onPageChange={setLedgerPage}
+          />
         </TabsContent>
       </Tabs>
 

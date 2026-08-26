@@ -15,6 +15,22 @@ export interface CreateAllowancePayload {
     title: string;
     amount: string;
     description?: string;
+    allowance_type_id?: string;
+}
+
+export interface AllowanceType {
+    id: string;
+    uuid: string;
+    name: string;
+    default_amount: string;
+    description: string | null;
+    is_active: boolean;
+}
+
+export interface CreateAllowanceTypePayload {
+    name: string;
+    default_amount: string;
+    description?: string;
 }
 
 export type UpdatePaymentStructurePayload = Partial<
@@ -68,11 +84,6 @@ export const getActivePaymentStructureByEmployee = async (employeeId: string) =>
 
 export const getPaymentStructures = async (): Promise<any> => {
     return [];
-};
-
-export const getPaymentCategories = async () => {
-    const response = await api.get("/payment-structures/payment-categories");
-    return response.data;
 };
 
 export const deletePaymentStructure = async (
@@ -153,5 +164,25 @@ export const deactivateAllowance = async (uuid: string) => {
 
 export const updateAllowance = async (uuid: string, payload: Partial<CreateAllowancePayload>) => {
     const response = await api.patch(`/payment-structures/allowances/${uuid}`, payload);
+    return response.data;
+};
+
+export const getAllowanceTypes = async (includeInactive = false): Promise<AllowanceType[]> => {
+    const response = await api.get("/payment-structures/allowance-types", {
+        params: includeInactive ? { include_inactive: "true" } : undefined,
+    });
+    return response.data;
+};
+
+export const createAllowanceType = async (payload: CreateAllowanceTypePayload): Promise<AllowanceType> => {
+    const response = await api.post("/payment-structures/allowance-types", payload);
+    return response.data;
+};
+
+export const updateAllowanceType = async (
+    uuid: string,
+    payload: Partial<CreateAllowanceTypePayload> & { is_active?: boolean },
+): Promise<AllowanceType> => {
+    const response = await api.patch(`/payment-structures/allowance-types/${uuid}`, payload);
     return response.data;
 };

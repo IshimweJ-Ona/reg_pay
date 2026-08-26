@@ -7,10 +7,12 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { AvatarUpload } from "@/components/ui/avatar-upload";
 import { useToast } from '@/hooks/use-toast';
-import { Camera01 as Camera, Key01 as KeyRound, Loading02 as Loader2, Mail01 as Mail, Save01 as Save, User01 as UserIcon } from '@untitledui/icons';
-import { getAvatarUrl } from '@/lib/utils';
+import { Key01 as KeyRound, Loading02 as Loader2, Mail01 as Mail, Save01 as Save, User01 as UserIcon } from '@untitledui/icons';
+import { uploadUserAvatar } from '@/api/users';
+import { PageHeader } from '@/components/layout/page-header';
+import { LoadingState } from '@/components/layout/page-state';
 
 const splitName = (name: string) => {
   const parts = name.trim().split(/\s+/).filter(Boolean);
@@ -40,6 +42,15 @@ export default function AdminProfilePage() {
       email: user?.email || '',
     });
   }, [user?.name, user?.email]);
+
+  if (!user) {
+    return (
+      <LoadingState
+        title="Loading profile"
+        description="Preparing your account information and security controls."
+      />
+    );
+  }
 
   const handleUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -94,13 +105,13 @@ export default function AdminProfilePage() {
 
   return (
     <div className="max-w-2xl mx-auto space-y-8">
-      <div>
-        <h1 className="text-3xl font-headline font-bold">Profile</h1>
-        <p className="text-muted-foreground">Manage your name, email, and password.</p>
-      </div>
+      <PageHeader
+        title="Profile"
+        description="Manage your name, email, password, and account photo."
+      />
 
       <div className="space-y-6">
-        <Card className="border-none shadow-sm">
+        <Card className="border border-border shadow-sm">
           <CardHeader>
             <CardTitle>Personal Information</CardTitle>
             <CardDescription>These details are used across system records and notifications.</CardDescription>
@@ -108,35 +119,33 @@ export default function AdminProfilePage() {
           <CardContent>
             <form onSubmit={handleUpdate} className="space-y-6">
               <div className="flex items-center gap-6 mb-8">
-                <div className="relative group">
-                  <Avatar className="h-24 w-24 border-4 border-card shadow-xl">
-                    <AvatarImage src={getAvatarUrl(user?.avatar_url)} />
-                    <AvatarFallback className="text-2xl font-bold bg-primary/10 text-primary">
-                      {user?.name?.charAt(0)}
-                    </AvatarFallback>
-                  </Avatar>
-                  <button type="button" className="absolute bottom-0 right-0 h-8 w-8 bg-card rounded-full shadow-lg border flex items-center justify-center hover:bg-secondary transition-colors">
-                    <Camera className="h-4 w-4 text-muted-foreground" size={16} />
-                  </button>
-                </div>
+                {user && (
+                  <AvatarUpload
+                    avatarUrl={user.avatar_url}
+                    fallbackText={user.name}
+                    onUpload={(file) => uploadUserAvatar(user.uuid, file)}
+                    onUploaded={() => refreshSession()}
+                  />
+                )}
                 <div className="min-w-0">
                   <h3 className="text-xl font-bold truncate">{user?.name}</h3>
-                  <p className="text-sm text-muted-foreground uppercase tracking-widest font-bold">{user?.role}</p>
-                  <p className="text-xs text-muted-foreground mt-1 truncate">ID: {user?.uuid || user?.id}</p>
+                  <p className="text-sm font-bold text-muted-foreground">{user?.role}</p>
                 </div>
               </div>
 
               <div className="grid grid-cols-1 gap-4">
                 <div className="space-y-2">
-                  <Label className="flex items-center gap-2"><UserIcon className="h-4 w-4" size={16} /> Full Name</Label>
+                  <Label htmlFor="profile-name" className="flex items-center gap-2"><UserIcon className="h-4 w-4" size={16} /> Full Name</Label>
                   <Input
+                    id="profile-name"
                     value={formData.name}
                     onChange={(e) => setFormData({...formData, name: e.target.value})}
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label className="flex items-center gap-2"><Mail className="h-4 w-4" size={16} /> Email</Label>
+                  <Label htmlFor="profile-email" className="flex items-center gap-2"><Mail className="h-4 w-4" size={16} /> Email</Label>
                   <Input
+                    id="profile-email"
                     type="email"
                     value={formData.email}
                     onChange={(e) => setFormData({...formData, email: e.target.value})}
@@ -144,7 +153,7 @@ export default function AdminProfilePage() {
                 </div>
               </div>
 
-              <Button type="submit" className="w-full h-12 shadow-lg shadow-primary/20" disabled={savingProfile}>
+              <Button type="submit" className="w-full h-12 shadow-sm shadow-primary/20" disabled={savingProfile}>
                 {savingProfile ? <Loader2 className="mr-2 h-4 w-4 animate-spin" size={16} /> : <Save className="mr-2 h-4 w-4" size={16} />}
                 Save profile
               </Button>
@@ -152,7 +161,7 @@ export default function AdminProfilePage() {
           </CardContent>
         </Card>
 
-        <Card className="border-none shadow-sm">
+        <Card className="border border-border shadow-sm">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-lg"><KeyRound className="h-5 w-5 text-primary" size={20} /> Reset Password</CardTitle>
             <CardDescription>Choose a new password for your account.</CardDescription>
@@ -160,16 +169,18 @@ export default function AdminProfilePage() {
           <CardContent>
             <form onSubmit={handleResetPassword} className="space-y-4">
               <div className="space-y-2">
-                <Label>New Password</Label>
+                <Label htmlFor="profile-new-password">New Password</Label>
                 <Input
+                  id="profile-new-password"
                   type="password"
                   value={passwordData.password}
                   onChange={(e) => setPasswordData((prev) => ({ ...prev, password: e.target.value }))}
                 />
               </div>
               <div className="space-y-2">
-                <Label>Confirm Password</Label>
+                <Label htmlFor="profile-confirm-password">Confirm Password</Label>
                 <Input
+                  id="profile-confirm-password"
                   type="password"
                   value={passwordData.confirmPassword}
                   onChange={(e) => setPasswordData((prev) => ({ ...prev, confirmPassword: e.target.value }))}

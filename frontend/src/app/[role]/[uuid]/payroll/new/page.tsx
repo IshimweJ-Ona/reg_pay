@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/select";
 import {
   ArrowLeft, Save01, Calculator, Users01,
-  SearchMd, FilterFunnel01, ShieldTick, Paperclip, X
+  SearchMd, ShieldTick, Paperclip, X
 } from '@untitledui/icons';
 import { useRouter, useParams } from 'next/navigation';
 import { useToast } from '@/hooks/use-toast';
@@ -25,6 +25,7 @@ import { useAuth } from '@/context/auth-context';
 import { userFriendlyError } from '@/lib/error-message';
 import { asPayrollNumber, formatRwf } from '@/lib/payroll-display';
 import { PageHeader } from '@/components/layout/page-header';
+import { LoadingState, PermissionDeniedState, TableStateRow } from '@/components/layout/page-state';
 
 const getEmployeeLocation = (employee: any) =>
   employee.working_location ?? employee.working_locations ?? null;
@@ -32,8 +33,11 @@ const getEmployeeLocation = (employee: any) =>
 const getEmployeeDepartment = (employee: any) =>
   employee.department ?? employee.departments ?? null;
 
+const getEmployeePosition = (employee: any) =>
+  employee.position ?? employee.positions ?? null;
+
 const getEmployeeCategory = (employee: any) =>
-  employee.employment_category ?? employee.employment_categories ?? null;
+  employee.position?.employment_category ?? employee.position?.employment_categories ?? null;
 
 const getPaymentStructure = (employee: any) =>
   employee.payment_structures?.[0] ?? null;
@@ -80,6 +84,7 @@ export default function NewPayrollBatchPage() {
   const [departments, setDepartments] = useState<any[]>([]);
   const [workingLocationId, setWorkingLocationId] = useState('');
   const [selectedDepartmentId, setSelectedDepartmentId] = useState('all');
+  const [selectedPositionId, setSelectedPositionId] = useState('all');
   const [paymentDate, setPaymentDate] = useState(now.toISOString().slice(0, 10));
   const [payrollMonth, setPayrollMonth] = useState(now.getMonth() + 1);
   const [payrollYear, setPayrollYear] = useState(now.getFullYear());
@@ -90,6 +95,7 @@ export default function NewPayrollBatchPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [batchDescription, setBatchDescription] = useState('');
   const [batchAttachments, setBatchAttachments] = useState<File[]>([]);
+  const [loadingSetup, setLoadingSetup] = useState(true);
 
   const role = params.role as string;
   const uuid = params.uuid as string;
@@ -129,6 +135,7 @@ export default function NewPayrollBatchPage() {
   };
 
   useEffect(() => {
+    setLoadingSetup(true);
     Promise.all([
       getEmployees().catch(() => ({ employees: [] })), 
       getWorkingLocations().catch(() => ({ working_locations: [] }))
@@ -146,7 +153,7 @@ export default function NewPayrollBatchPage() {
         setWorkingLocationId(locs[0].uuid);
         handleLocationChange(locs[0].uuid);
       }
-    });
+    }).finally(() => setLoadingSetup(false));
   }, [user?.location_id]);
 
   const batchEmployees = useMemo(() => {
@@ -161,15 +168,28 @@ export default function NewPayrollBatchPage() {
     });
   }, [employees, workingLocationId, selectedCategories]);
 
+  const availablePositions = useMemo(() => {
+    const byUuid = new Map<string, { uuid: string; name: string }>();
+    for (const emp of batchEmployees) {
+      const position = getEmployeePosition(emp);
+      if (position?.uuid && !byUuid.has(position.uuid)) {
+        byUuid.set(position.uuid, { uuid: position.uuid, name: position.name });
+      }
+    }
+    return Array.from(byUuid.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [batchEmployees]);
+
   const filteredEmployees = useMemo(() => {
     return batchEmployees.filter(emp => {
       const department = getEmployeeDepartment(emp);
       const departmentMatch = selectedDepartmentId === 'all' || department?.uuid === selectedDepartmentId;
+      const position = getEmployeePosition(emp);
+      const positionMatch = selectedPositionId === 'all' || position?.uuid === selectedPositionId;
       const searchMatch = !searchTerm.trim() || employeeSearchText(emp).includes(searchTerm.toLowerCase());
 
-      return departmentMatch && searchMatch;
+      return departmentMatch && positionMatch && searchMatch;
     });
-  }, [batchEmployees, selectedDepartmentId, searchTerm]);
+  }, [batchEmployees, selectedDepartmentId, selectedPositionId, searchTerm]);
 
   const uniqueEmployeeCount = useMemo(() => {
     const ids = new Set(batchEmployees.map(e => e.id));
@@ -268,22 +288,27 @@ export default function NewPayrollBatchPage() {
         <Button variant="ghost" onClick={() => router.push(`${basePath}/payroll`)}>
           <ArrowLeft className="mr-2 h-4 w-4" size={16} /> Back to payroll
         </Button>
-        <Card className="border-none shadow-sm">
-          <CardContent className="pt-6">
-            <h1 className="text-xl font-bold">Payroll creation is not available</h1>
-            <p className="text-sm text-muted-foreground mt-2">
-              Your assigned role can review payroll information, but it cannot generate new payroll batches.
-            </p>
-          </CardContent>
-        </Card>
+        <PermissionDeniedState
+          title="Payroll creation permission required"
+          description="Your role can review payroll information, but it cannot generate new payroll batches."
+        />
       </div>
+    );
+  }
+
+  if (loadingSetup) {
+    return (
+      <LoadingState
+        title="Loading payroll setup"
+        description="Preparing employees, branches, departments, and default pay-period values."
+      />
     );
   }
 
   return (
     <div className="max-w-[1800px] mx-auto space-y-8 pb-12">
       <div className="flex items-center gap-4">
-        <Button variant="ghost" size="icon" onClick={() => router.back()}>
+        <Button variant="ghost" size="icon" onClick={() => router.back()} aria-label="Return to payroll runs">
           <ArrowLeft className="h-5 w-5" size={20} />
         </Button>
         <div className="flex-1">
@@ -296,7 +321,7 @@ export default function NewPayrollBatchPage() {
 
       <div className="space-y-6">
         <div className="space-y-6">
-          <Card className="border-none shadow-sm">
+          <Card className="border border-border shadow-sm">
             <CardHeader>
               <CardTitle className="text-lg">Batch Configuration</CardTitle>
             </CardHeader>
@@ -348,6 +373,18 @@ export default function NewPayrollBatchPage() {
                     <SelectItem value="all">All Departments</SelectItem>
                     {departments.map((department) => (
                       <SelectItem key={department.uuid} value={department.uuid}>{department.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Position Preview Filter</Label>
+                <Select value={selectedPositionId} onValueChange={setSelectedPositionId}>
+                  <SelectTrigger><SelectValue placeholder="All Positions" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Positions</SelectItem>
+                    {availablePositions.map((position) => (
+                      <SelectItem key={position.uuid} value={position.uuid}>{position.name}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -422,6 +459,7 @@ export default function NewPayrollBatchPage() {
                           size="icon"
                           className="h-7 w-7"
                           onClick={() => removeAttachment(index)}
+                          aria-label={`Remove attachment ${file.name}`}
                         >
                           <X className="h-3.5 w-3.5" size={14} />
                         </Button>
@@ -437,7 +475,7 @@ export default function NewPayrollBatchPage() {
             </CardContent>
           </Card>
 
-          <Card className="border-none shadow-sm overflow-hidden">
+          <Card className="border border-border shadow-sm overflow-hidden">
             <CardHeader className="flex flex-row items-center justify-between">
               <div>
                 <CardTitle className="text-lg">Payroll Population</CardTitle>
@@ -453,7 +491,6 @@ export default function NewPayrollBatchPage() {
                     onChange={(event) => setSearchTerm(event.target.value)}
                   />
                 </div>
-                <Button variant="outline" size="sm" className="h-8"><FilterFunnel01 className="h-3 w-3" size={12} /></Button>
               </div>
             </CardHeader>
             <CardContent className="p-0 border-t">
@@ -471,11 +508,11 @@ export default function NewPayrollBatchPage() {
                 </TableHeader>
                 <TableBody>
                   {filteredEmployees.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={7} className="text-center py-16 text-muted-foreground italic">
-                        No active employees match this payroll preview.
-                      </TableCell>
-                    </TableRow>
+                    <TableStateRow
+                      colSpan={7}
+                      title="No employees match this payroll preview"
+                      description="Adjust the branch, department, payroll frequency, or search filters before creating this batch."
+                    />
                   ) : filteredEmployees.map((emp) => {
                     const category = getEmployeeCategory(emp);
                     const department = getEmployeeDepartment(emp);
@@ -489,7 +526,9 @@ export default function NewPayrollBatchPage() {
                         <TableCell>
                           <div className="flex flex-col">
                             <span className="font-medium text-sm">{`${emp.first_name} ${emp.last_name}`.trim()}</span>
-                            <span className="text-[10px] text-muted-foreground uppercase">{emp.national_id || emp.uuid}</span>
+                            {emp.national_id && (
+                              <span className="text-[10px] text-muted-foreground uppercase">{emp.national_id}</span>
+                            )}
                           </div>
                         </TableCell>
                         <TableCell>
@@ -537,7 +576,7 @@ export default function NewPayrollBatchPage() {
           </Card>
         </div>
 
-        <Card className="border-none shadow-lg bg-primary text-primary-foreground">
+        <Card className="border border-border shadow-sm bg-primary text-primary-foreground">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Calculator className="h-5 w-5" size={20} /> Batch Summary

@@ -3,10 +3,8 @@ import { Inter, IBM_Plex_Sans } from "next/font/google";
 import { Toaster } from "@/components/ui/toaster";
 import { PageLoader } from "@/components/ui/page-loader";
 import { AuthProvider } from "@/context/auth-context";
-import { AttendanceSyncProvider } from "@/context/attendance-sync-context";
 import "./globals.css";
 import { NotificationListener } from "@/components/notification-listener";
-import { AttendanceSyncPopover } from "@/components/attendance/attendance-sync-popover";
 import { SessionManager } from "@/components/auth/session-manager";
 
 const inter = Inter({
@@ -42,15 +40,12 @@ export default function RootLayout({
     <html lang="en" className={`${inter.variable} ${ibmPlexSans.variable}`}>
       <body className="font-body antialiased">
         <AuthProvider>
-          <AttendanceSyncProvider>
-            <SessionManager>
-              <PageLoader />
-              <NotificationListener />
-              {children}
-              <AttendanceSyncPopover />
-              <Toaster />
-            </SessionManager>
-          </AttendanceSyncProvider>
+          <SessionManager>
+            <PageLoader />
+            <NotificationListener />
+            {children}
+            <Toaster />
+          </SessionManager>
         </AuthProvider>
       </body>
     </html>

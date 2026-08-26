@@ -20,6 +20,9 @@ export interface PayrollBatch {
   period: string;
   location: string;
   department: string;
+  position: string;
+  /** Distinct position names present in the batch, for exact-match filtering (`position` is a display summary like "Mixed (3)"). */
+  positionNames: string[];
   employeeCount: number;
   totalGross: number;
   totalDeductions: number;

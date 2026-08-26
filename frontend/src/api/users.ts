@@ -92,6 +92,15 @@ export const updateUserPermissionOverride = async (
     return response.data;
 };
 
+export const uploadUserAvatar = async (uuid: string, file: File): Promise<{ avatar_url: string }> => {
+    const formData = new FormData();
+    formData.append('image', file);
+    const response = await api.patch(`/users/${uuid}/avatar`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response.data;
+};
+
 export const bulkUploadProfileImages = async (files: File[], mappings: Record<string, string>) => {
     const formData = new FormData();
     files.forEach(file => formData.append('images', file));

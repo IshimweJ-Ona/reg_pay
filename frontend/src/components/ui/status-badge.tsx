@@ -12,6 +12,15 @@ const toneClasses: Record<StatusTone, string> = {
   accent: "bg-accent/10 text-accent border-accent/20",
 };
 
+const dotClasses: Record<StatusTone, string> = {
+  success: "bg-success",
+  warning: "bg-warning",
+  info: "bg-info",
+  destructive: "bg-destructive",
+  secondary: "bg-muted-foreground",
+  accent: "bg-accent",
+};
+
 interface StatusBadgeProps {
   label: string;
   tone: StatusTone;
@@ -20,7 +29,8 @@ interface StatusBadgeProps {
 
 export function StatusBadge({ label, tone, className }: StatusBadgeProps) {
   return (
-    <Badge variant="outline" className={cn("font-semibold px-2 py-0.5", toneClasses[tone], className)}>
+    <Badge variant="outline" className={cn("gap-1.5 px-2 py-0.5 font-semibold", toneClasses[tone], className)}>
+      <span className={cn("h-1.5 w-1.5 rounded-full", dotClasses[tone])} aria-hidden="true" />
       {label}
     </Badge>
   );

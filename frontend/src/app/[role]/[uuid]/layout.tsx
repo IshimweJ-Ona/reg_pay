@@ -8,6 +8,7 @@ import { useEffect } from 'react';
 import { SectionErrorBoundary } from '@/components/layout/section-error-boundary';
 import { cn } from '@/lib/utils';
 import { ProtectedRoute } from '@/components/auth/protected-route';
+import { LoadingState } from '@/components/layout/page-state';
 
 function DashboardLayoutContent({ children }: { children: React.ReactNode }) {
   const { user, isLoading, refreshPermissions, hasPermission } = useAuth();
@@ -27,7 +28,11 @@ function DashboardLayoutContent({ children }: { children: React.ReactNode }) {
       refreshPermissions();
     }, 15000);
     return () => clearInterval(interval);
-  }, [isLoading, user]);
+    // Keyed on user?.id, not the whole user object: refreshPermissions()
+    // itself calls setUser() with a new reference every tick, which would
+    // otherwise tear down and restart this interval on every single poll.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoading, user?.id]);
 
   useEffect(() => {
     if (!isLoading) {
@@ -57,7 +62,13 @@ function DashboardLayoutContent({ children }: { children: React.ReactNode }) {
   }, [user, isLoading, router, params.uuid]);
 
   if (isLoading || !user) {
-    return null;
+    return (
+      <LoadingState
+        title="Loading secure workspace"
+        description="Checking your session and role-specific navigation."
+        className="min-h-screen rounded-none border-0"
+      />
+    );
   }
 
   const isManagement = hasPermission('employees.read') || hasPermission('payroll.read') || hasPermission('users.read') || hasPermission('attendance.read');
@@ -65,11 +76,11 @@ function DashboardLayoutContent({ children }: { children: React.ReactNode }) {
   return (
     <ProtectedRoute>
       <div className={cn(
-        "flex h-screen overflow-hidden",
+        "flex min-h-screen flex-col overflow-hidden lg:h-screen lg:flex-row",
         isManagement ? "bg-pearl-fog" : "bg-secondary/5"
       )}>
         <Sidebar type={isManagement ? "admin" : "user"} />
-        <main className="flex-1 overflow-y-auto p-8 relative">
+        <main className="relative flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
           <SectionErrorBoundary>
             {children}
           </SectionErrorBoundary>

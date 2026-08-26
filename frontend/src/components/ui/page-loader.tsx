@@ -67,33 +67,33 @@ export function PageLoader() {
   return (
     <div
       className={cn(
-        "fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-[#040a15] transition-opacity duration-500",
+        "fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-background transition-opacity duration-300",
         visible ? "opacity-100" : "opacity-0 pointer-events-none"
       )}
     >
-      <div className="flex flex-col items-center mb-8 animate-in fade-in zoom-in duration-500">
-        <div className="bg-white p-3 rounded-2xl shadow-2xl shadow-primary/20 mb-6">
+      <div className="mb-8 flex flex-col items-center">
+        <div className="mb-5 rounded-lg border border-border bg-white p-3 shadow-sm">
           <Image src="/pics/reg-logo.png" alt="REG Logo" width={48} height={48} className="h-12 w-12 object-contain" />
         </div>
         <div className="text-center">
-          <h1 className="text-4xl font-headline font-bold tracking-[0.2em] text-white">
-            REG <span className="text-primary"></span>
+          <h1 className="text-2xl font-semibold text-foreground">
+            REG Pay
           </h1>
-          <p className="mt-2 text-[10px] uppercase tracking-[0.3em] text-white/40 font-bold font-body">
-            Enterprise Payment Systems
+          <p className="mt-2 text-xs font-medium uppercase text-muted-foreground">
+            Secure payroll workspace
           </p>
         </div>
       </div>
 
-      <div className="w-48 h-1 bg-white/5 rounded-full overflow-hidden mb-4">
+      <div className="mb-4 h-1 w-56 overflow-hidden rounded-full bg-muted">
         <div
-          className="h-full bg-gradient-to-r from-primary to-accent transition-all duration-300 ease-out"
+          className="h-full bg-primary transition-all duration-300 ease-out"
           style={{ width: `${progress}%` }}
         />
       </div>
 
-      <div className="text-[9px] uppercase tracking-[0.4em] text-white/30 font-bold animate-pulse">
-        System Initializing
+      <div className="text-xs font-medium text-muted-foreground" role="status" aria-live="polite">
+        Loading latest access and payroll data
       </div>
     </div>
   );

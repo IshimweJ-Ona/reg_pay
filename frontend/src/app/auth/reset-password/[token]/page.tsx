@@ -79,10 +79,11 @@ export default function ResetPasswordPage() {
                     <Input type={showPassword ? "text" : "password"} placeholder="••••••••" {...field} className="pr-10" />
                     <button
                       type="button"
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-black hover:text-foreground"
+                      aria-label={showPassword ? "Hide password" : "Show password"}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       onClick={() => setShowPassword(!showPassword)}
                     >
-                      {showPassword ? <EyeOff size={18} className="text-black" /> : <Eye size={18} className="text-black" />}
+                      {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                     </button>
                   </div>
                 </FormControl>

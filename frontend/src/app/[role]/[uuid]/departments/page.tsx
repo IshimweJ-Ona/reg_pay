@@ -22,7 +22,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { PageHeader } from '@/components/layout/page-header';
+import { InlineStateNote, LoadingState, PermissionDeniedState, TableStateRow } from '@/components/layout/page-state';
 import { StatCard } from '@/components/ui/stat-card';
+import { Pagination } from '@/components/ui/pagination';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Dialog,
@@ -45,7 +47,7 @@ import {
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/hooks/use-toast';
-import { getDepartments, createDepartment, updateDepartment, deleteDepartment, getWorkingLocations, enableDepartmentAtLocation, WorkingLocation } from '@/api/working_locations';
+import { getDepartments, createDepartment, updateDepartment, deleteDepartment, getWorkingLocations, enableDepartmentAtLocation, suspendAndArchiveDepartment, WorkingLocation } from '@/api/working_locations';
 import { getUsers } from '@/api/users';
 import { getEmployees } from '@/api/employees';
 import { userFriendlyError } from '@/lib/error-message';
@@ -60,6 +62,8 @@ export default function DepartmentsManagementPage() {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [newDep, setNewDep] = useState({ name: '', code: '', description: '' });
   const [searchQuery, setSearchQuery] = useState('');
+  const [departmentsPage, setDepartmentsPage] = useState(1);
+  const DEPARTMENTS_PAGE_SIZE = 25;
   const [archiveId, setArchiveId] = useState<string | null>(null);
 
   // Drill-down: department (grouped by name) -> its working locations -> that
@@ -72,6 +76,9 @@ export default function DepartmentsManagementPage() {
   const [loadingEmployees, setLoadingEmployees] = useState(false);
   const [allLocations, setAllLocations] = useState<WorkingLocation[]>([]);
   const [togglingLocationId, setTogglingLocationId] = useState<string | null>(null);
+  const [deactivateConfirmRow, setDeactivateConfirmRow] = useState<any | null>(null);
+  const [suspendConfirmRow, setSuspendConfirmRow] = useState<any | null>(null);
+  const [isSuspending, setIsSuspending] = useState(false);
 
   const { toast } = useToast();
   const canManageDepartments = hasPermission('departments.manage');
@@ -204,26 +211,54 @@ export default function DepartmentsManagementPage() {
     });
   }, [selectedGroup, allLocations, canReadAllBranches]);
 
-  const handleToggleLocation = async (row: (typeof locationToggleRows)[number]) => {
+  // Turning a department OFF is destructive-ish (it starts winding the
+  // department down, possibly suspending staff down the line), so it goes
+  // through a confirmation dialog rather than firing immediately on toggle.
+  // Turning one back ON is non-destructive and stays a direct call.
+  const handleToggleLocation = (row: (typeof locationToggleRows)[number]) => {
+    if (!selectedGroup) return;
+    if (row.isActive) {
+      setDeactivateConfirmRow(row);
+      return;
+    }
+    performEnable(row);
+  };
+
+  const performEnable = async (row: (typeof locationToggleRows)[number]) => {
     if (!selectedGroup) return;
     setTogglingLocationId(row.location.id);
     try {
-      if (row.isActive) {
-        const result = await deleteDepartment(row.departmentRow.uuid);
-        if (result?.status === 'PENDING_TRANSFER') {
-          toast({
-            title: "Transfer required",
-            description: result.message ?? `${selectedGroup.name} will be archived after employees are transferred.`,
-          });
-        } else {
-          toast({ title: "Removed", description: `${selectedGroup.name} disabled at ${row.location.name}.` });
-        }
-      } else {
-        await enableDepartmentAtLocation(selectedGroup.code, row.location.id, {
-          name: selectedGroup.name,
-          description: selectedGroup.description,
+      await enableDepartmentAtLocation(selectedGroup.code, row.location.id, {
+        name: selectedGroup.name,
+        description: selectedGroup.description,
+      });
+      toast({ title: "Enabled", description: `${selectedGroup.name} is now active at ${row.location.name}.` });
+      await loadData();
+    } catch (error: any) {
+      toast({
+        variant: "destructive",
+        title: "Update failed",
+        description: userFriendlyError(error, "Please try again."),
+      });
+    } finally {
+      setTogglingLocationId(null);
+    }
+  };
+
+  const performDeactivate = async () => {
+    const row = deactivateConfirmRow;
+    if (!row || !selectedGroup) return;
+    setDeactivateConfirmRow(null);
+    setTogglingLocationId(row.location.id);
+    try {
+      const result = await deleteDepartment(row.departmentRow.uuid);
+      if (result?.status === 'PENDING_TRANSFER') {
+        toast({
+          title: "Transfer required",
+          description: result.message ?? `${selectedGroup.name} will be archived once all employees are transferred out — or suspend everyone still assigned to close it immediately.`,
         });
-        toast({ title: "Enabled", description: `${selectedGroup.name} is now active at ${row.location.name}.` });
+      } else {
+        toast({ title: "Removed", description: `${selectedGroup.name} disabled at ${row.location.name}.` });
       }
       await loadData();
     } catch (error: any) {
@@ -237,11 +272,62 @@ export default function DepartmentsManagementPage() {
     }
   };
 
+  // Alternate resolution for a department stuck in "pending transfer": close
+  // it immediately by suspending every employee/user still assigned instead
+  // of waiting for them to be moved out one by one.
+  const performSuspendAndArchive = async () => {
+    const row = suspendConfirmRow;
+    if (!row?.departmentRow) return;
+    setIsSuspending(true);
+    try {
+      const result = await suspendAndArchiveDepartment(row.departmentRow.uuid);
+      toast({
+        title: "Department closed",
+        description: result?.message ?? `${row.location.name} department archived; staff suspended.`,
+      });
+      setSuspendConfirmRow(null);
+      await loadData();
+    } catch (error: any) {
+      toast({
+        variant: "destructive",
+        title: "Could not close department",
+        description: userFriendlyError(error, "Please try again."),
+      });
+    } finally {
+      setIsSuspending(false);
+    }
+  };
+
   const filteredDepartments = departmentRows.filter(dept =>
     dept.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
+  const departmentsTotalPages = Math.max(1, Math.ceil(filteredDepartments.length / DEPARTMENTS_PAGE_SIZE));
+  const paginatedDepartments = filteredDepartments.slice(
+    (departmentsPage - 1) * DEPARTMENTS_PAGE_SIZE,
+    departmentsPage * DEPARTMENTS_PAGE_SIZE,
+  );
 
-  if (isLoading || !canManageDepartments) return null;
+  useEffect(() => {
+    setDepartmentsPage(1);
+  }, [searchQuery]);
+
+  if (isLoading) {
+    return (
+      <LoadingState
+        title="Loading department controls"
+        description="Checking your branch scope and department permissions."
+      />
+    );
+  }
+
+  if (!canManageDepartments) {
+    return (
+      <PermissionDeniedState
+        title="Department management access required"
+        description="Your role can view permitted areas only. Department configuration requires an HR or administrator permission."
+      />
+    );
+  }
 
   const handleCreate = async () => {
     try {
@@ -316,7 +402,7 @@ export default function DepartmentsManagementPage() {
         }
         actions={
           canManageDepartments && (
-            <Button className="h-11 px-6 shadow-lg shadow-primary/20" onClick={() => setIsCreateModalOpen(true)}>
+            <Button className="h-11 px-6 shadow-sm shadow-primary/20" onClick={() => setIsCreateModalOpen(true)}>
               <Plus className="mr-2 h-4 w-4" size={16} /> Create Department
             </Button>
           )
@@ -342,13 +428,13 @@ export default function DepartmentsManagementPage() {
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" size={16} />
         <Input
           placeholder="Filter by name..."
-          className="pl-10 h-11 border-none bg-card shadow-sm"
+          className="pl-10 h-11 border border-border bg-card shadow-sm"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
         />
       </div>
 
-      <div className="bg-card rounded-2xl border shadow-sm overflow-hidden overflow-x-auto">
+      <div className="bg-card rounded-lg border shadow-sm overflow-hidden overflow-x-auto">
         <Table>
           <TableHeader className="bg-secondary/50">
             <TableRow>
@@ -358,7 +444,13 @@ export default function DepartmentsManagementPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filteredDepartments.map((dept) => (
+            {filteredDepartments.length === 0 ? (
+              <TableStateRow
+                colSpan={3}
+                title="No departments found"
+                description="Adjust search filters or create a department when your role permits it."
+              />
+            ) : paginatedDepartments.map((dept) => (
               <TableRow
                 key={dept.id}
                 className="hover:bg-secondary/10 transition-colors cursor-pointer"
@@ -366,7 +458,7 @@ export default function DepartmentsManagementPage() {
               >
                 <TableCell>
                   <div className="flex items-center gap-3">
-                    <div className="h-10 w-10 rounded-xl bg-accent/5 flex items-center justify-center">
+                    <div className="h-10 w-10 rounded-lg bg-accent/5 flex items-center justify-center">
                       <Layers className="h-5 w-5 text-accent" size={20} />
                     </div>
                     <div className="flex flex-col gap-0.5">
@@ -396,6 +488,13 @@ export default function DepartmentsManagementPage() {
             ))}
           </TableBody>
         </Table>
+        <Pagination
+          page={departmentsPage}
+          totalPages={departmentsTotalPages}
+          total={filteredDepartments.length}
+          limit={DEPARTMENTS_PAGE_SIZE}
+          onPageChange={setDepartmentsPage}
+        />
       </div>
 
       <Dialog open={isCreateModalOpen} onOpenChange={setIsCreateModalOpen}>
@@ -496,6 +595,46 @@ export default function DepartmentsManagementPage() {
         </AlertDialogContent>
       </AlertDialog>
 
+      <AlertDialog open={!!deactivateConfirmRow} onOpenChange={(open) => !open && setDeactivateConfirmRow(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Deactivate {selectedGroup?.name} at {deactivateConfirmRow?.location?.name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deactivateConfirmRow?.departmentRow?.employee_count > 0
+                ? `This department has ${deactivateConfirmRow.departmentRow.employee_count} employee(s) assigned. The branch manager will be notified to transfer them out before the department fully deactivates — or you can suspend everyone still assigned to close it immediately.`
+                : 'This department will be deactivated immediately at this working location. It will no longer appear when creating new employees, users, or payroll batches here.'}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={performDeactivate} className="bg-destructive text-destructive-foreground">
+              Deactivate
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!suspendConfirmRow} onOpenChange={(open) => !open && setSuspendConfirmRow(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Suspend everyone in {selectedGroup?.name} at {suspendConfirmRow?.location?.name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This immediately suspends every active employee and user still assigned to this department, revokes their sessions, and closes the department. This cannot be undone automatically — suspended staff would need to be individually reactivated afterward. Use this only when transferring people out isn't practical.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isSuspending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={performSuspendAndArchive}
+              disabled={isSuspending}
+              className="bg-destructive text-destructive-foreground"
+            >
+              {isSuspending ? 'Suspending...' : 'Suspend all & close department'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {/* Step 2: every working location that has this department */}
       <Dialog open={!!selectedGroup} onOpenChange={() => setSelectedGroup(null)}>
         <DialogContent className="max-w-3xl">
@@ -520,9 +659,18 @@ export default function DepartmentsManagementPage() {
                       <div className="flex flex-col">
                         <span className={`font-semibold text-sm ${row.isActive ? '' : 'text-muted-foreground'}`}>{row.location.name}</span>
                         {row.isPendingArchive && (
-                          <span className="text-[11px] font-medium text-amber-600">
-                            Pending transfer: {row.departmentRow.pending_deactivation?.remaining_employee_count ?? row.departmentRow.employee_count ?? 0} employee{(row.departmentRow.pending_deactivation?.remaining_employee_count ?? row.departmentRow.employee_count ?? 0) === 1 ? '' : 's'}
-                          </span>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-[11px] font-medium text-amber-600">
+                              Pending transfer: {row.departmentRow.pending_deactivation?.remaining_employee_count ?? row.departmentRow.employee_count ?? 0} employee{(row.departmentRow.pending_deactivation?.remaining_employee_count ?? row.departmentRow.employee_count ?? 0) === 1 ? '' : 's'}
+                            </span>
+                            <button
+                              type="button"
+                              className="text-[11px] font-semibold text-destructive underline underline-offset-2 hover:no-underline"
+                              onClick={(e) => { e.stopPropagation(); setSuspendConfirmRow(row); }}
+                            >
+                              Suspend all instead
+                            </button>
+                          </div>
                         )}
                       </div>
                     </div>
@@ -631,7 +779,7 @@ export default function DepartmentsManagementPage() {
                   <Loader2 className="h-5 w-5 animate-spin mr-2" size={20} /> Loading employees...
                 </div>
               ) : locationEmployees.length === 0 ? (
-                <p className="text-sm text-muted-foreground py-8 text-center">No employees are assigned to this department yet.</p>
+                <InlineStateNote className="my-4">No employees are assigned to this department yet.</InlineStateNote>
               ) : (
                 <div className="divide-y">
                   {locationEmployees.map((emp: any) => (
@@ -653,7 +801,7 @@ export default function DepartmentsManagementPage() {
                   <Loader2 className="h-5 w-5 animate-spin mr-2" size={20} /> Loading users...
                 </div>
               ) : locationUsers.length === 0 ? (
-                <p className="text-sm text-muted-foreground py-8 text-center">No users are assigned to this department yet.</p>
+                <InlineStateNote className="my-4">No users are assigned to this department yet.</InlineStateNote>
               ) : (
                 <div className="divide-y">
                   {locationUsers.map((u: any) => (

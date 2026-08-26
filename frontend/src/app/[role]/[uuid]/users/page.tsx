@@ -7,6 +7,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Pagination } from "@/components/ui/pagination";
 import {
   SearchMd, DotsVertical,
   SlashCircle01 as Ban, UserPlus01 as UserPlus, Shield01 as Shield, Edit05 as Edit, Power01 as Power,
@@ -59,17 +60,19 @@ import { User } from '@/types/auth';
 import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/hooks/use-toast';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { getUsers, suspendUser, reactivateUser, updateUserPermissionOverride, bulkUploadProfileImages, assignUserRoles, approveUser, rejectUser, updateUser } from '@/api/users';
+import { getUsers, suspendUser, reactivateUser, updateUserPermissionOverride, bulkUploadProfileImages, assignUserRoles, approveUser, rejectUser, updateUser, uploadUserAvatar } from '@/api/users';
 import { getRoles } from '@/api/roles';
 import { getPermissions } from '@/api/permissions';
 import { getWorkingLocations, getDepartments } from '@/api/working_locations';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { userFriendlyError } from '@/lib/error-message';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { AvatarUpload } from '@/components/ui/avatar-upload';
 import { getAvatarUrl, cn } from '@/lib/utils';
 import { PermissionGate } from '@/components/auth/permission-gate';
 import { ProtectedRoute } from '@/components/auth/protected-route';
 import { PageHeader } from '@/components/layout/page-header';
+import { InlineStateNote, LoadingState, TableStateRow } from '@/components/layout/page-state';
 import { StatusBadge } from '@/components/ui/status-badge';
 
 function mapApiUser(apiUser: any): User {
@@ -96,7 +99,14 @@ function mapApiUser(apiUser: any): User {
 export default function UsersManagementPage() {
   return (
     <ProtectedRoute requiredPermission="users.read">
-      <Suspense fallback={null}>
+      <Suspense
+        fallback={
+          <LoadingState
+            title="Loading user administration"
+            description="Preparing accounts, roles, permissions, and approval queues."
+          />
+        }
+      >
         <UsersManagementContent />
       </Suspense>
     </ProtectedRoute>
@@ -128,6 +138,8 @@ function UsersManagementContent() {
   const [locations, setLocations] = useState<any[]>([]);
   const [departments, setDepartments] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
+  const [usersPage, setUsersPage] = useState(1);
+  const USERS_PAGE_SIZE = 25;
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [isEditSheetOpen, setIsEditSheetOpen] = useState(false);
   const [isBulkUploadOpen, setIsBulkUploadOpen] = useState(false);
@@ -139,6 +151,8 @@ function UsersManagementContent() {
   const [editWorkingLocationId, setEditWorkingLocationId] = useState('');
   const [editDepartmentId, setEditDepartmentId] = useState('');
   const [isUpdatingAssignment, setIsUpdatingAssignment] = useState(false);
+  const [isDataLoading, setIsDataLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // Pending-user approval panel state
   const [approveWorkingLocationId, setApproveWorkingLocationId] = useState('');
@@ -158,60 +172,68 @@ function UsersManagementContent() {
     // Users, roles, and permissions each need their own permission. Fetch
     // independently (not Promise.all) so a 403 on roles/permissions doesn't
     // also blank out the users list for someone who only lacks those two.
+    setIsDataLoading(true);
+    setLoadError(null);
     try {
-      const usersData = await getUsers();
-      const userList = usersData.users || usersData;
-      setUsers(userList.map(mapApiUser));
-    } catch (error: any) {
-      toast({
-        variant: "destructive",
-        title: "Failed to load users",
-        description: userFriendlyError(error, "Please check your connection and try again."),
-      });
-    }
-
-    const canSeeRoleList =
-      hasPermission('roles.manage') ||
-      hasPermission('roles.manage_own_location') ||
-      hasPermission('users.update') ||
-      hasPermission('users.approve');
-
-    if (canSeeRoleList) {
       try {
-        const rolesData = await getRoles();
-        setRoles(rolesData);
+        const usersData = await getUsers();
+        const userList = usersData.users || usersData;
+        setUsers(userList.map(mapApiUser));
       } catch (error: any) {
-        // Non-fatal: role assignment UI just stays empty.
-        console.error('Failed to load roles:', error);
+        const message = userFriendlyError(error, "Please check your connection and try again.");
+        setLoadError(message);
+        toast({
+          variant: "destructive",
+          title: "Failed to load users",
+          description: message,
+        });
       }
-    }
 
-    if (hasPermission('permissions.read') || hasPermission('permissions.assign')) {
-      try {
-        const permsData = await getPermissions();
-        setAllPermissions(flattenPermissionModules(permsData));
-      } catch (error: any) {
-        // Non-fatal: permission override UI just stays empty.
-        console.error('Failed to load permissions:', error);
-      }
-    }
+      const canSeeRoleList =
+        hasPermission('roles.manage') ||
+        hasPermission('roles.manage_own_location') ||
+        hasPermission('users.update') ||
+        hasPermission('users.approve');
 
-    if (hasPermission('users.approve') || canUpdateUsers) {
-      try {
-        const [locRes, depRes] = await Promise.all([
-          canReadAllBranches ? getWorkingLocations() : Promise.resolve({ working_locations: [] }),
-          getDepartments(),
-        ]);
-        setLocations(
-          canReadAllBranches
-            ? locRes.working_locations || (Array.isArray(locRes) ? locRes : [])
-            : [],
-        );
-        setDepartments(depRes.departments || (Array.isArray(depRes) ? depRes : []));
-      } catch (error) {
-        // Non-fatal: the approval panel's branch/department selects just stay empty.
-        console.error('Failed to load locations/departments:', error);
+      if (canSeeRoleList) {
+        try {
+          const rolesData = await getRoles();
+          setRoles(rolesData);
+        } catch (error: any) {
+          // Non-fatal: role assignment UI just stays empty.
+          console.error('Failed to load roles:', error);
+        }
       }
+
+      if (hasPermission('permissions.read') || hasPermission('permissions.assign')) {
+        try {
+          const permsData = await getPermissions();
+          setAllPermissions(flattenPermissionModules(permsData));
+        } catch (error: any) {
+          // Non-fatal: permission override UI just stays empty.
+          console.error('Failed to load permissions:', error);
+        }
+      }
+
+      if (hasPermission('users.approve') || canUpdateUsers) {
+        try {
+          const [locRes, depRes] = await Promise.all([
+            canReadAllBranches ? getWorkingLocations() : Promise.resolve({ working_locations: [] }),
+            getDepartments(undefined, { forAssignment: true }),
+          ]);
+          setLocations(
+            canReadAllBranches
+              ? locRes.working_locations || (Array.isArray(locRes) ? locRes : [])
+              : [],
+          );
+          setDepartments(depRes.departments || (Array.isArray(depRes) ? depRes : []));
+        } catch (error) {
+          // Non-fatal: the approval panel's branch/department selects just stay empty.
+          console.error('Failed to load locations/departments:', error);
+        }
+      }
+    } finally {
+      setIsDataLoading(false);
     }
   };
 
@@ -383,12 +405,21 @@ function UsersManagementContent() {
     }
   };
 
-  const filteredUsers = users.filter(u => 
-    (u.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+  const filteredUsers = users.filter(u =>
+    (u.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
      u.email.toLowerCase().includes(searchTerm.toLowerCase())) &&
     u.id !== currentUser?.id &&
     !u.roles?.some(role => ['SUPER_ADMIN'].includes(role))
   );
+  const usersTotalPages = Math.max(1, Math.ceil(filteredUsers.length / USERS_PAGE_SIZE));
+  const paginatedUsers = filteredUsers.slice(
+    (usersPage - 1) * USERS_PAGE_SIZE,
+    usersPage * USERS_PAGE_SIZE,
+  );
+
+  useEffect(() => {
+    setUsersPage(1);
+  }, [searchTerm]);
 
   return (
     <div className="space-y-6">
@@ -403,7 +434,7 @@ function UsersManagementContent() {
                 </Button>
             </PermissionGate>
             <PermissionGate permission="users.create">
-                <Button className="h-11 px-6 shadow-lg shadow-primary/20">
+                <Button className="h-11 px-6 shadow-sm shadow-primary/20">
                     <UserPlus className="mr-2 h-4 w-4" size={16} /> Create User
                 </Button>
             </PermissionGate>
@@ -411,19 +442,19 @@ function UsersManagementContent() {
         }
       />
 
-      <div className="flex items-center gap-4 bg-card p-4 rounded-xl shadow-sm border border-border">
+      <div className="flex items-center gap-4 bg-card p-4 rounded-lg shadow-sm border border-border">
         <div className="relative flex-1">
           <SearchMd className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" size={16} />
           <Input
             placeholder="Search users by name or email..."
-            className="pl-10 h-11 border-none bg-secondary/30"
+            className="pl-10 h-11 border border-border bg-secondary/30"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
         </div>
       </div>
 
-      <div className="bg-card rounded-xl border border-border shadow-sm overflow-hidden overflow-x-auto">
+      <div className="bg-card rounded-lg border border-border shadow-sm overflow-hidden overflow-x-auto">
         <Table>
           <TableHeader className="bg-secondary/50">
             <TableRow>
@@ -435,7 +466,27 @@ function UsersManagementContent() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filteredUsers.map((user) => (
+            {isDataLoading ? (
+              <TableStateRow
+                colSpan={5}
+                tone="info"
+                title="Loading users"
+                description="Preparing accounts, roles, permissions, and approval queues."
+              />
+            ) : loadError ? (
+              <TableStateRow
+                colSpan={5}
+                tone="destructive"
+                title="Users could not load"
+                description={loadError}
+              />
+            ) : filteredUsers.length === 0 ? (
+              <TableStateRow
+                colSpan={5}
+                title="No users found"
+                description="Adjust search, role, branch, or status filters before inviting or approving users."
+              />
+            ) : paginatedUsers.map((user) => (
               <TableRow key={user.id} className="hover:bg-secondary/20 transition-colors">
                 <TableCell>
                   <div className="flex items-center gap-3">
@@ -450,7 +501,7 @@ function UsersManagementContent() {
                   </div>
                 </TableCell>
                 <TableCell>
-                  <Badge variant="outline" className="font-bold tracking-tight">
+                  <Badge variant="outline" className="font-bold">
                     {user.role.replace('_', ' ')}
                   </Badge>
                 </TableCell>
@@ -471,7 +522,9 @@ function UsersManagementContent() {
                   <PermissionGate permission="users.update">
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon"><DotsVertical className="h-4 w-4" size={16} /></Button>
+                        <Button variant="ghost" size="icon" aria-label={`Open actions for ${user.name}`}>
+                          <DotsVertical className="h-4 w-4" size={16} />
+                        </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end" className="w-56">
                         <DropdownMenuItem onClick={() => openUserSheet(user)}>
@@ -501,6 +554,13 @@ function UsersManagementContent() {
             ))}
           </TableBody>
         </Table>
+        <Pagination
+          page={usersPage}
+          totalPages={usersTotalPages}
+          total={filteredUsers.length}
+          limit={USERS_PAGE_SIZE}
+          onPageChange={setUsersPage}
+        />
       </div>
 
       {/* Edit User Sheet */}
@@ -515,25 +575,31 @@ function UsersManagementContent() {
 
           {selectedUser && (
             <div className="space-y-8 py-4">
-              <div className="bg-secondary/20 p-4 rounded-xl flex items-center gap-4 border">
-                <Avatar className="h-14 w-14 border shadow-sm">
-                  <AvatarImage src={getAvatarUrl(selectedUser.avatar_url)} />
-                  <AvatarFallback className="bg-primary/10 text-primary font-bold text-xl">{selectedUser.name.charAt(0)}</AvatarFallback>
-                </Avatar>
+              <div className="bg-secondary/20 p-4 rounded-lg flex items-center gap-4 border">
+                <AvatarUpload
+                  size="md"
+                  avatarUrl={selectedUser.avatar_url}
+                  fallbackText={selectedUser.name}
+                  onUpload={(file) => uploadUserAvatar(selectedUser.id, file)}
+                  onUploaded={(avatar_url) => {
+                    setSelectedUser((current) => current ? { ...current, avatar_url } : current);
+                    setUsers((current) => current.map((item) => item.id === selectedUser.id ? { ...item, avatar_url } : item));
+                  }}
+                />
                 <div>
                   <h3 className="font-bold text-lg">{selectedUser.name}</h3>
                   <p className="text-sm text-muted-foreground">{selectedUser.email}</p>
                 </div>
-                <Badge className="ml-auto uppercase text-[10px] tracking-widest">{selectedUser.status}</Badge>
+                <Badge className="ml-auto uppercase text-[10px]">{selectedUser.status}</Badge>
               </div>
 
               {selectedUser.status === 'PENDING' ? (
                 <PermissionGate permission="users.approve" fallback={
-                  <p className="text-sm text-muted-foreground italic p-4 bg-secondary/20 rounded-xl border border-border">
+                  <p className="text-sm text-muted-foreground italic p-4 bg-secondary/20 rounded-lg border border-border">
                     This account is awaiting approval. You don't have permission to approve or reject registrations.
                   </p>
                 }>
-                  <div className="space-y-4 p-4 rounded-xl border-2 border-warning/30 bg-warning/5">
+                  <div className="space-y-4 p-4 rounded-lg border-2 border-warning/30 bg-warning/5">
                     <div className="flex items-center gap-2 text-warning">
                       <Clock className="h-4 w-4" size={16} />
                       <span className="text-sm font-bold">Awaiting approval</span>
@@ -603,7 +669,11 @@ function UsersManagementContent() {
                             )}
                           </label>
                         ))}
-                        {roles.length === 0 && <p className="text-xs text-muted-foreground col-span-2">No roles available.</p>}
+                        {roles.length === 0 && (
+                          <InlineStateNote className="col-span-2">
+                            No roles are available for this scope. Create a role before approving this account.
+                          </InlineStateNote>
+                        )}
                       </div>
                     </div>
 
@@ -627,7 +697,7 @@ function UsersManagementContent() {
                 </PermissionGate>
               ) : (
               <>
-              <div className="space-y-4 rounded-xl border border-border bg-secondary/30 p-4">
+              <div className="space-y-4 rounded-lg border border-border bg-secondary/30 p-4">
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <Label className="text-base font-bold">{canReadAllBranches ? 'Branch & Department' : 'Department'}</Label>
@@ -754,9 +824,9 @@ function UsersManagementContent() {
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
                     <Label className="text-base font-bold">Permission Overrides</Label>
-                    <span className="text-[10px] text-muted-foreground uppercase tracking-widest font-bold">Per-user exceptions to their role</span>
+                    <span className="text-[10px] text-muted-foreground uppercase font-bold">Per-user exceptions to their role</span>
                   </div>
-                  <ScrollArea className="h-[250px] border border-border rounded-xl p-4 bg-secondary/30">
+                  <ScrollArea className="h-[250px] border border-border rounded-lg p-4 bg-secondary/30">
                     <div className="space-y-4">
                       {allPermissions.map((perm) => {
                         const override = selectedUser.permission_overrides?.find(o => o.permission_key === perm.key);
@@ -842,9 +912,11 @@ function UsersManagementContent() {
                 </DialogDescription>
             </DialogHeader>
             <div className="py-6 space-y-4">
-                <div
-                    className="border-2 border-dashed border-border rounded-2xl p-10 flex flex-col items-center justify-center gap-4 bg-secondary/30 hover:bg-secondary/50 transition-colors cursor-pointer"
+                <button
+                    type="button"
+                    className="w-full border-2 border-dashed border-border rounded-lg p-10 flex flex-col items-center justify-center gap-4 bg-secondary/30 hover:bg-secondary/50 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                     onClick={() => fileInputRef.current?.click()}
+                    aria-label="Select profile image files for bulk upload"
                 >
                     <div className="h-16 w-16 rounded-full bg-primary/10 flex items-center justify-center text-primary">
                         <Upload className="h-8 w-8" size={32} />
@@ -853,18 +925,18 @@ function UsersManagementContent() {
                         <p className="font-bold text-foreground">Click to select files</p>
                         <p className="text-xs text-muted-foreground mt-1">PNG or JPEG up to 2MB each</p>
                     </div>
-                    <input
-                        type="file"
-                        multiple
-                        accept="image/*"
-                        className="hidden"
-                        ref={fileInputRef}
-                        onChange={(e) => setUploadingFiles(Array.from(e.target.files || []))}
-                    />
-                </div>
+                </button>
+                <input
+                    type="file"
+                    multiple
+                    accept="image/*"
+                    className="hidden"
+                    ref={fileInputRef}
+                    onChange={(e) => setUploadingFiles(Array.from(e.target.files || []))}
+                />
 
                 {uploadingFiles.length > 0 && (
-                    <ScrollArea className="max-h-48 border border-border rounded-xl p-2 bg-card">
+                    <ScrollArea className="max-h-48 border border-border rounded-lg p-2 bg-card">
                         <div className="space-y-2">
                             {uploadingFiles.map((f, i) => (
                                 <div key={i} className="flex items-center justify-between p-2 rounded-lg bg-secondary/30 text-xs">
@@ -872,7 +944,13 @@ function UsersManagementContent() {
                                         <ImageIcon className="h-3 w-3 text-muted-foreground" size={12} />
                                         <span className="truncate max-w-[200px]">{f.name}</span>
                                     </div>
-                                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setUploadingFiles(prev => prev.filter((_, idx) => idx !== i))}>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-6 w-6"
+                                      onClick={() => setUploadingFiles(prev => prev.filter((_, idx) => idx !== i))}
+                                      aria-label={`Remove ${f.name}`}
+                                    >
                                         <X className="h-3 w-3" size={12} />
                                     </Button>
                                 </div>

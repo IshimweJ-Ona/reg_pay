@@ -1,8 +1,18 @@
 "use client";
 
 import { useEffect, useMemo, useState } from 'react';
+import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  ChartContainer,
+  ChartLegend,
+  ChartLegendContent,
+  ChartTooltip,
+  ChartTooltipContent,
+  type ChartConfig,
+} from "@/components/ui/chart";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   ArrowLeft, File02, Users01,
   CheckCircle, XCircle, Clock, ClockRewind, MessageSquare01, Download01, Save01, LinkExternal01, Paperclip, Wallet01, Calculator, Percent01
@@ -12,6 +22,7 @@ import { Badge } from '@/components/ui/badge';
 import { useParams, useRouter } from 'next/navigation';
 import { PayrollStatusBadge } from '@/components/payroll/payroll-status-badge';
 import { StatCard } from '@/components/ui/stat-card';
+import { TableStateRow } from '@/components/layout/page-state';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import {
   Dialog,
@@ -51,6 +62,17 @@ const formatPeriodRange = (start?: unknown, end?: unknown) => {
   return `${startLabel} - ${endLabel}`;
 };
 
+const positionChartConfig = {
+  gross: {
+    label: "Gross",
+    color: "var(--chart-1)",
+  },
+  net: {
+    label: "Net",
+    color: "var(--chart-2)",
+  },
+} satisfies ChartConfig;
+
 const getAttachmentUrl = (path?: string) => {
   if (!path) return '#';
   if (path.startsWith('http://') || path.startsWith('https://')) return path;
@@ -78,6 +100,16 @@ export default function PayrollBatchDetailsPage() {
   }, [batchId]);
 
   const rows = useMemo(() => batch?.items ?? [], [batch]);
+
+  const [chartDepartmentFilter, setChartDepartmentFilter] = useState('ALL');
+  const chartDepartmentOptions = useMemo(() => {
+    const names = new Set<string>();
+    rows.forEach((item: any) => {
+      const name = item.employee?.department?.name;
+      if (name) names.add(name);
+    });
+    return Array.from(names).sort();
+  }, [rows]);
 
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 50;
@@ -140,6 +172,25 @@ export default function PayrollBatchDetailsPage() {
       totalNetPay,
     };
   }, [rows, batch]);
+
+  // Scoped to this batch only - grouped from the same rows the totals above
+  // are computed from, never fetched or aggregated across other batches.
+  const positionBreakdown = useMemo(() => {
+    const byPosition = new Map<string, { position: string; gross: number; net: number }>();
+    rows
+      .filter((item: any) =>
+        chartDepartmentFilter === 'ALL' || item.employee?.department?.name === chartDepartmentFilter,
+      )
+      .forEach((item: any) => {
+        const positionName = item.employee?.position?.name ?? 'Unassigned';
+        const { grossPay, netPay } = getPayrollItemAmounts(item, batch);
+        const current = byPosition.get(positionName) ?? { position: positionName, gross: 0, net: 0 };
+        current.gross += grossPay;
+        current.net += netPay;
+        byPosition.set(positionName, current);
+      });
+    return Array.from(byPosition.values()).sort((a, b) => b.net - a.net);
+  }, [rows, batch, chartDepartmentFilter]);
 
   const handleAction = async (type: 'APPROVE' | 'REJECT' | 'SUBMIT') => {
     if (type === 'REJECT' && !comment.trim()) {
@@ -229,9 +280,9 @@ export default function PayrollBatchDetailsPage() {
 
   return (
     <div className="space-y-8 pb-12">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-6 rounded-2xl border shadow-sm">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-6 rounded-lg border shadow-sm">
         <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={() => router.back()}>
+          <Button variant="ghost" size="icon" onClick={() => router.back()} aria-label="Return to payroll runs">
             <ArrowLeft className="h-5 w-5" size={20} />
           </Button>
           <div>
@@ -246,7 +297,7 @@ export default function PayrollBatchDetailsPage() {
         </div>
         <div className="flex gap-2">
           {canSubmit && (
-            <Button className="bg-primary hover:bg-primary/90 gap-2 shadow-lg" onClick={() => handleAction('SUBMIT')}>
+            <Button className="bg-primary hover:bg-primary/90 gap-2 shadow-sm" onClick={() => handleAction('SUBMIT')}>
               <Save01 className="h-4 w-4" size={16} /> {isRejected ? 'Resubmit for Review' : 'Submit for Review'}
             </Button>
           )}
@@ -275,7 +326,7 @@ export default function PayrollBatchDetailsPage() {
               </Dialog>
               <Dialog>
                 <DialogTrigger asChild>
-                  <Button className="bg-success hover:bg-success/90 text-success-foreground gap-2 shadow-lg shadow-success/20">
+                  <Button className="bg-success hover:bg-success/90 text-success-foreground gap-2 shadow-sm shadow-success/20">
                     <CheckCircle className="h-4 w-4" size={16} /> {canApproveFinal ? 'Final Authorization' : 'Initial Approval'}
                   </Button>
                 </DialogTrigger>
@@ -303,7 +354,7 @@ export default function PayrollBatchDetailsPage() {
       </div>
 
       {isRejected && batch.rejected_reason && (
-        <div className="rounded-2xl border border-destructive/20 bg-destructive/10 p-5 text-sm text-destructive shadow-sm">
+        <div className="rounded-lg border border-destructive/20 bg-destructive/10 p-5 text-sm text-destructive shadow-sm">
           <div className="flex items-center gap-2 font-bold text-base">
             <XCircle className="h-5 w-5" size={20} />
             Batch Rejected by Reviewer
@@ -318,7 +369,7 @@ export default function PayrollBatchDetailsPage() {
       )}
 
       {isApproved && (
-        <div className="rounded-2xl border bg-muted/40 p-4 text-sm text-muted-foreground">
+        <div className="rounded-lg border bg-muted/40 p-4 text-sm text-muted-foreground">
           <div className="flex items-center gap-2 font-semibold text-foreground">
             <CheckCircle className="h-4 w-4 text-success" size={16} />
             Completed & Approved Batch
@@ -358,7 +409,7 @@ export default function PayrollBatchDetailsPage() {
           tone="info"
           icon={<Users01 className="h-5 w-5" size={20} />}
           label="Staff Count"
-          value={`${rows.length} Employees`}
+          value={rows.length}
         />
         <StatCard
           tone="success"
@@ -369,7 +420,7 @@ export default function PayrollBatchDetailsPage() {
       </div>
 
       <Tabs defaultValue="employees" className="w-full">
-        <TabsList className="bg-card border p-1 h-12 rounded-xl mb-6">
+        <TabsList className="bg-card border p-1 h-12 rounded-lg mb-6">
           <TabsTrigger value="employees" className="gap-2 px-6 rounded-lg data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
             <Users01 className="h-4 w-4" size={16} /> Employee Breakdown
           </TabsTrigger>
@@ -382,7 +433,7 @@ export default function PayrollBatchDetailsPage() {
         </TabsList>
 
         <TabsContent value="employees">
-          <Card className="border-none shadow-sm overflow-hidden">
+          <Card className="border border-border shadow-sm overflow-hidden">
             <CardContent className="p-0">
               <div className="overflow-x-auto">
                 <Table>
@@ -391,7 +442,9 @@ export default function PayrollBatchDetailsPage() {
                       <TableHead>Employee</TableHead>
                       <TableHead>Phone Number</TableHead>
                       <TableHead>Role / Dept</TableHead>
-                      <TableHead>Attendance</TableHead>
+                      <TableHead title="Days present out of the expected/contract work-day basis used for pay">
+                        Attendance (present/expected)
+                      </TableHead>
                       <TableHead className="text-right">Basic Pay</TableHead>
                       <TableHead className="text-right">PIT Tax</TableHead>
                       <TableHead className="text-right">Allowances</TableHead>
@@ -406,18 +459,18 @@ export default function PayrollBatchDetailsPage() {
                   </TableHeader>
                   <TableBody>
                     {paginatedRows.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={14} className="text-center py-16 text-muted-foreground italic">
-                          No employees are attached to this payroll batch.
-                        </TableCell>
-                      </TableRow>
+                      <TableStateRow
+                        colSpan={14}
+                        title="No employees attached"
+                        description="This payroll batch has no employee calculations to review yet."
+                      />
                     ) : paginatedRows.map((item: any) => {
                       const amounts = getPayrollItemAmounts(item, batch);
                       const taxLabel = getPayrollTaxLabel(item);
                       const frequency = item.transaction?.calculation_metadata?.configured_frequency ?? 'Configured';
 
                       return (
-                        <TableRow key={item.uuid} className="hover:bg-secondary/10 transition-colors">
+                        <TableRow key={item.uuid} className="even:bg-secondary/10 hover:bg-secondary/20 transition-colors">
                           <TableCell>
                             <div className="flex flex-col">
                               <span className="font-semibold">{`${item.employee?.first_name ?? ''} ${item.employee?.last_name ?? ''}`.trim()}</span>
@@ -433,7 +486,12 @@ export default function PayrollBatchDetailsPage() {
                           </TableCell>
                           <TableCell>
                             <div className="flex flex-col">
-                              <span className="text-sm font-medium">{amounts.attendanceDays}/{amounts.workDays ?? '-'} days</span>
+                              <span
+                                className="text-sm font-medium"
+                                title="Present days / payroll work-day basis (the denominator used to calculate pay, not a calendar total)"
+                              >
+                                {amounts.attendanceDays}/{amounts.workDays ?? '-'} days
+                              </span>
                               <span className="text-[10px] text-muted-foreground">{formatPeriodRange(amounts.periodStart, amounts.periodEnd)}</span>
                             </div>
                           </TableCell>
@@ -465,6 +523,7 @@ export default function PayrollBatchDetailsPage() {
                                   className="h-8 w-8 text-destructive hover:bg-destructive/10"
                                   onClick={() => handleRejectItem(item.uuid)}
                                   title="Reject this employee"
+                                  aria-label={`Reject payroll item for ${item.employee?.first_name ?? 'employee'} ${item.employee?.last_name ?? ''}`}
                                 >
                                   <XCircle className="h-4 w-4" size={16} />
                                 </Button>
@@ -533,7 +592,7 @@ export default function PayrollBatchDetailsPage() {
         </TabsContent>
 
         <TabsContent value="history">
-          <Card className="border-none shadow-sm">
+          <Card className="border border-border shadow-sm">
             <CardContent className="pt-6 space-y-6">
               {activityTrail.length > 0 ? activityTrail.map((step: any, idx: number) => {
                 const isRejected = String(step.action).includes('REJECT') || String(step.action).includes('DENIED');
@@ -562,7 +621,7 @@ export default function PayrollBatchDetailsPage() {
                         <span className="text-xs font-medium text-muted-foreground">{new Date(step.action_at).toLocaleString()}</span>
                       </div>
                     </div>
-                    <div className="bg-secondary/40 p-3 rounded-xl flex gap-3 items-start">
+                    <div className="bg-secondary/40 p-3 rounded-lg flex gap-3 items-start">
                       <MessageSquare01 className="h-4 w-4 text-muted-foreground mt-0.5" size={16} />
                       <p className="text-sm italic">{step.comment ?? 'No comment'}</p>
                     </div>
@@ -570,7 +629,7 @@ export default function PayrollBatchDetailsPage() {
                 </div>
                 );
               }) : (
-                <div className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">
+                <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
                   No batch activity has been recorded yet.
                 </div>
               )}
@@ -579,10 +638,10 @@ export default function PayrollBatchDetailsPage() {
         </TabsContent>
 
         <TabsContent value="documents">
-          <Card className="border-none shadow-sm">
+          <Card className="border border-border shadow-sm">
             <CardContent className="pt-6 space-y-6">
-              <div className="rounded-xl border bg-muted/40 p-4">
-                <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Batch Description</p>
+              <div className="rounded-lg border bg-muted/40 p-4">
+                <p className="text-xs font-bold uppercase text-muted-foreground">Batch Description</p>
                 <p className="mt-2 text-sm text-foreground whitespace-pre-wrap">
                   {batch.description?.trim() || 'No description was added to this batch.'}
                 </p>
@@ -596,7 +655,7 @@ export default function PayrollBatchDetailsPage() {
                 {attachments.length > 0 ? (
                   <div className="grid gap-3 md:grid-cols-2">
                     {attachments.map((attachment: any, index: number) => (
-                      <div key={attachment.id ?? index} className="rounded-xl border bg-card p-4 shadow-sm">
+                      <div key={attachment.id ?? index} className="rounded-lg border bg-card p-4 shadow-sm">
                         <div className="flex items-start gap-3">
                           <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center">
                             <Paperclip className="h-4 w-4 text-primary" size={16} />
@@ -626,8 +685,71 @@ export default function PayrollBatchDetailsPage() {
                     ))}
                   </div>
                 ) : (
-                  <div className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">
+                  <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
                     No attachments were added to this payroll batch.
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-bold">Payroll by Position</p>
+                    <Badge variant="outline">{positionBreakdown.length}</Badge>
+                  </div>
+                  {chartDepartmentOptions.length > 1 && (
+                    <Select value={chartDepartmentFilter} onValueChange={setChartDepartmentFilter}>
+                      <SelectTrigger className="h-8 w-[200px] text-xs">
+                        <SelectValue placeholder="Filter by department" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="ALL">All Departments</SelectItem>
+                        {chartDepartmentOptions.map((name) => (
+                          <SelectItem key={name} value={name}>{name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                </div>
+                {positionBreakdown.length > 0 ? (
+                  <ChartContainer config={positionChartConfig} className="h-[320px] w-full aspect-auto">
+                    <BarChart data={positionBreakdown} margin={{ left: 8, right: 16, top: 12 }}>
+                      <CartesianGrid vertical={false} />
+                      <XAxis
+                        dataKey="position"
+                        tickLine={false}
+                        axisLine={false}
+                        tickMargin={10}
+                        interval={0}
+                        angle={positionBreakdown.length > 5 ? -20 : 0}
+                        textAnchor={positionBreakdown.length > 5 ? 'end' : 'middle'}
+                        height={positionBreakdown.length > 5 ? 56 : 30}
+                      />
+                      <YAxis tickLine={false} axisLine={false} width={70} tickFormatter={(value) => formatRwf(value)} />
+                      <ChartTooltip
+                        content={
+                          <ChartTooltipContent
+                            formatter={(value, name) => (
+                              <div className="flex min-w-[9rem] items-center justify-between gap-4">
+                                <span className="text-muted-foreground">
+                                  {positionChartConfig[String(name) as keyof typeof positionChartConfig]?.label ?? String(name)}
+                                </span>
+                                <span className="font-mono font-medium text-foreground">{formatRwf(Number(value))}</span>
+                              </div>
+                            )}
+                          />
+                        }
+                      />
+                      <Bar dataKey="gross" name="gross" fill="var(--color-gross)" radius={[4, 4, 0, 0]} maxBarSize={46} />
+                      <Bar dataKey="net" name="net" fill="var(--color-net)" radius={[4, 4, 0, 0]} maxBarSize={46} />
+                      <ChartLegend content={<ChartLegendContent />} />
+                    </BarChart>
+                  </ChartContainer>
+                ) : (
+                  <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
+                    {chartDepartmentFilter === 'ALL'
+                      ? 'No payroll items to break down by position yet.'
+                      : 'No payroll items for this department in this batch.'}
                   </div>
                 )}
               </div>

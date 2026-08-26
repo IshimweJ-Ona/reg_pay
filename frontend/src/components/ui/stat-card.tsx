@@ -28,11 +28,11 @@ export function StatCard({ icon, label, value, tone = "primary", className, onCl
       onClick={onClick}
     >
       <CardContent className="p-5 flex items-center gap-4">
-        <div className={cn("h-11 w-11 rounded-xl flex items-center justify-center shrink-0", toneClasses[tone])}>
+        <div className={cn("h-11 w-11 rounded-lg flex items-center justify-center shrink-0", toneClasses[tone])}>
           {icon}
         </div>
-        <div className="min-w-0">
-          <p className="text-2xl font-headline font-bold text-foreground leading-tight">{value}</p>
+        <div className="min-w-0 flex-1">
+          <p className="text-2xl font-headline font-bold text-foreground leading-tight break-words">{value}</p>
           <p className="text-sm text-muted-foreground truncate">{label}</p>
         </div>
       </CardContent>

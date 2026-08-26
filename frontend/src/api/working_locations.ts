@@ -8,6 +8,13 @@ export interface WorkingLocation {
     address: string;
 }
 
+export interface PendingDeactivation {
+    uuid: string;
+    requested_employee_count: number;
+    remaining_employee_count: number;
+    requested_at: string;
+}
+
 export interface Department {
     id: string;
     uuid: string;
@@ -16,6 +23,9 @@ export interface Department {
     name: string;
     description?: string;
     status: "ACTIVE" | "INACTIVE";
+    user_count?: number;
+    employee_count?: number;
+    pending_deactivation: PendingDeactivation | null;
 }
 
 export interface CreateWorkingLocationPayload {
@@ -58,9 +68,13 @@ export const deleteWorkingLocation = async (uuid: string) => {
 
 export const getDepartments = async (
     working_location_id?: string,
+    options?: { forAssignment?: boolean },
 ): Promise<any> => {
     const response = await api.get("/organization/departments", {
-        params: { working_location_id },
+        params: {
+            working_location_id,
+            for_assignment: options?.forAssignment ? "true" : undefined,
+        },
     });
     return response.data;
 };
@@ -80,6 +94,14 @@ export const updateDepartment = async (
 
 export const deleteDepartment = async (uuid: string) => {
     const response = await api.patch(`/organization/departments/${uuid}/delete`);
+    return response.data;
+};
+
+// Alternate resolution for a pending deactivation: suspends every ACTIVE
+// employee/user still in the department instead of waiting for them to be
+// transferred out one by one, then archives the department immediately.
+export const suspendAndArchiveDepartment = async (uuid: string) => {
+    const response = await api.patch(`/organization/departments/${uuid}/suspend-and-archive`);
     return response.data;
 };
 

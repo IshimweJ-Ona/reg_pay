@@ -63,7 +63,7 @@
     --border: 0 0% 89.8%;
     --input: 0 0% 89.8%;
     --ring: 0 78% 48%;
-    --radius: 0.75rem;
+    --radius: 0.5rem;
     /* Categorical chart palette (identity, not semantic) - fixed order, never cycled */
     --chart-1: #2a78d6; /* blue */
     --chart-2: #eb6834; /* orange */
@@ -130,7 +130,14 @@
     @apply bg-background text-foreground font-body antialiased;
   }
   h1, h2, h3, h4, h5, h6 {
-    @apply font-headline tracking-tight;
+    @apply font-headline;
+    letter-spacing: 0;
+  }
+  :focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+  }
+  ::selection {
+    @apply bg-primary text-primary-foreground;
   }
 }
-

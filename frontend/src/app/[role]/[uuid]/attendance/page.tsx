@@ -1,19 +1,20 @@
 "use client";
 
 import { useEffect, useMemo, useState } from 'react';
-import { 
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow 
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow
 } from "@/components/ui/table";
 import ExcelJS from 'exceljs';
-import { SearchMd, Download01, UserCheck01, Clock, Upload01, ClockRewind, UploadCloud01 } from '@untitledui/icons';
+import { SearchMd, Download01, Upload01, ClockRewind, Users01 } from '@untitledui/icons';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
 import { PageHeader } from '@/components/layout/page-header';
+import { TableStateRow } from '@/components/layout/page-state';
 import { StatCard } from '@/components/ui/stat-card';
 import { StatusBadge } from '@/components/ui/status-badge';
-import { getTimeRecords, bulkCreateTimeRecords, getTodayAttendance } from '@/api/attendance';
+import { getTimeRecords, bulkCreateTimeRecords } from '@/api/attendance';
 import { getEmployees } from '@/api/employees';
+import { getPositions, type Position } from '@/api/positions';
 import { getWorkingLocations, WorkingLocation } from '@/api/working_locations';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -36,10 +37,8 @@ import { PermissionGate } from '@/components/auth/permission-gate';
 import { useToast } from '@/hooks/use-toast';
 import { userFriendlyError } from '@/lib/error-message';
 import { useAuth } from '@/context/auth-context';
-import { useAttendanceSync } from '@/context/attendance-sync-context';
 import * as XLSX from 'xlsx';
 import dayjs, { getRwandaTime } from '@/lib/dayjs';
-import { AttendanceSyncPopover } from '@/components/attendance/attendance-sync-popover';
 
 const PRESENT_SYMBOL = 'P';
 const ABSENT_SYMBOL = 'A';
@@ -55,18 +54,24 @@ function normalizedHours(value: any) {
   return Number(value ?? 0);
 }
 
+// Attendance is only ever recorded by downloading a template, filling it in,
+// and uploading it back (see downloadTemplate/handleImportUpload below) -
+// there is no live per-employee marking UI. This page's only view is the
+// History table, filterable by date range, employment category, position,
+// and employee.
 export default function AttendanceMonitoringPage() {
   const [records, setRecords] = useState<any[]>([]);
   const [employees, setEmployees] = useState<any[]>([]);
+  const [positions, setPositions] = useState<Position[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTab, setActiveTab] = useState('ALL');
-  const [viewMode, setViewMode] = useState<'LOG' | 'HISTORY'>('LOG');
   const [loading, setLoading] = useState(false);
   const [isImportOpen, setIsImportOpen] = useState(false);
   const [importDateFrom, setImportDateFrom] = useState('');
   const [importDateTo, setImportDateTo] = useState('');
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importEmployeeType, setImportEmployeeType] = useState<'ALL' | 'MONTHLY' | 'DAILY' | 'CUSTOM'>('ALL');
+  const [importPositionId, setImportPositionId] = useState('ALL');
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
   const [exportType, setExportType] = useState<'csv' | 'excel' | null>(null);
   const [exportPreset, setExportPreset] = useState<'LAST_MONTH' | 'LAST_YEAR' | 'CUSTOM' | 'SINGLE_DAY'>('CUSTOM');
@@ -76,39 +81,33 @@ export default function AttendanceMonitoringPage() {
   const [historyDateFrom, setHistoryDateFrom] = useState('');
   const [historyDateTo, setHistoryDateTo] = useState('');
   const [historyEmployeeId, setHistoryEmployeeId] = useState('all');
+  const [historyPositionId, setHistoryPositionId] = useState('all');
   const [historyLoadedRange, setHistoryLoadedRange] = useState<{ from: string; to: string; label: string } | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [workingLocations, setWorkingLocations] = useState<WorkingLocation[]>([]);
   const [selectedLocationId, setSelectedLocationId] = useState('');
   const { toast } = useToast();
   const { user, hasPermission } = useAuth();
-  const { startSync, syncState, pendingSync, setPendingSync } = useAttendanceSync();
 
-  const canCreateAttendance = hasPermission('attendance.create');
-  const canUpdateAttendance = hasPermission('attendance.update');
-  const canLogAttendance = canCreateAttendance || canUpdateAttendance;
   const canViewAllLocations = hasPermission('branches.read_all');
 
   // Which location's attendance we're scoped to right now: the explicitly
   // chosen one (cross-location roles), else the signed-in user's own location.
   const activeLocationParam = selectedLocationId || user?.location;
 
-  const todayStr = getRwandaTime().format('YYYY-MM-DD');
-
   const fetchData = async () => {
-    const startTime = performance.now();
     setLoading(true);
     try {
-      // Optimization: only request the window we actually display (past 5
-      // days, excluding today - today comes from getTodayAttendance below)
-      // instead of pulling every time_record row in the database.
+      // Default landing window: past 5 days through today. This also seeds
+      // historyLoadedRange so the History table renders a proper date grid
+      // immediately, without requiring a "Load History" click first.
       const fiveDaysAgo = getRwandaTime().subtract(5, 'day').startOf('day');
-      const yesterday = getRwandaTime().subtract(1, 'day').endOf('day');
+      const today = getRwandaTime().endOf('day');
 
-      const [recs, empsResponse, todayRecs] = await Promise.all([
+      const [recs, empsResponse, positionsRes] = await Promise.all([
         getTimeRecords({
           start_date: fiveDaysAgo.format('YYYY-MM-DD'),
-          end_date: yesterday.format('YYYY-MM-DD'),
+          end_date: today.format('YYYY-MM-DD'),
           working_location_id: activeLocationParam,
         }).catch((err) => {
           console.error('Failed to load time records:', err);
@@ -118,28 +117,24 @@ export default function AttendanceMonitoringPage() {
           console.error('Failed to load employees:', err);
           return { employees: [] };
         }),
-        getTodayAttendance(activeLocationParam, activeTab === 'ALL' ? undefined : activeTab).catch((err) => {
-          console.error('Failed to load today attendance:', err);
+        getPositions().catch((err) => {
+          console.error('Failed to load positions:', err);
           return [];
-        })
+        }),
       ]);
       const employeeList = empsResponse.employees || (Array.isArray(empsResponse) ? empsResponse : []);
 
-      const filteredRecs = (Array.isArray(recs) ? recs : [])
+      const sortedRecs = (Array.isArray(recs) ? recs : [])
         .sort((a, b) => dayjs(b.attendance_date).unix() - dayjs(a.attendance_date).unix());
 
-      setRecords(filteredRecs);
+      setRecords(sortedRecs);
       setEmployees(employeeList);
-
-      // Pre-fill today's synced records
-      const syncedTodayMap: Record<string, any> = {};
-      (todayRecs || []).forEach((r: any) => {
-        syncedTodayMap[r.employee_id] = r;
+      setPositions(Array.isArray(positionsRes) ? positionsRes : []);
+      setHistoryLoadedRange({
+        from: fiveDaysAgo.format('YYYY-MM-DD'),
+        to: today.format('YYYY-MM-DD'),
+        label: 'Last 5 days',
       });
-      setRecords(prev => [...prev, ...todayRecs]);
-
-      const duration = (performance.now() - startTime) / 1000;
-      console.log(`Fetch completed in ${duration.toFixed(3)}s`);
     } catch (error) {
       const status = (error as any)?.response?.status;
       const msg = status ? `Could not load attendance data (HTTP ${status}).` : 'Could not load attendance data.';
@@ -152,17 +147,7 @@ export default function AttendanceMonitoringPage() {
 
   useEffect(() => {
     fetchData();
-
-    // Midnight UI clear check
-    const interval = setInterval(() => {
-      const now = getRwandaTime();
-      if (now.hour() === 0 && now.minute() === 0) {
-        setPendingSync({});
-        fetchData();
-      }
-    }, 60000); // Check every minute
-
-    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Cross-location roles get an explicit location picker; everyone else stays
@@ -180,48 +165,12 @@ export default function AttendanceMonitoringPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canViewAllLocations]);
 
-  // Re-fetch the Daily Logger / "today" data whenever the selected location changes.
+  // Re-fetch whenever the selected location changes.
   useEffect(() => {
     if (!selectedLocationId) return;
     fetchData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedLocationId]);
-
-  const handleSync = async () => {
-    const logs = Object.values(pendingSync);
-    if (logs.length === 0) return;
-    try {
-      await startSync(logs);
-      setPendingSync({});
-      fetchData();
-    } catch (error) {
-      console.error('Sync failed:', error);
-    }
-  };
-
-  const todayRecordsMap = useMemo(() => {
-    const map: Record<string, any> = {};
-    records.forEach(rec => {
-      const recDate = dayjs(rec.attendance_date).tz('Africa/Kigali').format('YYYY-MM-DD');
-      if (recDate === todayStr) {
-        map[rec.employee_id] = rec;
-      }
-    });
-    Object.values(pendingSync).forEach(ps => {
-        map[ps.employee_id] = ps;
-    });
-    return map;
-  }, [records, todayStr, pendingSync]);
-
-  const filteredEmployees = useMemo(() => {
-    return employees.filter(emp => {
-      const name = `${emp.first_name ?? ''} ${emp.last_name ?? ''}`.toLowerCase();
-      const matchesSearch = name.includes(searchTerm.toLowerCase());
-      const category = emp.employment_category?.name?.toUpperCase();
-      const matchesTab = activeTab === 'ALL' || category === activeTab;
-      return matchesSearch && matchesTab;
-    });
-  }, [employees, searchTerm, activeTab]);
 
   const filteredHistory = useMemo(() => {
     return records.filter(rec => {
@@ -230,18 +179,21 @@ export default function AttendanceMonitoringPage() {
       const matchesSearch = historyEmployeeId !== 'all' || name.includes(searchTerm.toLowerCase());
       const category = rec.employee?.employment_category?.name?.toUpperCase();
       const matchesTab = activeTab === 'ALL' || category === activeTab;
-      return matchesSelectedEmployee && matchesSearch && matchesTab;
+      const matchesPosition = historyPositionId === 'all' || rec.employee?.position?.uuid === historyPositionId;
+      return matchesSelectedEmployee && matchesSearch && matchesTab && matchesPosition;
     });
-  }, [records, searchTerm, activeTab, historyEmployeeId]);
+  }, [records, searchTerm, activeTab, historyEmployeeId, historyPositionId]);
 
   const historyEmployeeOptions = useMemo(() => {
     return employees
       .filter((emp) => {
         const category = emp.employment_category?.name?.toUpperCase();
-        return activeTab === 'ALL' || category === activeTab;
+        const matchesTab = activeTab === 'ALL' || category === activeTab;
+        const matchesPosition = historyPositionId === 'all' || emp.position?.uuid === historyPositionId;
+        return matchesTab && matchesPosition;
       })
       .sort((a, b) => `${a.first_name ?? ''} ${a.last_name ?? ''}`.localeCompare(`${b.first_name ?? ''} ${b.last_name ?? ''}`));
-  }, [employees, activeTab]);
+  }, [employees, activeTab, historyPositionId]);
 
   // One row per employee, one column per date - same layout as the bulk
   // import template (employee_id/name/department, then a P/A column per date).
@@ -297,35 +249,18 @@ export default function AttendanceMonitoringPage() {
     return { dates, rows };
   }, [filteredHistory, historyLoadedRange, historyEmployeeId, employees]);
 
-  const handleMarkAttendance = (
-    employeeId: string,
-    status: 'PRESENT' | 'ABSENT',
-    overtimeHours?: number,
-  ) => {
-    const existing = todayRecordsMap[employeeId];
-    if (existing && !canUpdateAttendance) {
-      toast({ variant: 'destructive', title: 'Permission denied', description: 'Cannot update existing logs.' });
-      return;
-    }
-
-    const log = {
-      employee_id: employeeId,
-      attendance_date: new Date().toISOString(),
-      attendance_status: status,
-      overtime_hours: status === 'PRESENT' ? overtimeHours : undefined,
-    };
-
-    setPendingSync((prev) => ({ ...prev, [employeeId]: log }));
-    toast({ title: 'Logged Locally', description: 'Attendance cached. Use "Sync Now" to finalize.' });
-  };
-
-  // Employees filtered by the selected employment category for the template
+  // Employees filtered by the selected employment category AND position for
+  // the template - mirrors the employees bulk-import template's own
+  // position + employment_category filtering.
   const templateEmployees = useMemo(() => {
-    if (importEmployeeType === 'ALL') return employees;
-    return employees.filter(
-      (emp) => (emp.employment_category?.name ?? '').toUpperCase() === importEmployeeType,
-    );
-  }, [employees, importEmployeeType]);
+    return employees.filter((emp) => {
+      const matchesCategory = importEmployeeType === 'ALL'
+        || (emp.employment_category?.name ?? '').toUpperCase() === importEmployeeType;
+      const matchesPosition = importPositionId === 'ALL'
+        || String(emp.position_id) === importPositionId;
+      return matchesCategory && matchesPosition;
+    });
+  }, [employees, importEmployeeType, importPositionId]);
 
   // ── Downloads a plain .xlsx template built entirely in-memory with ExcelJS ──
   const downloadTemplate = async () => {
@@ -339,7 +274,7 @@ export default function AttendanceMonitoringPage() {
     }
 
     if (templateEmployees.length === 0) {
-      toast({ variant: 'destructive', title: 'No Employees', description: `No ${importEmployeeType === 'ALL' ? '' : importEmployeeType.toLowerCase() + ' '}employees found to generate the template.` });
+      toast({ variant: 'destructive', title: 'No Employees', description: 'No employees match the selected employment category and position.' });
       return;
     }
 
@@ -365,11 +300,12 @@ export default function AttendanceMonitoringPage() {
 
       // ── Column definitions ──
       // A=employee_id (locked), B=employee_name (locked), C=department (locked),
-      // D=working_location (locked), E=overtime_hours (editable, blank), F=row_status (editable, P/A dropdown),
-      // G onward=one column per date
-      const DATE_START_COL = 7; // Column G (1-based)
+      // D=position (locked), E=working_location (locked), F=overtime_hours
+      // (editable, blank), G=row_status (editable, P/A dropdown), H onward=one
+      // column per date
+      const DATE_START_COL = 8; // Column H (1-based)
       // ── Header row ──
-      const headers = ['employee_id', 'employee_name', 'department', 'working_location', 'overtime_hours', 'row_status', ...dates];
+      const headers = ['employee_id', 'employee_name', 'department', 'position', 'working_location', 'overtime_hours', 'row_status', ...dates];
       const headerRow = sheet.getRow(1);
       headers.forEach((h, i) => {
         const cell = headerRow.getCell(i + 1);
@@ -406,21 +342,26 @@ export default function AttendanceMonitoringPage() {
         cellC.value = emp.department?.name ?? '';
         cellC.protection = { locked: true };
 
-        // D: working_location (locked)
+        // D: position (locked)
         const cellD = row.getCell(4);
-        cellD.value = emp.working_location?.name ?? emp.working_locations?.name ?? '';
+        cellD.value = emp.position?.name ?? '';
         cellD.protection = { locked: true };
 
-        // E: overtime_hours (editable, blank)
+        // E: working_location (locked)
         const cellE = row.getCell(5);
-        cellE.value = '';
-        cellE.protection = { locked: false };
+        cellE.value = emp.working_location?.name ?? emp.working_locations?.name ?? '';
+        cellE.protection = { locked: true };
 
-        // F: row_status (editable, P/A dropdown)
+        // F: overtime_hours (editable, blank)
         const cellF = row.getCell(6);
         cellF.value = '';
         cellF.protection = { locked: false };
-        cellF.dataValidation = {
+
+        // G: row_status (editable, P/A dropdown)
+        const cellG = row.getCell(7);
+        cellG.value = '';
+        cellG.protection = { locked: false };
+        cellG.dataValidation = {
           type: 'list',
           formulae: ['"P,A"'],
           allowBlank: true,
@@ -429,14 +370,14 @@ export default function AttendanceMonitoringPage() {
           error: 'Only P (Present) or A (Absent) are allowed.',
         };
 
-        // Date columns mirror row_status (F) via formula so typing P/A once
+        // Date columns mirror row_status (G) via formula so typing P/A once
         // fills the row in Excel. On re-import SheetJS may hand back the raw
         // formula string instead of its cached value, so the parser below
         // treats a leading "=" as blank and falls back to row_status.
         dates.forEach((_, dIdx) => {
           const col = DATE_START_COL + dIdx;
           const cell = row.getCell(col);
-          cell.value = { formula: `IF($F$${rowNum}="","",$F$${rowNum})` };
+          cell.value = { formula: `IF($G$${rowNum}="","",$G$${rowNum})` };
           cell.protection = { locked: false };
           cell.dataValidation = {
             type: 'list',
@@ -453,9 +394,10 @@ export default function AttendanceMonitoringPage() {
       sheet.getColumn(1).width = 14;  // employee_id
       sheet.getColumn(2).width = 30;  // employee_name
       sheet.getColumn(3).width = 25;  // department
-      sheet.getColumn(4).width = 25;  // working_location
-      sheet.getColumn(5).width = 16;  // overtime_hours
-      sheet.getColumn(6).width = 14;  // row_status
+      sheet.getColumn(4).width = 20;  // position
+      sheet.getColumn(5).width = 25;  // working_location
+      sheet.getColumn(6).width = 16;  // overtime_hours
+      sheet.getColumn(7).width = 14;  // row_status
       dates.forEach((_, dIdx) => {
         sheet.getColumn(DATE_START_COL + dIdx).width = 14;
       });
@@ -481,13 +423,14 @@ export default function AttendanceMonitoringPage() {
       const a = document.createElement('a');
       a.href = url;
       const typeSuffix = importEmployeeType === 'ALL' ? '' : `_${importEmployeeType.toLowerCase()}`;
-      a.download = `attendance_template_${importDateFrom}_to_${importDateTo}${typeSuffix}.xlsx`;
+      const positionSuffix = importPositionId === 'ALL' ? '' : `_${(positions.find(p => p.id === importPositionId)?.name ?? '').toLowerCase().replace(/\s+/g, '-')}`;
+      a.download = `attendance_template_${importDateFrom}_to_${importDateTo}${typeSuffix}${positionSuffix}.xlsx`;
       a.click();
       URL.revokeObjectURL(url);
 
       toast({
         title: 'Template Downloaded',
-        description: `${templateEmployees.length} ${importEmployeeType === 'ALL' ? '' : importEmployeeType.toLowerCase() + ' '}employee(s) included. Type P/A in row_status (E) to auto-fill all dates, or fill per-date cells individually.`,
+        description: `${templateEmployees.length} employee(s) included. Type P/A in row_status (G) to auto-fill all dates, or fill per-date cells individually.`,
       });
     } catch (err) {
       console.error('Template generation error:', err);
@@ -523,25 +466,29 @@ export default function AttendanceMonitoringPage() {
         const headers: string[] = raw[0].map((h: any) => String(h ?? '').trim());
 
         // Column layout: A employee_id, B employee_name, C department,
-        // D working_location, E overtime_hours, F row_status, G+ dates
+        // D position, E working_location, F overtime_hours, G row_status, H+ dates
         if (headers[0] !== 'employee_id' || headers[1] !== 'employee_name' || headers[2] !== 'department') {
           toast({ variant: 'destructive', title: 'Import Rejected', description: 'Columns A, B, C must be employee_id, employee_name, department.' });
           return;
         }
-        if (headers[3] !== 'working_location') {
-          toast({ variant: 'destructive', title: 'Import Rejected', description: 'Column D must be working_location.' });
+        if (headers[3] !== 'position') {
+          toast({ variant: 'destructive', title: 'Import Rejected', description: 'Column D must be position.' });
           return;
         }
-        if (headers[4] !== 'overtime_hours') {
-          toast({ variant: 'destructive', title: 'Import Rejected', description: 'Column E must be overtime_hours.' });
+        if (headers[4] !== 'working_location') {
+          toast({ variant: 'destructive', title: 'Import Rejected', description: 'Column E must be working_location.' });
           return;
         }
-        if (headers[5] !== 'row_status') {
-          toast({ variant: 'destructive', title: 'Import Rejected', description: 'Column F must be row_status.' });
+        if (headers[5] !== 'overtime_hours') {
+          toast({ variant: 'destructive', title: 'Import Rejected', description: 'Column F must be overtime_hours.' });
+          return;
+        }
+        if (headers[6] !== 'row_status') {
+          toast({ variant: 'destructive', title: 'Import Rejected', description: 'Column G must be row_status.' });
           return;
         }
 
-        const dateHeaders = headers.slice(6);
+        const dateHeaders = headers.slice(7);
         if (dateHeaders.length === 0) {
           toast({ variant: 'destructive', title: 'Import Rejected', description: 'No date columns found in template.' });
           return;
@@ -576,7 +523,8 @@ export default function AttendanceMonitoringPage() {
           const empIdRaw = row[0];
           const employeeNameRaw = row[1];
           const departmentRaw = row[2];
-          const workedHrs = row[4];
+          const positionRaw = row[3];
+          const workedHrs = row[5];
 
           if (empIdRaw === undefined || empIdRaw === null || empIdRaw === '') continue;
 
@@ -619,16 +567,27 @@ export default function AttendanceMonitoringPage() {
             return;
           }
 
+          const expectedPosition = expectedEmployee.position?.name ?? '';
+          const positionStr = String(positionRaw ?? '').trim();
+          if (positionStr && positionStr !== expectedPosition) {
+            toast({
+              variant: 'destructive',
+              title: 'Validation Error',
+              description: `Row ${rowNum}: position must remain unchanged from the downloaded template. Expected ${expectedPosition || '(none)'}.`,
+            });
+            return;
+          }
+
           const overtimeHours = workedHrs !== '' && workedHrs != null ? Number(workedHrs) : undefined;
 
-          const rowStatusRaw = row[5];
+          const rowStatusRaw = row[6];
           const rowStatusStr = rowStatusRaw !== undefined && rowStatusRaw !== null ? String(rowStatusRaw).trim().toUpperCase() : '';
 
           let overtimeAssigned = false;
 
           for (let d = 0; d < dateHeaders.length; d++) {
             const dateHeaderRaw = dateHeaders[d];
-            const cellValue = row[6 + d]; // date columns start at index 6
+            const cellValue = row[7 + d]; // date columns start at index 7
             const parsedDate = parsedDateHeaders[d];
 
             // Convert cell value to string, or empty if missing.
@@ -764,44 +723,10 @@ export default function AttendanceMonitoringPage() {
     reader.readAsBinaryString(importFile);
   };
 
-  // ── Today's live snapshot export (LOG view). No date range needed —
-  // this is always "right now". ──
-  const handleExport = (type: 'csv' | 'excel') => {
-    const dataToExport = filteredEmployees.map(emp => {
-      const rec = todayRecordsMap[emp.id];
-      return {
-        ...emp,
-        attendance_status: rec?.attendance_status ?? 'NOT LOGGED',
-        attendance_date: todayStr,
-        overtime_hours: rec?.overtime_hours,
-      };
-    });
-
-    const exportData = dataToExport.map((rec: any) => ({
-      Personnel: `${rec.first_name ?? ''} ${rec.last_name ?? ''}`,
-      Department: rec.department?.name,
-      Category: rec.employment_category?.name,
-      Date: dayjs(rec.attendance_date).tz('Africa/Kigali').format('DD/MM/YYYY'),
-      Status: rec.attendance_status,
-      'Overtime Hours': rec.overtime_hours ?? '',
-    }));
-
-    const dateStr = new Date().toISOString().split('T')[0];
-    const path = `REG_Pay/time_records/attendance_export/${dateStr}`;
-
-    if (type === 'csv') exportToCSV(exportData, path);
-    else if (type === 'excel') exportToExcel(exportData, path);
-  };
-
-  // ── Entry point for the Export dropdown. LOG view exports today's
-  // snapshot immediately (no range makes sense there). HISTORY view
-  // opens the date-range picker, since "history" is meaningless without
-  // choosing a period. ──
+  // ── Entry point for the Export dropdown. Attendance is history-only now,
+  // so this always opens the date-range picker — "history" is meaningless
+  // without choosing a period. ──
   const handleExportClick = (type: 'csv' | 'excel') => {
-    if (viewMode === 'LOG') {
-      handleExport(type);
-      return;
-    }
     setExportType(type);
     setExportPreset('CUSTOM');
     setExportDateFrom('');
@@ -810,10 +735,8 @@ export default function AttendanceMonitoringPage() {
   };
 
   // Resolves the History view's active preset into a concrete [from, to]
-  // range. Previously the History tab always showed a hardcoded last-5-days
-  // window with no way to see further back; this lets the user pick Last
-  // Week / Last Month / Last Year, or any custom range, same as the export
-  // dialog already allowed for downloads.
+  // range. Lets the user pick Last 5 Days / Last Week / Last Month / Last
+  // Year, or any custom range, same as the export dialog already allows.
   const resolveHistoryRange = (): { from: dayjs.Dayjs; to: dayjs.Dayjs; label: string } | null => {
     const yesterday = getRwandaTime().subtract(1, 'day').endOf('day');
     if (historyPreset === 'LAST_5_DAYS') {
@@ -938,7 +861,8 @@ export default function AttendanceMonitoringPage() {
       const exportData = recordsInRange.map((rec: any) => ({
         Personnel: `${rec.employee?.first_name ?? ''} ${rec.employee?.last_name ?? ''}`.trim() || rec.employee_id,
         Department: rec.employee?.department?.name ?? 'Unassigned',
-        Category: rec.employee?.employment_category?.name ?? '',
+        Position: rec.employee?.position?.name ?? '',
+        'Employment Category': rec.employee?.employment_category?.name ?? '',
         Date: dayjs(rec.attendance_date).tz('Africa/Kigali').format('DD/MM/YYYY'),
         Status: rec.attendance_status,
         'Overtime Hours': rec.overtime_hours ?? '',
@@ -964,7 +888,7 @@ export default function AttendanceMonitoringPage() {
     <div className="space-y-8">
       <PageHeader
         title="Attendance Systems"
-        description="High-performance workforce logging & historical audit."
+        description="Attendance history, filterable by date range, employment category, position, and employee."
         actions={
           <>
             {canViewAllLocations && (
@@ -979,7 +903,6 @@ export default function AttendanceMonitoringPage() {
                 </SelectContent>
               </Select>
             )}
-            <AttendanceSyncPopover />
             <PermissionGate permission="attendance.create">
               <Button
                 variant="outline"
@@ -989,20 +912,6 @@ export default function AttendanceMonitoringPage() {
                 <Upload01 className="mr-2 h-4 w-4" size={16} /> Bulk Import
               </Button>
             </PermissionGate>
-            <Button
-              variant={viewMode === 'LOG' ? 'default' : 'outline'}
-              onClick={() => setViewMode('LOG')}
-              className="h-11"
-            >
-              <UserCheck01 className="mr-2 h-4 w-4" size={16} /> Daily Logger
-            </Button>
-            <Button
-              variant={viewMode === 'HISTORY' ? 'default' : 'outline'}
-              onClick={() => setViewMode('HISTORY')}
-              className="h-11"
-            >
-              <ClockRewind className="mr-2 h-4 w-4" size={16} /> Attendance History
-            </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" className="h-11 shadow-sm"><Download01 className="mr-2 h-4 w-4" size={16} /> Export</Button>
@@ -1018,40 +927,22 @@ export default function AttendanceMonitoringPage() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <StatCard
-          icon={<Clock className="h-6 w-6" size={24} />}
-          label="Pending"
-          value={filteredEmployees.length - Object.keys(todayRecordsMap).length}
-          tone="warning"
+          icon={<Users01 className="h-6 w-6" size={24} />}
+          label="Employees in view"
+          value={historyEmployeeOptions.length}
+          tone="primary"
         />
-        {/* Dark hero treatment doesn't fit StatCard's light-card look, so it stays a
-            custom card using the accent token directly instead of being forced into StatCard. */}
-        <div className="bg-accent text-accent-foreground p-6 rounded-3xl shadow-lg flex items-center gap-4">
-            <div className="h-12 w-12 rounded-2xl bg-white/10 flex items-center justify-center">
-                <UploadCloud01 className="h-6 w-6 text-primary" size={24} />
-            </div>
-            <div>
-                <p className="text-xs font-bold text-accent-foreground/50 uppercase tracking-widest">Unsynced</p>
-                <div className="flex items-center gap-3">
-                    <p className="text-2xl font-bold">{Object.keys(pendingSync).length}</p>
-                    {Object.keys(pendingSync).length > 0 && (
-                        <Button
-                            type="button"
-                            size="sm"
-                            className="h-8 bg-primary hover:bg-primary/90 text-[10px] font-bold px-3 rounded-lg animate-pulse shadow-lg shadow-primary/20"
-                            onClick={(e) => { e.preventDefault(); handleSync(); }}
-                            disabled={syncState.isSyncing}
-                        >
-                            {syncState.isSyncing ? 'Syncing...' : 'Sync Now'}
-                        </Button>
-                    )}
-                </div>
-            </div>
-        </div>
+        <StatCard
+          icon={<ClockRewind className="h-6 w-6" size={24} />}
+          label="Attendance records loaded"
+          value={filteredHistory.length}
+          tone="accent"
+        />
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <TabsList className="bg-secondary/20 p-1 rounded-xl">
+          <TabsList className="bg-secondary/20 p-1 rounded-lg">
             <TabsTrigger value="ALL" className="rounded-lg font-bold text-xs px-6">All Staff</TabsTrigger>
             <TabsTrigger value="MONTHLY" className="rounded-lg font-bold text-xs px-6">Monthly</TabsTrigger>
             <TabsTrigger value="DAILY" className="rounded-lg font-bold text-xs px-6">Daily</TabsTrigger>
@@ -1062,7 +953,7 @@ export default function AttendanceMonitoringPage() {
             <SearchMd className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" size={16} />
             <Input
               placeholder="Filter by name..."
-              className="pl-10 h-11 bg-card border-none shadow-sm rounded-xl"
+              className="pl-10 h-11 bg-card border border-border shadow-sm rounded-lg"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />
@@ -1070,135 +961,124 @@ export default function AttendanceMonitoringPage() {
         </div>
 
         <TabsContent value={activeTab} className="m-0">
-          <div className="bg-card rounded-3xl border shadow-sm overflow-hidden">
-            {viewMode === 'LOG' ? (
-              <Table>
-                <TableHeader className="bg-muted">
-                  <TableRow>
-                    <TableHead className="font-bold">Personnel</TableHead>
-                    <TableHead className="font-bold">Status Today</TableHead>
-                    <TableHead className="font-bold">Overtime Hours</TableHead>
-                    {canLogAttendance && <TableHead className="font-bold text-right">Actions</TableHead>}
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredEmployees.length > 0 ? filteredEmployees.map((emp) => {
-                    const rec = todayRecordsMap[emp.id];
-                    return (
-                      <AttendanceRow
-                        key={emp.uuid}
-                        employee={emp}
-                        record={rec}
-                        onMark={handleMarkAttendance}
-                        canLogAttendance={canLogAttendance}
-                      />
-                    );
-                  }) : (
-                    <TableRow>
-                      <TableCell colSpan={canLogAttendance ? 4 : 3} className="text-center py-20 text-muted-foreground italic">No employees found.</TableCell>
-                    </TableRow>
-                  )}
-                </TableBody>
-              </Table>
-            ) : (
-              <>
-              <div className="flex flex-wrap items-center gap-2 p-4 border-b bg-muted/50">
-                <span className="text-xs font-bold text-muted-foreground mr-1">Viewing:</span>
-                {([
-                  ['LAST_5_DAYS', 'Last 5 Days'],
-                  ['LAST_WEEK', 'Last 7 Days'],
-                  ['LAST_MONTH', 'Last Month'],
-                  ['LAST_YEAR', 'Last Year'],
-                  ['CUSTOM', 'Custom Range'],
-                ] as const).map(([value, label]) => (
-                  <Button
-                    key={value}
-                    type="button"
-                    size="sm"
-                    variant={historyPreset === value ? 'default' : 'outline'}
-                    className="h-8 text-xs rounded-lg"
-                    onClick={() => setHistoryPreset(value)}
-                  >
-                    {label}
-                  </Button>
-                ))}
-                {historyPreset === 'CUSTOM' && (
-                  <div className="flex items-center gap-2 ml-1">
-                    <Input type="date" className="h-8 w-36 text-xs" value={historyDateFrom} onChange={(e) => setHistoryDateFrom(e.target.value)} />
-                    <span className="text-xs text-muted-foreground">to</span>
-                    <Input type="date" className="h-8 w-36 text-xs" value={historyDateTo} onChange={(e) => setHistoryDateTo(e.target.value)} />
-                  </div>
-                )}
-                <div className="w-full sm:w-64">
-                  <Select value={historyEmployeeId} onValueChange={setHistoryEmployeeId}>
-                    <SelectTrigger className="h-8 bg-card text-xs">
-                      <SelectValue placeholder="All employees" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All employees</SelectItem>
-                      {historyEmployeeOptions.map((emp) => (
-                        <SelectItem key={emp.uuid ?? emp.id} value={String(emp.id)}>
-                          {`${emp.first_name ?? ''} ${emp.last_name ?? ''}`.trim() || emp.national_id || emp.id}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
+          <div className="bg-card rounded-lg border shadow-sm overflow-hidden">
+            <div className="flex flex-wrap items-center gap-2 p-4 border-b bg-muted/50">
+              <span className="text-xs font-bold text-muted-foreground mr-1">Viewing:</span>
+              {([
+                ['LAST_5_DAYS', 'Last 5 Days'],
+                ['LAST_WEEK', 'Last 7 Days'],
+                ['LAST_MONTH', 'Last Month'],
+                ['LAST_YEAR', 'Last Year'],
+                ['CUSTOM', 'Custom Range'],
+              ] as const).map(([value, label]) => (
                 <Button
+                  key={value}
                   type="button"
                   size="sm"
-                  className="h-8 text-xs rounded-lg ml-auto"
-                  disabled={historyLoading}
-                  onClick={fetchHistoryRecords}
+                  variant={historyPreset === value ? 'default' : 'outline'}
+                  className="h-8 text-xs rounded-lg"
+                  onClick={() => setHistoryPreset(value)}
                 >
-                  {historyLoading ? 'Loading...' : 'Load History'}
+                  {label}
                 </Button>
-              </div>
-              <div className="overflow-x-auto">
-              <Table>
-                <TableHeader className="bg-muted">
-                  <TableRow>
-                    <TableHead className="font-bold sticky left-0 bg-muted z-10 min-w-[180px]">Full Name</TableHead>
-                    <TableHead className="font-bold min-w-[140px]">Department</TableHead>
-                    {historyMatrix.dates.map((date) => (
-                      <TableHead key={date} className="font-bold text-center whitespace-nowrap min-w-[60px]">
-                        {dayjs(date).format('DD/MM')}
-                      </TableHead>
+              ))}
+              {historyPreset === 'CUSTOM' && (
+                <div className="flex items-center gap-2 ml-1">
+                  <Input type="date" className="h-8 w-36 text-xs" value={historyDateFrom} onChange={(e) => setHistoryDateFrom(e.target.value)} />
+                  <span className="text-xs text-muted-foreground">to</span>
+                  <Input type="date" className="h-8 w-36 text-xs" value={historyDateTo} onChange={(e) => setHistoryDateTo(e.target.value)} />
+                </div>
+              )}
+              <div className="w-full sm:w-48">
+                <Select value={historyPositionId} onValueChange={setHistoryPositionId}>
+                  <SelectTrigger className="h-8 bg-card text-xs">
+                    <SelectValue placeholder="All positions" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All positions</SelectItem>
+                    {positions.map((pos) => (
+                      <SelectItem key={pos.uuid} value={pos.uuid}>
+                        {pos.name}
+                      </SelectItem>
                     ))}
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {historyMatrix.rows.length > 0 ? historyMatrix.rows.map((row) => (
-                    <TableRow key={row.employeeId} className="hover:bg-secondary/20 transition-colors">
-                      <TableCell className="font-semibold sticky left-0 bg-card z-10">{row.name}</TableCell>
-                      <TableCell>{row.department}</TableCell>
-                      {historyMatrix.dates.map((date) => {
-                        const status = row.statuses[date];
-                        return (
-                          <TableCell key={date} className="text-center">
-                            {status === 'PRESENT' ? (
-                              <StatusBadge tone="success" label={PRESENT_SYMBOL} className="px-1.5 py-0" />
-                            ) : status === 'ABSENT' ? (
-                              <StatusBadge tone="destructive" label={ABSENT_SYMBOL} className="px-1.5 py-0" />
-                            ) : (
-                              <span className="text-muted-foreground text-xs">—</span>
-                            )}
-                          </TableCell>
-                        );
-                      })}
-                    </TableRow>
-                  )) : (
-                    <TableRow>
-                      <TableCell colSpan={Math.max(3, 2 + historyMatrix.dates.length)} className="text-center py-20 text-muted-foreground italic">
-                        No historical logs found for the selected range. Try a different preset or Load History again.
-                      </TableCell>
-                    </TableRow>
-                  )}
-                </TableBody>
-              </Table>
+                  </SelectContent>
+                </Select>
               </div>
-              </>
-            )}
+              <div className="w-full sm:w-64">
+                <Select value={historyEmployeeId} onValueChange={setHistoryEmployeeId}>
+                  <SelectTrigger className="h-8 bg-card text-xs">
+                    <SelectValue placeholder="All employees" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All employees</SelectItem>
+                    {historyEmployeeOptions.map((emp) => (
+                      <SelectItem key={emp.uuid ?? emp.id} value={String(emp.id)}>
+                        {`${emp.first_name ?? ''} ${emp.last_name ?? ''}`.trim() || emp.national_id || 'Unnamed employee'}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                className="h-8 text-xs rounded-lg ml-auto"
+                disabled={historyLoading}
+                onClick={fetchHistoryRecords}
+              >
+                {historyLoading ? 'Loading...' : 'Load History'}
+              </Button>
+            </div>
+            <div className="overflow-x-auto">
+            <Table>
+              <TableHeader className="bg-muted">
+                <TableRow>
+                  <TableHead className="font-bold sticky left-0 bg-muted z-10 min-w-[180px]">Full Name</TableHead>
+                  <TableHead className="font-bold min-w-[140px]">Department</TableHead>
+                  {historyMatrix.dates.map((date) => (
+                    <TableHead key={date} className="font-bold text-center whitespace-nowrap min-w-[60px]">
+                      {dayjs(date).format('DD/MM')}
+                    </TableHead>
+                  ))}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {loading ? (
+                  <TableStateRow
+                    colSpan={Math.max(3, 2 + historyMatrix.dates.length)}
+                    tone="info"
+                    title="Loading attendance history"
+                    description="Preparing records for the selected date range."
+                  />
+                ) : historyMatrix.rows.length > 0 ? historyMatrix.rows.map((row) => (
+                  <TableRow key={row.employeeId} className="hover:bg-secondary/20 transition-colors">
+                    <TableCell className="font-semibold sticky left-0 bg-card z-10">{row.name}</TableCell>
+                    <TableCell>{row.department}</TableCell>
+                    {historyMatrix.dates.map((date) => {
+                      const status = row.statuses[date];
+                      return (
+                        <TableCell key={date} className="text-center">
+                          {status === 'PRESENT' ? (
+                            <StatusBadge tone="success" label={PRESENT_SYMBOL} className="px-1.5 py-0" />
+                          ) : status === 'ABSENT' ? (
+                            <StatusBadge tone="destructive" label={ABSENT_SYMBOL} className="px-1.5 py-0" />
+                          ) : (
+                            <span className="text-muted-foreground text-xs">—</span>
+                          )}
+                        </TableCell>
+                      );
+                    })}
+                  </TableRow>
+                )) : (
+                  <TableStateRow
+                    colSpan={Math.max(3, 2 + historyMatrix.dates.length)}
+                    title="No historical logs found"
+                    description="Try another date preset, widen the range, or use Bulk Import to record attendance for this period."
+                  />
+                )}
+              </TableBody>
+            </Table>
+            </div>
           </div>
         </TabsContent>
       </Tabs>
@@ -1208,13 +1088,14 @@ export default function AttendanceMonitoringPage() {
         if (!open) {
           setImportFile(null);
           setImportEmployeeType('ALL');
+          setImportPositionId('ALL');
         }
       }}>
-        <DialogContent className="max-w-md bg-card rounded-3xl p-6 border shadow-lg">
+        <DialogContent className="max-w-md bg-card rounded-lg p-6 border shadow-sm">
           <DialogHeader>
             <DialogTitle className="text-xl font-bold">Bulk Import Attendance</DialogTitle>
             <DialogDescription className="text-sm text-muted-foreground">
-              Select a date range to generate a template, or upload a filled template — only rows/dates that changed will be imported.
+              Select a date range to generate a template, or upload a filled template — only rows/dates that changed will be imported. This is the only way to record attendance.
             </DialogDescription>
           </DialogHeader>
 
@@ -1226,7 +1107,7 @@ export default function AttendanceMonitoringPage() {
                   type="date"
                   value={importDateFrom}
                   onChange={(e) => setImportDateFrom(e.target.value)}
-                  className="h-10 rounded-xl"
+                  className="h-10 rounded-lg"
                 />
               </div>
               <div className="space-y-1">
@@ -1235,17 +1116,17 @@ export default function AttendanceMonitoringPage() {
                   type="date"
                   value={importDateTo}
                   onChange={(e) => setImportDateTo(e.target.value)}
-                  className="h-10 rounded-xl"
+                  className="h-10 rounded-lg"
                 />
               </div>
             </div>
 
-            <div className="space-y-2 bg-muted p-4 rounded-2xl border border-border">
+            <div className="space-y-2 bg-muted p-4 rounded-lg border border-border">
               <div className="flex justify-between items-center">
                 <div className="space-y-0.5">
                   <p className="text-xs font-bold text-foreground">1. Download Template</p>
                   <p className="text-[10px] text-muted-foreground">
-                    {templateEmployees.length} {importEmployeeType === 'ALL' ? '' : importEmployeeType.toLowerCase() + ' '}employee(s) and selected dates.
+                    {templateEmployees.length} employee(s) and selected dates.
                   </p>
                 </div>
                 <Button
@@ -1254,31 +1135,47 @@ export default function AttendanceMonitoringPage() {
                   variant="outline"
                   onClick={downloadTemplate}
                   disabled={!importDateFrom || !importDateTo}
-                  className="h-9 rounded-xl font-semibold text-xs"
+                  className="h-9 rounded-lg font-semibold text-xs"
                 >
                   <Download01 className="mr-1 h-3.5 w-3.5" size={14} /> Download
                 </Button>
               </div>
-              <div className="space-y-1">
-                <label className="text-[10px] font-semibold text-muted-foreground">Employee Type</label>
-                <Select value={importEmployeeType} onValueChange={(value) => setImportEmployeeType(value as typeof importEmployeeType)}>
-                  <SelectTrigger className="h-9 rounded-xl bg-card text-xs">
-                    <SelectValue placeholder="Employee type" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="ALL">All Employees</SelectItem>
-                    <SelectItem value="MONTHLY">Monthly</SelectItem>
-                    <SelectItem value="DAILY">Daily</SelectItem>
-                    <SelectItem value="CUSTOM">Custom</SelectItem>
-                  </SelectContent>
-                </Select>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-semibold text-muted-foreground">Employment Category</label>
+                  <Select value={importEmployeeType} onValueChange={(value) => setImportEmployeeType(value as typeof importEmployeeType)}>
+                    <SelectTrigger className="h-9 rounded-lg bg-card text-xs">
+                      <SelectValue placeholder="Employment category" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="ALL">All Categories</SelectItem>
+                      <SelectItem value="MONTHLY">Monthly</SelectItem>
+                      <SelectItem value="DAILY">Daily</SelectItem>
+                      <SelectItem value="CUSTOM">Custom</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-semibold text-muted-foreground">Position</label>
+                  <Select value={importPositionId} onValueChange={setImportPositionId}>
+                    <SelectTrigger className="h-9 rounded-lg bg-card text-xs">
+                      <SelectValue placeholder="Position" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="ALL">All Positions</SelectItem>
+                      {positions.map((position) => (
+                        <SelectItem key={position.uuid ?? position.id} value={String(position.id)}>{position.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
             </div>
 
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-foreground">2. Upload Template File</label>
               <div
-                className="border-2 border-dashed border-border hover:border-muted-foreground/30 transition-colors rounded-2xl p-6 text-center cursor-pointer bg-muted/50"
+                className="border-2 border-dashed border-border hover:border-muted-foreground/30 transition-colors rounded-lg p-6 text-center cursor-pointer bg-muted/50"
                 onClick={() => {
                   const el = document.getElementById('dialog-file-input');
                   el?.click();
@@ -1310,14 +1207,14 @@ export default function AttendanceMonitoringPage() {
                 setIsImportOpen(false);
                 setImportFile(null);
               }}
-              className="h-10 rounded-xl text-xs font-semibold"
+              className="h-10 rounded-lg text-xs font-semibold"
             >
               Cancel
             </Button>
             <Button
               onClick={handleImportUpload}
               disabled={!importFile || employees.length === 0}
-              className="h-10 rounded-xl text-xs font-semibold px-6 bg-primary hover:bg-primary/90"
+              className="h-10 rounded-lg text-xs font-semibold px-6 bg-primary hover:bg-primary/90"
             >
               Upload & Import
             </Button>
@@ -1329,7 +1226,7 @@ export default function AttendanceMonitoringPage() {
         setIsExportDialogOpen(open);
         if (!open) { setExportType(null); setExportDateFrom(''); setExportDateTo(''); }
       }}>
-        <DialogContent className="max-w-md bg-card rounded-3xl p-6 border shadow-lg">
+        <DialogContent className="max-w-md bg-card rounded-lg p-6 border shadow-sm">
           <DialogHeader>
             <DialogTitle className="text-xl font-bold">Export Attendance History</DialogTitle>
             <DialogDescription className="text-sm text-muted-foreground">
@@ -1342,7 +1239,7 @@ export default function AttendanceMonitoringPage() {
               <Button
                 type="button"
                 variant={exportPreset === 'LAST_MONTH' ? 'default' : 'outline'}
-                className="h-10 rounded-xl text-xs font-semibold"
+                className="h-10 rounded-lg text-xs font-semibold"
                 onClick={() => setExportPreset('LAST_MONTH')}
               >
                 Last Month
@@ -1350,7 +1247,7 @@ export default function AttendanceMonitoringPage() {
               <Button
                 type="button"
                 variant={exportPreset === 'LAST_YEAR' ? 'default' : 'outline'}
-                className="h-10 rounded-xl text-xs font-semibold"
+                className="h-10 rounded-lg text-xs font-semibold"
                 onClick={() => setExportPreset('LAST_YEAR')}
               >
                 Last Year
@@ -1358,7 +1255,7 @@ export default function AttendanceMonitoringPage() {
               <Button
                 type="button"
                 variant={exportPreset === 'CUSTOM' ? 'default' : 'outline'}
-                className="h-10 rounded-xl text-xs font-semibold"
+                className="h-10 rounded-lg text-xs font-semibold"
                 onClick={() => setExportPreset('CUSTOM')}
               >
                 Custom Range
@@ -1366,7 +1263,7 @@ export default function AttendanceMonitoringPage() {
               <Button
                 type="button"
                 variant={exportPreset === 'SINGLE_DAY' ? 'default' : 'outline'}
-                className="h-10 rounded-xl text-xs font-semibold"
+                className="h-10 rounded-lg text-xs font-semibold"
                 onClick={() => setExportPreset('SINGLE_DAY')}
               >
                 Single Day
@@ -1381,7 +1278,7 @@ export default function AttendanceMonitoringPage() {
                     type="date"
                     value={exportDateFrom}
                     onChange={(e) => setExportDateFrom(e.target.value)}
-                    className="h-10 rounded-xl"
+                    className="h-10 rounded-lg"
                   />
                 </div>
                 <div className="space-y-1">
@@ -1390,7 +1287,7 @@ export default function AttendanceMonitoringPage() {
                     type="date"
                     value={exportDateTo}
                     onChange={(e) => setExportDateTo(e.target.value)}
-                    className="h-10 rounded-xl"
+                    className="h-10 rounded-lg"
                   />
                 </div>
               </div>
@@ -1403,13 +1300,13 @@ export default function AttendanceMonitoringPage() {
                   type="date"
                   value={exportDateFrom}
                   onChange={(e) => setExportDateFrom(e.target.value)}
-                  className="h-10 rounded-xl"
+                  className="h-10 rounded-lg"
                 />
               </div>
             )}
 
             {(exportPreset === 'LAST_MONTH' || exportPreset === 'LAST_YEAR') && (
-              <p className="text-xs text-muted-foreground bg-muted rounded-xl p-3">
+              <p className="text-xs text-muted-foreground bg-muted rounded-lg p-3">
                 {exportPreset === 'LAST_MONTH'
                   ? `Exporting: ${dayjs().subtract(1, 'month').format('MMMM YYYY')}`
                   : `Exporting: ${dayjs().subtract(1, 'year').format('YYYY')}`}
@@ -1421,14 +1318,14 @@ export default function AttendanceMonitoringPage() {
             <Button
               variant="ghost"
               onClick={() => setIsExportDialogOpen(false)}
-              className="h-10 rounded-xl text-xs font-semibold"
+              className="h-10 rounded-lg text-xs font-semibold"
             >
               Cancel
             </Button>
             <Button
               onClick={performHistoryExport}
               disabled={loading}
-              className="h-10 rounded-xl text-xs font-semibold px-6 bg-primary hover:bg-primary/90"
+              className="h-10 rounded-lg text-xs font-semibold px-6 bg-primary hover:bg-primary/90"
             >
               {loading ? 'Exporting...' : 'Export'}
             </Button>
@@ -1436,86 +1333,5 @@ export default function AttendanceMonitoringPage() {
         </DialogContent>
       </Dialog>
     </div>
-  );
-}
-
-function AttendanceRow({
-  employee,
-  record,
-  onMark,
-  canLogAttendance,
-}: {
-  employee: any;
-  record: any;
-  onMark: any;
-  canLogAttendance: boolean;
-}) {
-  const [overtimeHours, setOvertimeHours] = useState<number | ''>('');
-
-  useEffect(() => {
-    if (record?.overtime_hours) setOvertimeHours(Number(record.overtime_hours));
-  }, [record]);
-
-  const hasOvertime = typeof overtimeHours === 'number' && overtimeHours > 0;
-
-  return (
-    <TableRow className="hover:bg-secondary/10 transition-colors">
-      <TableCell>
-        <div className="flex flex-col">
-          <span className="font-bold text-foreground">{employee.first_name} {employee.last_name}</span>
-          <span className="text-[10px] text-muted-foreground uppercase">{employee.employment_category?.name || 'DAILY'}</span>
-        </div>
-      </TableCell>
-      <TableCell>
-        {record ? (
-          <StatusBadge
-            tone={record.attendance_status === 'PRESENT' ? 'success' : 'destructive'}
-            label={record.attendance_status}
-          />
-        ) : (
-          <Badge variant="outline" className="text-muted-foreground border-dashed">Awaiting</Badge>
-        )}
-      </TableCell>
-      <TableCell>
-        <div className="flex items-center gap-2">
-          <Input
-            type="number"
-            min={0}
-            placeholder="hrs"
-            value={overtimeHours}
-            onChange={(e) => setOvertimeHours(e.target.value === '' ? '' : Number(e.target.value))}
-            disabled={!canLogAttendance}
-            className="w-24 h-9 text-xs font-mono rounded-lg border-border"
-          />
-          {hasOvertime && (
-            <StatusBadge tone="warning" label="Overtime" className="text-[10px] whitespace-nowrap" />
-          )}
-        </div>
-      </TableCell>
-      {canLogAttendance && (
-        <TableCell className="text-right">
-          <div className="flex justify-end gap-2">
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className={`h-9 rounded-xl font-bold text-xs ${record?.attendance_status === 'PRESENT' ? 'bg-success text-success-foreground border-success' : 'hover:bg-success/10 text-success border-success/20'}`}
-              onClick={(e) => { e.preventDefault(); onMark(employee.id, 'PRESENT', overtimeHours || undefined); }}
-            >
-              Present
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className={`h-9 rounded-xl font-bold text-xs ${record?.attendance_status === 'ABSENT' ? 'bg-destructive text-destructive-foreground border-destructive' : 'hover:bg-destructive/10 text-destructive border-destructive/20'}`}
-              onClick={(e) => { e.preventDefault(); onMark(employee.id, 'ABSENT'); }}
-            >
-              Absent
-            </Button>
-          </div>
-        </TableCell>
-      )}
-    </TableRow>
   );
 }

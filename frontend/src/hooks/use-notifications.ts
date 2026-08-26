@@ -26,7 +26,7 @@ export function useNotifications(token: string) {
 
         function connect() {
             const encodedToken = encodeURIComponent(token);
-            const url = `${process.env.NEXT_PUBLIC_API_URL}/notifications/stream?token=${encodedToken}`;
+            const url = `${process.env.NEXT_PUBLIC_API_URL}/v1/notifications/stream?token=${encodedToken}`;
 
             console.log('Connecting to SSE...');
             es = new EventSource(url);

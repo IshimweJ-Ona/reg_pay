@@ -18,7 +18,9 @@ import {
   ArrowRight,
 } from '@untitledui/icons';
 import { Button } from '@/components/ui/button';
+import { Pagination } from '@/components/ui/pagination';
 import { PageHeader } from '@/components/layout/page-header';
+import { LoadingState, PermissionDeniedState, TableStateRow } from '@/components/layout/page-state';
 import { getAuditLogs, type AuditLogEntry } from '@/api/audit-logs';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/auth-context';
@@ -30,12 +32,19 @@ export default function AuditLogsPage() {
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [selectedAuditId, setSelectedAuditId] = useState<string>('');
   const [auditRefreshing, setAuditRefreshing] = useState(false);
+  const [auditPage, setAuditPage] = useState(1);
+  const AUDIT_PAGE_SIZE = 20;
   const { toast } = useToast();
   const { user, hasPermission } = useAuth();
   const router = useRouter();
   const canViewAudit = hasPermission('audit.view');
 
   const selectedAudit = auditLogs.find((log) => log.id === selectedAuditId) ?? null;
+  const auditTotalPages = Math.max(1, Math.ceil(auditLogs.length / AUDIT_PAGE_SIZE));
+  const paginatedAuditLogs = auditLogs.slice(
+    (auditPage - 1) * AUDIT_PAGE_SIZE,
+    auditPage * AUDIT_PAGE_SIZE,
+  );
 
   useEffect(() => {
     if (user && !canViewAudit) {
@@ -146,13 +155,21 @@ export default function AuditLogsPage() {
 
   if (!user || loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" size={32} />
-      </div>
+      <LoadingState
+        title="Loading audit trail"
+        description="Retrieving recent system activity, changed fields, and actor details."
+      />
     );
   }
 
-  if (!canViewAudit) return null;
+  if (!canViewAudit) {
+    return (
+      <PermissionDeniedState
+        title="Audit access required"
+        description="Only authorized administrators can view audit history and trace changes."
+      />
+    );
+  }
 
   return (
     <div className="max-w-[1800px] space-y-8">
@@ -161,7 +178,7 @@ export default function AuditLogsPage() {
         description="Monitor system-wide activity, data changes, and user operations with full traceability."
       />
 
-      <Card className="border-none shadow-sm">
+      <Card className="border border-border shadow-sm">
         <CardHeader>
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div>
@@ -191,7 +208,7 @@ export default function AuditLogsPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {auditLogs.length > 0 ? auditLogs.map((log) => (
+                  {paginatedAuditLogs.length > 0 ? paginatedAuditLogs.map((log) => (
                     <TableRow
                       key={log.id}
                       className={`cursor-pointer ${selectedAudit?.id === log.id ? 'bg-primary/5 font-semibold' : ''}`}
@@ -239,13 +256,22 @@ export default function AuditLogsPage() {
                       </TableCell>
                     </TableRow>
                   )) : (
-                    <TableRow>
-                      <TableCell colSpan={6} className="py-10 text-center text-muted-foreground">No audit logs found.</TableCell>
-                    </TableRow>
+                    <TableStateRow
+                      colSpan={6}
+                      title="No audit logs found"
+                      description="Recent system activity, changed fields, and actor details will appear here."
+                    />
                   )}
                 </TableBody>
               </Table>
             </ScrollArea>
+            <Pagination
+              page={auditPage}
+              totalPages={auditTotalPages}
+              total={auditLogs.length}
+              limit={AUDIT_PAGE_SIZE}
+              onPageChange={setAuditPage}
+            />
           </div>
 
           <div className="rounded-lg border bg-secondary/10 p-4">
@@ -254,13 +280,13 @@ export default function AuditLogsPage() {
                 <div className="space-y-5">
                   {/* Header */}
                   <div>
-                    <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Activity Detail</p>
+                    <p className="text-[10px] font-bold uppercase text-muted-foreground">Activity Detail</p>
                     <h3 className="text-sm font-bold text-foreground mt-1">{selectedAudit.activity_description}</h3>
                   </div>
 
                   {/* Actor Info */}
                   <div className="rounded-lg bg-card p-3 border shadow-sm">
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">Performed By</p>
+                    <p className="text-[10px] font-bold uppercase text-muted-foreground mb-2">Performed By</p>
                     <div className="flex items-center gap-3">
                       <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
                         <span className="font-bold text-primary text-sm">
@@ -323,7 +349,7 @@ export default function AuditLogsPage() {
                   {/* Affected Employee */}
                   {selectedAudit.employee && (
                     <div className="rounded-lg bg-card p-3 border shadow-sm">
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">Affected Employee</p>
+                      <p className="text-[10px] font-bold uppercase text-muted-foreground mb-2">Affected Employee</p>
                       <div className="flex items-center gap-2">
                         <User className="h-4 w-4 text-primary" size={16} />
                         <span className="font-semibold text-sm">{selectedAudit.employee.name}</span>
@@ -353,19 +379,19 @@ export default function AuditLogsPage() {
 
                   {selectedChangedFields.length > 0 && (
                     <div className="space-y-2">
-                      <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">What Changed</p>
+                      <p className="text-[10px] font-bold uppercase text-muted-foreground">What Changed</p>
                       <div className="overflow-hidden rounded-lg border bg-card">
                         {selectedChangedFields.map((field) => (
                           <div key={field} className="grid grid-cols-1 gap-2 border-b p-3 last:border-b-0">
                             <p className="text-xs font-bold text-foreground">{humanizeAuditKey(field)}</p>
                             <div className="grid grid-cols-[1fr_auto_1fr] items-start gap-2">
                               <div>
-                                <p className="mb-1 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Old</p>
+                                <p className="mb-1 text-[10px] font-bold uppercase text-muted-foreground">Old</p>
                                 {renderAuditValue(selectedAudit.old_values?.[field])}
                               </div>
                               <ArrowRight className="mt-5 h-4 w-4 text-muted-foreground" size={16} />
                               <div>
-                                <p className="mb-1 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">New</p>
+                                <p className="mb-1 text-[10px] font-bold uppercase text-muted-foreground">New</p>
                                 {renderAuditValue(selectedAudit.new_values?.[field])}
                               </div>
                             </div>
@@ -377,17 +403,17 @@ export default function AuditLogsPage() {
 
                   {selectedChangedFields.length === 0 && (selectedAudit.old_values || selectedAudit.new_values) && (
                     <div className="space-y-2">
-                      <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Recorded Data</p>
+                      <p className="text-[10px] font-bold uppercase text-muted-foreground">Recorded Data</p>
                       <div className="grid grid-cols-1 gap-3">
                         {selectedAudit.old_values && (
                           <div className="rounded-md bg-card p-2.5 border">
-                            <p className="mb-1 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Old Version</p>
+                            <p className="mb-1 text-[10px] font-bold uppercase text-muted-foreground">Old Version</p>
                             {renderAuditValue(selectedAudit.old_values)}
                           </div>
                         )}
                         {selectedAudit.new_values && (
                           <div className="rounded-md bg-card p-2.5 border">
-                            <p className="mb-1 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">New Version</p>
+                            <p className="mb-1 text-[10px] font-bold uppercase text-muted-foreground">New Version</p>
                             {renderAuditValue(selectedAudit.new_values)}
                           </div>
                         )}

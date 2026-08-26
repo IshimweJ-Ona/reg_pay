@@ -88,6 +88,19 @@ export const forgotPassword = async (
     return response.data;
 };
 
+export const verifyAccount = async (
+    identifier: string,
+    code: string,
+): Promise<LoginResponse> => {
+    const response = await api.post<LoginResponse>("/auth/verify-account", { identifier, code });
+    return response.data;
+};
+
+export const resendVerificationCode = async (identifier: string): Promise<{ message: string }> => {
+    const response = await api.post("/auth/resend-verification-code", { identifier });
+    return response.data;
+};
+
 export const resetPassword = async (
     token: string,
     payload: ResetPasswordPayload,

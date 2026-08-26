@@ -12,9 +12,11 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { LogIn01, UserPlus01, Eye, EyeOff } from '@untitledui/icons';
 import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/hooks/use-toast';
+import { useRouter } from 'next/navigation';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { getWorkingLocations, getDepartments, WorkingLocation, Department } from '@/api/working_locations';
 import { AuthShell } from '@/components/auth/auth-shell';
+import { Checkbox } from '@/components/ui/checkbox';
 
 const loginSchema = z.object({
   identifier: z.string().min(3, "Email or Phone number is required"),
@@ -39,12 +41,16 @@ const registerSchema = z.object({
 export default function LoginPage() {
   const { login, register } = useAuth();
   const { toast } = useToast();
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState('login');
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
   const [workingLocations, setWorkingLocations] = useState<WorkingLocation[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [selectedWorkingLocation, setSelectedWorkingLocation] = useState<string>('');
+  const [loadingLocations, setLoadingLocations] = useState(true);
+  const [loadingDepartments, setLoadingDepartments] = useState(false);
+  const [directoryError, setDirectoryError] = useState<string | null>(null);
 
   useEffect(() => {
     // Load remember me data
@@ -57,11 +63,16 @@ export default function LoginPage() {
     }
     
     const fetchWorkingLocations = async () => {
+      setLoadingLocations(true);
+      setDirectoryError(null);
       try {
         const data = await getWorkingLocations();
         setWorkingLocations(data.working_locations || []);
       } catch (error) {
         console.error('Failed to fetch working locations:', error);
+        setDirectoryError('Working locations could not be loaded. You can still sign in, but registration needs this directory.');
+      } finally {
+        setLoadingLocations(false);
       }
     };
     fetchWorkingLocations();
@@ -72,11 +83,15 @@ export default function LoginPage() {
     setDepartments([]);
     registerForm.setValue('department_id', '');
     if (locationId) {
+      setLoadingDepartments(true);
       try {
-        const data = await getDepartments(locationId);
+        const data = await getDepartments(locationId, { forAssignment: true });
         setDepartments(data.departments || []);
       } catch (error) {
         console.error('Failed to fetch departments:', error);
+        setDirectoryError('Departments could not be loaded for the selected location.');
+      } finally {
+        setLoadingDepartments(false);
       }
     }
   };
@@ -101,6 +116,10 @@ export default function LoginPage() {
       await login(values.identifier, values.password);
       toast({ title: "Welcome back!", description: "Successfully logged in." });
     } catch (error: any) {
+      if (error?.response?.data?.message === 'ACCOUNT_NOT_VERIFIED') {
+        router.push(`/auth/verify-account?identifier=${encodeURIComponent(values.identifier)}`);
+        return;
+      }
       toast({
         variant: "destructive",
         title: "Login failed",
@@ -179,10 +198,11 @@ export default function LoginPage() {
                         <Input type={showPassword ? "text" : "password"} placeholder="••••••••" {...field} className="pr-10" />
                         <button
                           type="button"
-                          className="absolute right-3 top-1/2 -translate-y-1/2 text-black hover:text-foreground"
+                          aria-label={showPassword ? "Hide password" : "Show password"}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                           onClick={() => setShowPassword(!showPassword)}
                         >
-                          {showPassword ? <EyeOff size={18} className="text-black" /> : <Eye size={18} className="text-black" />}
+                          {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                         </button>
                       </div>
                     </FormControl>
@@ -192,12 +212,10 @@ export default function LoginPage() {
               />
               <div className="flex items-center justify-between py-1">
                 <div className="flex items-center space-x-2">
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     id="remember"
                     checked={rememberMe}
-                    onChange={(e) => setRememberMe(e.target.checked)}
-                    className="w-4 h-4 text-primary border-border rounded focus:ring-ring"
+                    onCheckedChange={(value) => setRememberMe(Boolean(value))}
                   />
                   <label htmlFor="remember" className="text-sm font-medium text-foreground cursor-pointer">Remember me</label>
                 </div>
@@ -214,7 +232,12 @@ export default function LoginPage() {
         <TabsContent value="register">
           <Form {...registerForm}>
             <form onSubmit={registerForm.handleSubmit(onRegisterSubmit)} className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+              {directoryError && (
+                <div className="rounded-lg border border-warning/20 bg-warning/10 p-3 text-sm text-warning">
+                  {directoryError}
+                </div>
+              )}
+              <div className="grid gap-4 sm:grid-cols-2">
                 <FormField
                   control={registerForm.control}
                   name="first_name"
@@ -298,10 +321,10 @@ export default function LoginPage() {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel className="text-foreground">Working Location</FormLabel>
-                    <Select onValueChange={(value) => { field.onChange(value); handleWorkingLocationChange(value); }} value={field.value}>
+                    <Select onValueChange={(value) => { field.onChange(value); handleWorkingLocationChange(value); }} value={field.value} disabled={loadingLocations}>
                       <FormControl>
                         <SelectTrigger>
-                          <SelectValue placeholder="Select working location" />
+                          <SelectValue placeholder={loadingLocations ? "Loading locations..." : "Select working location"} />
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
@@ -322,10 +345,10 @@ export default function LoginPage() {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel className="text-foreground">Department</FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value} disabled={!selectedWorkingLocation}>
+                    <Select onValueChange={field.onChange} value={field.value} disabled={!selectedWorkingLocation || loadingDepartments}>
                       <FormControl>
                         <SelectTrigger>
-                          <SelectValue placeholder={selectedWorkingLocation ? "Select department" : "Select location first"} />
+                          <SelectValue placeholder={loadingDepartments ? "Loading departments..." : selectedWorkingLocation ? "Select department" : "Select location first"} />
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
@@ -351,10 +374,11 @@ export default function LoginPage() {
                         <Input type={showPassword ? "text" : "password"} placeholder="••••••••" {...field} className="pr-10" />
                         <button
                           type="button"
-                          className="absolute right-3 top-1/2 -translate-y-1/2 text-black"
+                          aria-label={showPassword ? "Hide password" : "Show password"}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                           onClick={() => setShowPassword(!showPassword)}
                         >
-                          {showPassword ? <EyeOff size={18} className="text-black" /> : <Eye size={18} className="text-black" />}
+                          {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                         </button>
                       </div>
                     </FormControl>

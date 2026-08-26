@@ -41,6 +41,7 @@ export interface GetPayrollBatchesFilters {
     q?: string;
     /** Comma-separated statuses, e.g. "PENDING,IN_REVIEW,MANAGER_APPROVED". */
     status?: string;
+    position_id?: string;
 }
 
 export const getPayrollBatches = async (filters?: GetPayrollBatchesFilters) => {

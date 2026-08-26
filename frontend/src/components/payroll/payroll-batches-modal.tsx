@@ -13,13 +13,14 @@ import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/compone
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { PayrollStatusBadge } from '@/components/payroll/payroll-status-badge';
-import { File02, CheckCircle, XCircle, Eye, User01 } from '@untitledui/icons';
+import { File02, CheckCircle, XCircle, User01 } from '@untitledui/icons';
 import { getPayrollBatches, getPayrollBatch, approvePayrollBatch, rejectPayrollBatch, rejectPayrollItem } from '@/api/payroll';
 import { useToast } from '@/hooks/use-toast';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { userFriendlyError } from '@/lib/error-message';
 import { formatRwf, getPayrollItemAmounts } from '@/lib/payroll-display';
 import { useAuth } from '@/context/auth-context';
+import { EmptyState, InlineStateNote, TableStateRow } from '@/components/layout/page-state';
 
 interface PayrollBatchesModalProps {
   isOpen: boolean;
@@ -47,6 +48,7 @@ export function PayrollBatchesModal({
   const [selectedBatch, setSelectedBatch] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isActionLoading, setIsActionLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const { toast } = useToast();
   const roles = user?.roles ?? [];
   const isSuperAdmin = roles.includes('SUPER_ADMIN');
@@ -63,6 +65,7 @@ export function PayrollBatchesModal({
 
   const loadBatches = async () => {
     setIsLoading(true);
+    setLoadError(null);
     try {
       // Filtered server-side when a status set is given, instead of always
       // fetching every batch and filtering client-side for each card.
@@ -70,10 +73,12 @@ export function PayrollBatchesModal({
       const allBatches = Array.isArray(res) ? res : res.batches || [];
       setBatches(allBatches);
     } catch (error) {
+      const message = userFriendlyError(error, 'Could not load payroll batches.');
+      setLoadError(message);
       toast({
         variant: 'destructive',
         title: 'Load failed',
-        description: userFriendlyError(error, 'Could not load payroll batches.'),
+        description: message,
       });
     } finally {
       setIsLoading(false);
@@ -172,24 +177,33 @@ export function PayrollBatchesModal({
       <DialogContent className="max-w-5xl w-full max-h-[90vh] p-0 gap-0 overflow-hidden flex flex-col">
         <div className="p-6 border-b border-border flex items-center justify-between bg-muted/40">
           <div>
-            <DialogTitle className="text-2xl font-headline font-bold text-foreground">{title}</DialogTitle>
+            <DialogTitle className="text-xl font-headline font-bold text-foreground">{title}</DialogTitle>
             <DialogDescription className="text-muted-foreground">{description}</DialogDescription>
           </div>
         </div>
 
-        <div className="flex-1 overflow-hidden flex">
+        <div className="flex-1 min-h-0 overflow-hidden flex flex-col md:flex-row">
           {/* Batches List */}
-          <div className="w-1/3 border-r border-border overflow-y-auto p-4 space-y-3 bg-muted/20">
-            <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider px-2 mb-2">Batches</h3>
+          <div className="w-full md:w-1/3 max-h-64 md:max-h-none border-b md:border-b-0 md:border-r border-border overflow-y-auto p-4 space-y-3 bg-muted/20">
+            <h3 className="text-xs font-bold text-muted-foreground uppercase px-2 mb-2">Batches</h3>
             {isLoading && batches.length === 0 ? (
-              <div className="p-4 text-center animate-pulse">Loading batches...</div>
+              <InlineStateNote tone="info" className="bg-card">
+                Loading payroll batches for review.
+              </InlineStateNote>
+            ) : loadError ? (
+              <InlineStateNote tone="destructive" className="bg-card">
+                {loadError}
+              </InlineStateNote>
             ) : batches.length === 0 ? (
-              <div className="p-8 text-center text-muted-foreground italic">No batches found.</div>
+              <InlineStateNote className="bg-card">
+                No payroll batches match this review queue.
+              </InlineStateNote>
             ) : (
               batches.map((batch) => (
-                <div
+                <button
+                  type="button"
                   key={batch.uuid}
-                  className={`p-4 rounded-2xl cursor-pointer transition-all border ${selectedBatch?.uuid === batch.uuid ? 'bg-card border-primary shadow-md ring-1 ring-primary/10' : 'bg-card hover:border-muted-foreground/30 border-transparent shadow-sm'}`}
+                  className={`w-full p-4 rounded-lg text-left transition-all border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${selectedBatch?.uuid === batch.uuid ? 'bg-card border-primary shadow-md ring-1 ring-primary/10' : 'bg-card hover:border-muted-foreground/30 border-transparent shadow-sm'}`}
                   onClick={() => handleViewBatch(batch.uuid)}
                 >
                   <div className="flex items-center justify-between mb-2">
@@ -201,18 +215,18 @@ export function PayrollBatchesModal({
                     <span className="text-xs text-muted-foreground">{batch.total_employees} Personnel</span>
                     <span className="text-sm font-bold text-primary">RWF {Number(batch.total_amount).toLocaleString()}</span>
                   </div>
-                </div>
+                </button>
               ))
             )}
           </div>
 
           {/* Batch Details */}
-          <div className="flex-1 flex flex-col bg-card">
+          <div className="flex-1 min-h-0 flex flex-col bg-card">
             {selectedBatch ? (
               <>
-                <div className="p-6 border-b border-border flex items-center justify-between">
+                <div className="p-6 border-b border-border flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                   <div className="flex items-center gap-4">
-                    <div className="h-12 w-12 rounded-2xl bg-primary/10 flex items-center justify-center text-primary">
+                    <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
                       <File02 className="h-6 w-6 text-primary" size={24} />
                     </div>
                     <div>
@@ -221,11 +235,11 @@ export function PayrollBatchesModal({
                     </div>
                   </div>
                   {canReviewBatch(selectedBatch) && (
-                    <div className="flex gap-2">
+                    <div className="flex flex-col gap-2 sm:flex-row">
                       <Button variant="outline" className="text-destructive hover:bg-destructive/10 border-destructive/20" onClick={() => handleRejectBatch(selectedBatch.uuid)} disabled={isActionLoading}>
                         <XCircle className="mr-2 h-4 w-4" size={16} /> Decline Batch
                       </Button>
-                      <Button className="bg-success hover:bg-success/90 text-success-foreground shadow-lg shadow-success/20" onClick={() => handleApproveBatch(selectedBatch.uuid)} disabled={isActionLoading}>
+                      <Button className="bg-success hover:bg-success/90 text-success-foreground shadow-sm shadow-success/20" onClick={() => handleApproveBatch(selectedBatch.uuid)} disabled={isActionLoading}>
                         <CheckCircle className="mr-2 h-4 w-4" size={16} /> Approve Batch
                       </Button>
                     </div>
@@ -250,7 +264,13 @@ export function PayrollBatchesModal({
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {selectedBatch.items?.map((item: any) => {
+                        {(selectedBatch.items?.length ?? 0) === 0 ? (
+                          <TableStateRow
+                            colSpan={showActions ? 6 : 5}
+                            title="No payroll items in this batch"
+                            description="This batch has no employee payroll rows to approve, reject, or export."
+                          />
+                        ) : selectedBatch.items.map((item: any) => {
                           const amounts = getPayrollItemAmounts(item, selectedBatch);
 
                           return (
@@ -258,7 +278,7 @@ export function PayrollBatchesModal({
                               <TableCell>
                                 <div className="flex items-center gap-3">
                                   <div className="h-8 w-8 rounded-full bg-muted flex items-center justify-center">
-                                    <User01 className="h-4 w-4 text-black" size={16} />
+                                    <User01 className="h-4 w-4 text-muted-foreground" size={16} />
                                   </div>
                                   <div className="flex flex-col">
                                     <span className="font-semibold text-sm">{item.employee?.first_name} {item.employee?.last_name}</span>
@@ -292,15 +312,11 @@ export function PayrollBatchesModal({
                 </div>
               </>
             ) : (
-              <div className="flex-1 flex flex-col items-center justify-center p-12 text-center space-y-4">
-                <div className="h-20 w-20 rounded-full bg-muted flex items-center justify-center border-2 border-dashed border-border">
-                  <Eye className="h-10 w-10 text-black" size={40} />
-                </div>
-                <div>
-                  <h3 className="text-xl font-bold text-muted-foreground">Select a batch to review</h3>
-                  <p className="text-sm text-muted-foreground max-w-xs mx-auto">Click on a batch from the left panel to inspect its employees and financial breakdown.</p>
-                </div>
-              </div>
+              <EmptyState
+                title="Select a batch to review"
+                description="Choose a payroll batch to inspect employees, totals, deductions, approvals, and exception decisions."
+                className="m-6 flex-1"
+              />
             )}
           </div>
         </div>

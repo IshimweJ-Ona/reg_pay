@@ -213,8 +213,13 @@ export function NotificationBell({ type }: { type: 'admin' | 'user' }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" className="relative h-10 w-10 rounded-xl bg-card border border-border shadow-sm hover:bg-secondary/50 transition-colors">
-          <Bell01 className="h-5 w-5 text-black" size={20} />
+        <Button
+          variant="ghost"
+          size="icon"
+          className="relative h-10 w-10 rounded-lg bg-card border border-border shadow-sm hover:bg-secondary/50 transition-colors"
+          aria-label={unreadCount > 0 ? `Open notifications, ${unreadCount} unread` : 'Open notifications'}
+        >
+          <Bell01 className="h-5 w-5 text-muted-foreground" size={20} />
           {unreadCount > 0 && (
             <span className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-destructive text-[10px] font-bold text-destructive-foreground border-2 border-card shadow-sm">
               {unreadCount}
@@ -222,9 +227,9 @@ export function NotificationBell({ type }: { type: 'admin' | 'user' }) {
           )}
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-96 p-0 border-none shadow-2xl animate-in fade-in zoom-in-95">
+      <DropdownMenuContent align="end" className="w-96 p-0 border border-border shadow-sm animate-in fade-in zoom-in-95">
         <DropdownMenuLabel className="p-4 flex items-center justify-between bg-secondary/20">
-          <span className="text-sm font-headline font-bold uppercase tracking-wider text-muted-foreground">
+          <span className="text-sm font-headline font-bold uppercase text-muted-foreground">
             {type === 'admin' ? 'System Notifications' : 'My Notifications'}
           </span>
           <div className="flex items-center gap-1">
@@ -321,7 +326,7 @@ export function NotificationBell({ type }: { type: 'admin' | 'user' }) {
                     )}
 
                     <div className="flex items-center justify-between mt-1">
-                      <span className="text-[9px] font-bold text-muted-foreground/60 uppercase tracking-widest">
+                      <span className="text-[9px] font-bold text-muted-foreground/60 uppercase">
                         {new Date(n.created_at).toLocaleString()}
                       </span>
                       <div className="flex items-center gap-2">
@@ -353,7 +358,7 @@ export function NotificationBell({ type }: { type: 'admin' | 'user' }) {
         </ScrollArea>
         <DropdownMenuSeparator className="m-0" />
         <div className="p-2 bg-secondary/10">
-          <Button variant="ghost" className="w-full text-[10px] font-bold h-8 uppercase tracking-widest" onClick={() => router.push(`${basePath}/notifications`)}>
+          <Button variant="ghost" className="w-full text-[10px] font-bold h-8 uppercase" onClick={() => router.push(`${basePath}/notifications`)}>
             View All History
           </Button>
         </div>

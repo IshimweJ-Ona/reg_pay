@@ -2,9 +2,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from 'react';
-import { 
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow 
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow
 } from "@/components/ui/table";
+import { Pagination } from "@/components/ui/pagination";
 import {
   MarkerPin01 as MapPin,
   Plus,
@@ -22,6 +23,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { PageHeader } from '@/components/layout/page-header';
+import { InlineStateNote, LoadingState, PermissionDeniedState, TableStateRow } from '@/components/layout/page-state';
 import { StatCard } from '@/components/ui/stat-card';
 import { StatusBadge } from '@/components/ui/status-badge';
 import {
@@ -66,6 +68,8 @@ export default function LocationsManagementPage() {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [newLoc, setNewLoc] = useState({ name: '', type: 'BRANCH' as const, address: '' });
   const [searchQuery, setSearchQuery] = useState('');
+  const [locationsPage, setLocationsPage] = useState(1);
+  const LOCATIONS_PAGE_SIZE = 25;
   const [allDepartments, setAllDepartments] = useState<any[]>([]);
   const [selectedLocation, setSelectedLocation] = useState<any | null>(null);
   const [locationUsers, setLocationUsers] = useState<any[]>([]);
@@ -185,12 +189,37 @@ export default function LocationsManagementPage() {
     }
   };
 
-  const filteredLocations = locations.filter(loc => 
-    loc.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+  const filteredLocations = locations.filter(loc =>
+    loc.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     loc.address.toLowerCase().includes(searchQuery.toLowerCase())
   );
+  const locationsTotalPages = Math.max(1, Math.ceil(filteredLocations.length / LOCATIONS_PAGE_SIZE));
+  const paginatedLocations = filteredLocations.slice(
+    (locationsPage - 1) * LOCATIONS_PAGE_SIZE,
+    locationsPage * LOCATIONS_PAGE_SIZE,
+  );
 
-  if (isLoading || !canReadAllBranches) return null;
+  useEffect(() => {
+    setLocationsPage(1);
+  }, [searchQuery]);
+
+  if (isLoading) {
+    return (
+      <LoadingState
+        title="Loading branch controls"
+        description="Checking your branch scope and organization permissions."
+      />
+    );
+  }
+
+  if (!canReadAllBranches) {
+    return (
+      <PermissionDeniedState
+        title="Branch access required"
+        description="Your current role is scoped away from the all-branches workspace."
+      />
+    );
+  }
 
   const handleCreate = async () => {
     try {
@@ -234,7 +263,7 @@ export default function LocationsManagementPage() {
         description="Manage headquarters and branch locations."
         actions={
           canManageBranches && (
-            <Button className="h-11 px-6 shadow-lg shadow-primary/20" onClick={() => setIsCreateModalOpen(true)}>
+            <Button className="h-11 px-6 shadow-sm shadow-primary/20" onClick={() => setIsCreateModalOpen(true)}>
               <Plus className="mr-2 h-4 w-4" size={16} /> Create Branch
             </Button>
           )
@@ -266,13 +295,13 @@ export default function LocationsManagementPage() {
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" size={16} />
         <Input
           placeholder="Search branches by name or address..."
-          className="pl-10 h-11 border-none bg-card shadow-sm"
+          className="pl-10 h-11 border border-border bg-card shadow-sm"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
         />
       </div>
 
-      <div className="bg-card rounded-2xl border shadow-sm overflow-hidden overflow-x-auto">
+      <div className="bg-card rounded-lg border shadow-sm overflow-hidden overflow-x-auto">
         <Table>
           <TableHeader className="bg-secondary/50">
             <TableRow>
@@ -284,7 +313,13 @@ export default function LocationsManagementPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filteredLocations.map((loc) => (
+            {filteredLocations.length === 0 ? (
+              <TableStateRow
+                colSpan={canManageBranches ? 5 : 4}
+                title="No branches found"
+                description="Adjust search filters or create a branch when your role permits it."
+              />
+            ) : paginatedLocations.map((loc) => (
               <TableRow
                 key={loc.id}
                 className="hover:bg-secondary/10 transition-colors cursor-pointer"
@@ -292,7 +327,7 @@ export default function LocationsManagementPage() {
               >
                 <TableCell>
                   <div className="flex items-center gap-3">
-                    <div className="h-10 w-10 rounded-xl bg-primary/5 flex items-center justify-center">
+                    <div className="h-10 w-10 rounded-lg bg-primary/5 flex items-center justify-center">
                       <MapPin className="h-5 w-5 text-primary" size={20} />
                     </div>
                     <div className="flex flex-col">
@@ -302,7 +337,7 @@ export default function LocationsManagementPage() {
                   </div>
                 </TableCell>
                 <TableCell>
-                  <Badge variant="outline" className="font-bold tracking-wider">{loc.type}</Badge>
+                  <Badge variant="outline" className="font-bold">{loc.type}</Badge>
                 </TableCell>
                 <TableCell>
                   <div className="flex gap-4">
@@ -321,7 +356,9 @@ export default function LocationsManagementPage() {
                   <TableCell onClick={(e) => e.stopPropagation()}>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon"><MoreVertical className="h-4 w-4" size={16} /></Button>
+                        <Button variant="ghost" size="icon" aria-label={`Open actions for ${loc.name}`}>
+                          <MoreVertical className="h-4 w-4" size={16} />
+                        </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
                         <DropdownMenuItem onClick={() => setEditingLoc(loc)}>
@@ -347,6 +384,13 @@ export default function LocationsManagementPage() {
             ))}
           </TableBody>
         </Table>
+        <Pagination
+          page={locationsPage}
+          totalPages={locationsTotalPages}
+          total={filteredLocations.length}
+          limit={LOCATIONS_PAGE_SIZE}
+          onPageChange={setLocationsPage}
+        />
       </div>
 
       <BranchFormDialog
@@ -391,7 +435,7 @@ export default function LocationsManagementPage() {
 
             <TabsContent value="departments" className="max-h-[55vh] overflow-y-auto divide-y">
               {locationDepartmentRows.length === 0 ? (
-                <p className="text-sm text-muted-foreground py-8 text-center">No departments exist in the system yet.</p>
+                <InlineStateNote className="my-4">No departments exist in the system yet.</InlineStateNote>
               ) : (
                 locationDepartmentRows.map((row) => (
                   <div key={row.group.code} className="flex items-center justify-between py-3 px-1">
@@ -421,7 +465,7 @@ export default function LocationsManagementPage() {
                   <Loader2 className="h-5 w-5 animate-spin mr-2" size={20} /> Loading users...
                 </div>
               ) : locationUsers.length === 0 ? (
-                <p className="text-sm text-muted-foreground py-8 text-center">No users are assigned to this branch yet.</p>
+                <InlineStateNote className="my-4">No users are assigned to this branch yet.</InlineStateNote>
               ) : (
                 <div className="divide-y">
                   {locationUsers.map((u: any) => (
@@ -443,7 +487,7 @@ export default function LocationsManagementPage() {
                   <Loader2 className="h-5 w-5 animate-spin mr-2" size={20} /> Loading employees...
                 </div>
               ) : locationEmployees.length === 0 ? (
-                <p className="text-sm text-muted-foreground py-8 text-center">No employees are assigned to this branch yet.</p>
+                <InlineStateNote className="my-4">No employees are assigned to this branch yet.</InlineStateNote>
               ) : (
                 <div className="divide-y">
                   {locationEmployees.map((emp: any) => (

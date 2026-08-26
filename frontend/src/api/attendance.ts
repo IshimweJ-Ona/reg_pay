@@ -43,17 +43,6 @@ export const getTimeRecords = async (filters?: TimeRecordFilters) => {
     return response.data;
 };
 
-export const getTodayAttendance = async (
-    getWorkingLocationId?: string,
-    category?: string,
-) => {
-    const params = new URLSearchParams();
-    if (getWorkingLocationId) params.append("working_location_id", getWorkingLocationId);
-    if (category) params.append("category", category);
-    const response = await api.get(`/time-records/today?${params.toString()}`);
-    return response.data;
-};
-
 export const getAttendance = getTimeRecords;
 
 export const getTimeRecordsByEmployee = async (
@@ -75,18 +64,9 @@ export interface BulkCreateTimeRecordsPayload {
 }
 
 export const bulkCreateTimeRecords = async (
-    payloadOrRecords: any[] | BulkCreateTimeRecordsPayload,
+    payload: BulkCreateTimeRecordsPayload,
     signal?: AbortSignal,
 ) => {
-    if (Array.isArray(payloadOrRecords)) {
-        const response = await api.post(
-            "/time-records/batch-sync",
-            { records: payloadOrRecords },
-            { signal },
-        );
-        return response.data;
-    } else {
-        const response = await api.post("/time-records/bulk", payloadOrRecords, { signal, });
-        return response.data;
-    }
+    const response = await api.post("/time-records/bulk", payload, { signal });
+    return response.data;
 };

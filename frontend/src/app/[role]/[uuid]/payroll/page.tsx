@@ -10,6 +10,8 @@ import {
 } from '@untitledui/icons';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Pagination } from '@/components/ui/pagination';
 import { PayrollBatch } from '@/types/payroll';
 import { PayrollStatusBadge } from '@/components/payroll/payroll-status-badge';
 import {
@@ -20,10 +22,12 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { PermissionGate } from '@/components/auth/permission-gate';
 import { PageHeader } from '@/components/layout/page-header';
+import { TableStateRow } from '@/components/layout/page-state';
 import { StatCard, StatCardTone } from '@/components/ui/stat-card';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { approvePayrollBatch, downloadPayrollBatchExport, getPayrollBatches, rejectPayrollBatch } from '@/api/payroll';
+import { getPositions, type Position } from '@/api/positions';
 import { exportToCSV, exportToExcel } from '@/lib/export-utils';
 import { useToast } from '@/hooks/use-toast';
 import { userFriendlyError } from '@/lib/error-message';
@@ -34,19 +38,34 @@ import { useAuth } from '@/context/auth-context';
 const getBatchList = (payload: any) =>
   Array.isArray(payload) ? payload : payload?.batches ?? [];
 
+// A batch can span several departments/positions (it's a set of employees,
+// not scoped to one), so this collapses each batch's items down to the
+// distinct names involved instead of pretending there's a single value.
+function summarizeDistinct(names: (string | undefined | null)[]): string {
+  const distinct = Array.from(new Set(names.filter((name): name is string => Boolean(name))));
+  if (distinct.length === 0) return '—';
+  if (distinct.length === 1) return distinct[0];
+  return `Mixed (${distinct.length})`;
+}
+
 function mapApiBatch(batch: any): PayrollBatch {
   const submitter =
     batch.submittedBy ??
     batch.users_payment_batches_submitted_byTousers ??
     batch.submitted_by_user;
   const firstTransaction = batch.items?.[0]?.transaction;
+  const items = Array.isArray(batch.items) ? batch.items : [];
 
   return {
     id: batch.uuid,
     batchId: batch.batch_code,
     period: formatPayrollPeriod(batch.payroll_month, batch.payroll_year),
     location: batch.working_location?.name ?? batch.working_location_id,
-    department: 'All',
+    department: summarizeDistinct(items.map((item: any) => item.employee?.department?.name)),
+    position: summarizeDistinct(items.map((item: any) => item.employee?.position?.name)),
+    positionNames: Array.from(
+      new Set(items.map((item: any) => item.employee?.position?.name).filter(Boolean)),
+    ) as string[],
     employeeCount: batch.total_employees,
     totalGross: Number(batch.total_gross ?? 0),
     totalDeductions: Number(batch.total_deductions ?? 0),
@@ -67,6 +86,10 @@ export default function PayrollAdminPage() {
   const [batches, setBatches] = useState<PayrollBatch[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [openStatCard, setOpenStatCard] = useState<string | null>(null);
+  const [positions, setPositions] = useState<Position[]>([]);
+  const [positionFilter, setPositionFilter] = useState('ALL');
+  const [batchesPage, setBatchesPage] = useState(1);
+  const BATCHES_PAGE_SIZE = 20;
   const [activeTab, setActiveTab] = useState<'ACTIVE' | 'HISTORY'>('ACTIVE');
 
   const role = params.role as string;
@@ -82,6 +105,7 @@ export default function PayrollAdminPage() {
       .then((items) => setBatches(getBatchList(items).map(mapApiBatch)))
       .catch(() => setBatches([]))
       .finally(() => setIsLoading(false));
+    getPositions().then(setPositions).catch(() => setPositions([]));
   }, []);
 
   const stats = [
@@ -138,13 +162,24 @@ export default function PayrollAdminPage() {
       b.location.toLowerCase().includes(searchTerm.toLowerCase()) ||
       b.status.toLowerCase().includes(searchTerm.toLowerCase()) ||
       b.createdBy.toLowerCase().includes(searchTerm.toLowerCase());
-    
+    const matchesPosition = positionFilter === 'ALL' || b.positionNames.includes(positionFilter);
+
     if (activeTab === 'ACTIVE') {
-      return matchesSearch && !['APPROVED', 'REJECTED'].includes(b.status);
+      return matchesSearch && matchesPosition && !['APPROVED', 'REJECTED'].includes(b.status);
     } else {
-      return matchesSearch && ['APPROVED', 'REJECTED'].includes(b.status);
+      return matchesSearch && matchesPosition && ['APPROVED', 'REJECTED'].includes(b.status);
     }
   });
+
+  const batchesTotalPages = Math.max(1, Math.ceil(filteredBatches.length / BATCHES_PAGE_SIZE));
+  const paginatedBatches = filteredBatches.slice(
+    (batchesPage - 1) * BATCHES_PAGE_SIZE,
+    batchesPage * BATCHES_PAGE_SIZE,
+  );
+
+  useEffect(() => {
+    setBatchesPage(1);
+  }, [searchTerm, positionFilter, activeTab]);
 
   const handleExport = (type: 'csv' | 'excel') => {
     const exportData = filteredBatches.map(b => ({
@@ -244,7 +279,7 @@ export default function PayrollAdminPage() {
         actions={
           <PermissionGate permission="payroll.create">
             <Link href={`${basePath}/payroll/new`}>
-              <Button className="h-11 px-6 shadow-lg shadow-primary/20">
+              <Button className="h-11 px-6 shadow-sm shadow-primary/20">
                 <Plus className="mr-2 h-4 w-4" size={16} /> Generate New Batch
               </Button>
             </Link>
@@ -266,7 +301,7 @@ export default function PayrollAdminPage() {
       </div>
 
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4">
-        <div className="flex bg-card p-1 rounded-xl border shadow-sm">
+        <div className="flex bg-card p-1 rounded-lg border shadow-sm">
           <Button
             variant={activeTab === 'ACTIVE' ? 'default' : 'ghost'}
             className="h-10 px-6 rounded-lg font-bold transition-all"
@@ -283,16 +318,27 @@ export default function PayrollAdminPage() {
           </Button>
         </div>
 
-        <div className="flex items-center gap-4 bg-card p-1.5 px-3 rounded-xl shadow-sm border flex-1">
+        <div className="flex items-center gap-4 bg-card p-1.5 px-3 rounded-lg shadow-sm border flex-1">
           <div className="relative flex-1">
             <SearchMd className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" size={16} />
             <Input
               placeholder={`Search ${activeTab === 'ACTIVE' ? 'pending' : 'historical'} batches...`}
-              className="pl-10 h-9 border-none bg-transparent focus-visible:ring-0"
+              className="pl-10 h-9 border border-border bg-transparent focus-visible:ring-0"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />
           </div>
+          <Select value={positionFilter} onValueChange={setPositionFilter}>
+            <SelectTrigger className="h-9 w-[180px] border border-border bg-transparent">
+              <SelectValue placeholder="Filter by position" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="ALL">All Positions</SelectItem>
+              {positions.map((position) => (
+                <SelectItem key={position.uuid} value={position.name}>{position.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <div className="h-6 w-px bg-border" />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -308,54 +354,61 @@ export default function PayrollAdminPage() {
         </div>
       </div>
 
-      <div className="bg-card rounded-2xl border shadow-sm overflow-hidden">
+      <div className="bg-card rounded-lg border shadow-sm overflow-hidden -mx-4 sm:-mx-6 lg:-mx-8">
         <Table>
           <TableHeader className="bg-secondary/50">
             <TableRow>
-              <TableHead className="font-bold">Batch ID</TableHead>
-              <TableHead className="font-bold">Period</TableHead>
-              <TableHead className="font-bold">Location</TableHead>
-              <TableHead className="font-bold">Employees</TableHead>
-              <TableHead className="font-bold text-right">Gross Pay</TableHead>
-              <TableHead className="font-bold text-right">Deductions</TableHead>
-              <TableHead className="font-bold text-right">Net Pay</TableHead>
-              <TableHead className="font-bold">Status</TableHead>
-              <TableHead className="font-bold">Created Date</TableHead>
-              <TableHead className="font-bold">Submitted By</TableHead>
-              <TableHead className="w-[80px]"></TableHead>
+              <TableHead className="font-bold px-3">Batch ID</TableHead>
+              <TableHead className="font-bold px-3">Period</TableHead>
+              <TableHead className="font-bold px-3">Assignment</TableHead>
+              <TableHead className="font-bold px-3">Employees</TableHead>
+              <TableHead className="font-bold text-right px-3">Gross Pay</TableHead>
+              <TableHead className="font-bold text-right px-3">Deductions</TableHead>
+              <TableHead className="font-bold text-right px-3">Net Pay</TableHead>
+              <TableHead className="font-bold px-3">Status</TableHead>
+              <TableHead className="font-bold px-3">Created / Submitted By</TableHead>
+              <TableHead className="w-[56px] px-2"></TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              <TableRow>
-                <TableCell colSpan={11} className="text-center py-20 text-muted-foreground animate-pulse">Loading payroll batches...</TableCell>
-              </TableRow>
-            ) : filteredBatches.length > 0 ? filteredBatches.map((batch) => (
-              <TableRow key={batch.id} className="hover:bg-secondary/20 transition-colors">
-                <TableCell className="font-medium text-primary">{batch.batchId}</TableCell>
-                <TableCell>{batch.period}</TableCell>
-                <TableCell>
+              <TableStateRow
+                colSpan={10}
+                tone="info"
+                title="Loading payroll batches"
+                description="Preparing active runs, archived payroll records, and approval status."
+              />
+            ) : paginatedBatches.length > 0 ? paginatedBatches.map((batch) => (
+              <TableRow key={batch.id} className="even:bg-secondary/10 hover:bg-secondary/20 transition-colors">
+                <TableCell className="font-medium text-primary px-3 whitespace-nowrap">{batch.batchId}</TableCell>
+                <TableCell className="px-3 whitespace-nowrap">{batch.period}</TableCell>
+                <TableCell className="px-3">
                   <div className="flex flex-col">
                     <span className="text-sm font-semibold">{batch.location}</span>
                     <span className="text-xs text-muted-foreground">{batch.department}</span>
+                    <span className="text-xs text-muted-foreground">{batch.position}</span>
                   </div>
                 </TableCell>
-                <TableCell>{batch.employeeCount}</TableCell>
-                <TableCell className="text-right font-medium">{formatRwf(batch.totalGross)}</TableCell>
-                <TableCell className="text-right">
+                <TableCell className="px-3">{batch.employeeCount}</TableCell>
+                <TableCell className="text-right font-medium px-3 whitespace-nowrap">{formatRwf(batch.totalGross)}</TableCell>
+                <TableCell className="text-right px-3 whitespace-nowrap">
                   <div className="flex flex-col">
                     <span className="font-medium text-destructive">-{formatRwf(batch.totalDeductions)}</span>
                     <span className="text-[10px] text-muted-foreground">PIT {formatRwf(batch.totalTax)}</span>
                   </div>
                 </TableCell>
-                <TableCell className="text-right font-bold text-primary">{formatRwf(batch.totalAmount)}</TableCell>
-                <TableCell><PayrollStatusBadge status={batch.status} /></TableCell>
-                <TableCell className="text-muted-foreground">{formatPayrollDate(batch.createdAt)}</TableCell>
-                <TableCell className="text-muted-foreground text-xs">{batch.createdBy}</TableCell>
-                <TableCell>
+                <TableCell className="text-right font-bold text-primary px-3 whitespace-nowrap">{formatRwf(batch.totalAmount)}</TableCell>
+                <TableCell className="px-3"><PayrollStatusBadge status={batch.status} /></TableCell>
+                <TableCell className="px-3">
+                  <div className="flex flex-col">
+                    <span className="text-muted-foreground whitespace-nowrap">{formatPayrollDate(batch.createdAt)}</span>
+                    <span className="text-muted-foreground text-xs truncate max-w-[160px]">{batch.createdBy}</span>
+                  </div>
+                </TableCell>
+                <TableCell className="px-2">
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon" className="h-8 w-8">
+                      <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`Open actions for payroll batch ${batch.batchId}`}>
                         <DotsVertical className="h-4 w-4 text-muted-foreground" size={16} />
                       </Button>
                     </DropdownMenuTrigger>
@@ -383,16 +436,25 @@ export default function PayrollAdminPage() {
                 </TableCell>
               </TableRow>
             )) : (
-              <TableRow>
-                <TableCell colSpan={11} className="text-center py-20 text-muted-foreground italic">
-                  {activeTab === 'ACTIVE' 
-                    ? "No pending payroll cycles awaiting review." 
-                    : "No historical payroll records found in the archive."}
-                </TableCell>
-              </TableRow>
+              <TableStateRow
+                colSpan={10}
+                title={activeTab === 'ACTIVE' ? "No payroll cycles awaiting review" : "No historical payroll records"}
+                description={
+                  activeTab === 'ACTIVE'
+                    ? "Create a payroll batch when the pay period is ready, or adjust your search."
+                    : "Archived payroll records will appear here after batches are approved, rejected, or completed."
+                }
+              />
             )}
           </TableBody>
         </Table>
+        <Pagination
+          page={batchesPage}
+          totalPages={batchesTotalPages}
+          total={filteredBatches.length}
+          limit={BATCHES_PAGE_SIZE}
+          onPageChange={setBatchesPage}
+        />
       </div>
     </div>
   );

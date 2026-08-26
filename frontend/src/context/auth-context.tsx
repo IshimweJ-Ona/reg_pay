@@ -11,6 +11,7 @@ import {
   refreshToken as refreshTokenRequest,
   registerUser,
   saveTokens,
+  verifyAccount as verifyAccountRequest,
 } from '@/api/auth';
 import { User, UserRole } from '@/types/auth';
 import { expandPermissionKeys } from '@/lib/permissions';
@@ -29,6 +30,7 @@ type RegisterInput = {
 interface AuthContextType {
   user: User | null;
   login: (email: string, password: string) => Promise<void>;
+  verifyAccount: (identifier: string, code: string) => Promise<void>;
   register: (input: RegisterInput) => Promise<void>;
   logout: () => Promise<void>;
   isLoading: boolean;
@@ -253,6 +255,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     router.push(response.redirectUrl);
   };
 
+  const verifyAccount = async (identifier: string, code: string) => {
+    const response = await verifyAccountRequest(identifier, code);
+    saveTokens(response);
+    setAccessToken(response.access_token);
+    const nextUser = mapJwtUser(response.access_token);
+    setUser(nextUser);
+
+    router.push(response.redirectUrl);
+  };
+
   const register = async (input: RegisterInput) => {
     await registerUser(input);
   };
@@ -332,7 +344,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, login, register, logout, isLoading, hasPermission, accessToken, refreshSession, refreshPermissions }}>
+    <AuthContext.Provider value={{ user, login, verifyAccount, register, logout, isLoading, hasPermission, accessToken, refreshSession, refreshPermissions }}>
       {children}
     </AuthContext.Provider>
   );

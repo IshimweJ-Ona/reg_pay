@@ -24,6 +24,7 @@ import { getMonthlyTaxes, updateMonthlyTax, deactivateMonthlyTax, MonthlyTax } f
 import { useToast } from '@/hooks/use-toast';
 import { userFriendlyError } from '@/lib/error-message';
 import { PageHeader } from '@/components/layout/page-header';
+import { LoadingState, PermissionDeniedState, TableStateRow } from '@/components/layout/page-state';
 import { StatCard } from '@/components/ui/stat-card';
 import { StatusBadge } from '@/components/ui/status-badge';
 
@@ -41,6 +42,7 @@ export default function TaxSetupPage() {
 
   const [taxes, setTaxes] = useState<MonthlyTax[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [newTax, setNewTax] = useState({ name: '', rate: '' });
 
@@ -50,19 +52,26 @@ export default function TaxSetupPage() {
       return;
     }
     loadTaxes();
-  }, [user, canManageConfig, router, params]);
+    // Keyed on user?.id, not the whole user object - see the matching note
+    // in [role]/[uuid]/page.tsx (the background permissions poll gives
+    // `user` a new reference every ~15s even when nothing changed).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, canManageConfig, router, params.role, params.uuid]);
 
   const loadTaxes = async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const data = await getMonthlyTaxes();
       setTaxes(data);
     } catch (error: any) {
       console.error('Failed to load taxes:', error);
+      const message = userFriendlyError(error, 'Could not retrieve tax configurations.');
+      setLoadError(message);
       toast({
         variant: "destructive",
         title: "Load Failed",
-        description: userFriendlyError(error, 'Could not retrieve tax configurations.'),
+        description: message,
       });
     } finally {
       setLoading(false);
@@ -113,7 +122,23 @@ export default function TaxSetupPage() {
     }
   };
 
-  if (!user || !canManageConfig) return null;
+  if (!user) {
+    return (
+      <LoadingState
+        title="Loading tax setup"
+        description="Checking your session and configuration permissions."
+      />
+    );
+  }
+
+  if (!canManageConfig) {
+    return (
+      <PermissionDeniedState
+        title="Tax setup permission required"
+        description="Only administrators with system configuration access can change payroll tax policies."
+      />
+    );
+  }
 
   return (
     <div className="space-y-8">
@@ -128,7 +153,7 @@ export default function TaxSetupPage() {
         <StatCard icon={<ShieldCheck className="h-6 w-6" size={24} />} label="Policy Control" value="PIT Auto" tone="info" />
       </div>
 
-      <Card className="border-none shadow-sm">
+      <Card className="border border-border shadow-sm">
         <CardHeader>
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div>
@@ -142,7 +167,7 @@ export default function TaxSetupPage() {
           </div>
         </CardHeader>
         <CardContent className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-[1fr_200px_150px] gap-4 items-end bg-secondary/20 p-4 rounded-xl border border-dashed">
+          <div className="grid grid-cols-1 md:grid-cols-[1fr_200px_150px] gap-4 items-end bg-secondary/20 p-4 rounded-lg border border-dashed">
             <div className="space-y-2">
               <Label>Tax Name</Label>
               <Input 
@@ -167,7 +192,7 @@ export default function TaxSetupPage() {
             </Button>
           </div>
 
-          <div className="rounded-xl border overflow-hidden">
+          <div className="rounded-lg border overflow-hidden">
             <Table>
               <TableHeader className="bg-secondary/30">
                 <TableRow>
@@ -181,9 +206,19 @@ export default function TaxSetupPage() {
               </TableHeader>
               <TableBody>
                 {loading ? (
-                   <TableRow>
-                     <TableCell colSpan={6} className="text-center py-10"><Loader2 className="h-6 w-6 animate-spin mx-auto text-primary" size={24} /></TableCell>
-                   </TableRow>
+                  <TableStateRow
+                    colSpan={6}
+                    tone="info"
+                    title="Loading tax policies"
+                    description="Preparing PIT rules and employee-assigned monthly deductions."
+                  />
+                ) : loadError ? (
+                  <TableStateRow
+                    colSpan={6}
+                    tone="destructive"
+                    title="Tax policies could not load"
+                    description={loadError}
+                  />
                 ) : taxes.length > 0 ? taxes.map((tax) => (
                   <TableRow key={tax.uuid} className="hover:bg-secondary/10 transition-colors">
                     <TableCell className="font-bold">{tax.name}</TableCell>
@@ -206,15 +241,19 @@ export default function TaxSetupPage() {
                         className="text-destructive hover:bg-destructive/10"
                         onClick={() => handleDeleteTax(tax.uuid)}
                         disabled={tax.uuid === 'default-pit'}
+                        aria-label={`Deactivate ${tax.name}`}
+                        title={tax.uuid === 'default-pit' ? 'Default PIT cannot be deactivated' : `Deactivate ${tax.name}`}
                       >
                         <Trash2 className="h-4 w-4" size={16} />
                       </Button>
                     </TableCell>
                   </TableRow>
                 )) : (
-                  <TableRow>
-                    <TableCell colSpan={6} className="text-center py-10 text-muted-foreground">No statutory taxes configured yet.</TableCell>
-                  </TableRow>
+                  <TableStateRow
+                    colSpan={6}
+                    title="No statutory taxes configured"
+                    description="Save PIT, RSSB, or other monthly tax policies before assigning them to employees."
+                  />
                 )}
               </TableBody>
             </Table>

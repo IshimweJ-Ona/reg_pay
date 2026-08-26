@@ -20,8 +20,11 @@ const forgotPasswordSchema = z.object({
 
 export default function ForgotPasswordPage() {
   const { toast } = useToast();
+  const [submitted, setSubmitted] = useState(false);
+  // The backend only ever includes reset_token outside production (a dev
+  // convenience so this flow can be tested without a working SMTP setup) -
+  // in production this stays null and the dev-only link below never renders.
   const [resetToken, setResetToken] = useState<string | null>(null);
-  const [userName, setUserName] = useState<string | null>(null);
 
   const resetPath = useMemo(
     () => (resetToken ? `/auth/reset-password/${resetToken}` : ""),
@@ -34,15 +37,15 @@ export default function ForgotPasswordPage() {
   });
 
   const onSubmit = async (values: z.infer<typeof forgotPasswordSchema>) => {
+    setSubmitted(false);
     setResetToken(null);
-    setUserName(null);
 
     try {
       const response = await forgotPassword(values);
+      setSubmitted(true);
       setResetToken(response.reset_token ?? null);
-      setUserName(response.user_name ?? null);
       toast({
-        title: "Reset request sent",
+        title: "Check your email",
         description: response.message,
       });
     } catch (error: any) {
@@ -59,7 +62,7 @@ export default function ForgotPasswordPage() {
       illustration="/illustrations/auth-forgot-password.svg"
       illustrationAlt="Forgot password illustration"
       title="Forgot your password?"
-      subtitle="No worries — enter the email or phone number linked to your account and we'll help you get back in."
+      subtitle="Enter the email or phone number linked to your account and we'll help you get back in."
     >
       <div className="mb-8">
         <h1 className="font-headline text-2xl font-bold text-foreground mb-1">Reset your password</h1>
@@ -93,18 +96,23 @@ export default function ForgotPasswordPage() {
         </form>
       </Form>
 
-      {resetPath && (
+      {submitted && (
         <div className="mt-4 rounded-md border border-primary/20 bg-primary/5 p-3 text-sm text-foreground">
-          <p className="font-semibold">{userName ? `Reset link for ${userName}` : "Reset link generated"}</p>
-          <Link href={resetPath} className="mt-2 inline-flex font-medium text-primary hover:underline">
-            Continue to reset password
-          </Link>
+          <p className="font-semibold">Check your email</p>
+          <p className="mt-1 text-muted-foreground">
+            If an account exists for that email or phone number, we've sent a password reset link to it. The link expires in 1 hour.
+          </p>
+          {resetPath && (
+            <Link href={resetPath} className="mt-2 inline-flex font-medium text-primary hover:underline">
+              (Dev mode) Continue to reset password
+            </Link>
+          )}
         </div>
       )}
 
       <Button asChild variant="ghost" className="w-full mt-4 text-foreground">
         <Link href="/auth/login">
-          <ArrowLeft className="mr-2 h-4 w-4 text-black" size={16} />
+          <ArrowLeft className="mr-2 h-4 w-4 text-muted-foreground" size={16} />
           Back to Login
         </Link>
       </Button>

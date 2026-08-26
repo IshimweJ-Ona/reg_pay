@@ -3,6 +3,7 @@
 import React, { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/auth-context';
+import { LoadingState, PermissionDeniedState } from '@/components/layout/page-state';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -42,8 +43,12 @@ export function ProtectedRoute({
 
   if (isLoading || !user) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+      <div className="min-h-screen bg-background p-6">
+        <LoadingState
+          title="Loading secure workspace"
+          description="Checking your session, role, and current permissions."
+          className="min-h-[70vh]"
+        />
       </div>
     );
   }
@@ -58,7 +63,15 @@ export function ProtectedRoute({
     : true;
 
   if (!hasRequiredRole || !hasRequiredPermission) {
-    return null;
+    return (
+      <div className="min-h-screen bg-background p-6">
+        <PermissionDeniedState
+          title="Access needs approval"
+          description="Your current role does not include the permission required for this page."
+          className="min-h-[70vh]"
+        />
+      </div>
+    );
   }
 
   return <>{children}</>;
